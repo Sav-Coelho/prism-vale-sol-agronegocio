@@ -27,6 +27,7 @@ model BankAccount {
   initialBalance   Float             @default(0)
   ofxBankId        String?
   ofxAcctId        String?
+  type             String            @default("CHECKING")
   transactions     Transaction[]
   balanceSnapshots BalanceSnapshot[]
 }

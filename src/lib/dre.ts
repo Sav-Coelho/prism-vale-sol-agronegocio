@@ -15,12 +15,20 @@ export interface DREData {
   lines: DRELine[]
   receitaBruta: number
   receitaLiquida: number
-  margemContribuicao: number
+  margemBruta: number           // Receita Líquida - CMV
+  margemContribuicao: number    // Receita Líquida - Custos Variáveis (CMV + Desp. Variáveis)
   resultadoBruto: number        // alias margemContribuicao
-  resultadoOperacional: number  // lucroOperacional
+  resultadoOperacional: number  // EBIT
+  ebitda: number                // EBIT + Depreciação + Amortização
   lucroAposInvestimentos: number
   lucroAntesImpostos: number
   resultadoLiquido: number
+  // Indicadores em %
+  margemBrutaPct: number
+  margemContribuicaoPct: number
+  margemEbitdaPct: number
+  margemOperacionalPct: number
+  margemLiquidaPct: number
 }
 
 interface AccEntry { name: string; code: string; value: number }
@@ -171,16 +179,28 @@ export function calcDRE(
     ] : []),
   ]
 
+  const margemBruta    = receitaLiq - custoProd
+  const depreciacao    = g('Depreciação e Amortização')
+  const ebitda         = lucroOp + depreciacao
+  const pct            = (num: number) => receitaLiq > 0 ? (num / receitaLiq) * 100 : 0
+
   return {
     month, year, lines,
     receitaBruta: receitaOp,
     receitaLiquida: receitaLiq,
+    margemBruta,
     margemContribuicao: margem,
     resultadoBruto: margem,
     resultadoOperacional: lucroOp,
+    ebitda,
     lucroAposInvestimentos: lucroAposInv,
     lucroAntesImpostos: lucroAntesIR,
     resultadoLiquido: lucroLiq,
+    margemBrutaPct:         pct(margemBruta),
+    margemContribuicaoPct:  pct(margem),
+    margemEbitdaPct:        pct(ebitda),
+    margemOperacionalPct:   pct(lucroOp),
+    margemLiquidaPct:       pct(lucroLiq),
   }
 }
 

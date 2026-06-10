@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
 
   const transactions = await prisma.transaction.findMany({
     where,
-    include: { account: true, unit: true },
+    include: { account: true, unit: true, bankAccount: true },
     orderBy: { date: 'desc' },
   })
   return NextResponse.json(transactions)

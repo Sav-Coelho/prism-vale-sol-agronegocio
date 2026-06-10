@@ -20,98 +20,134 @@ const DRE_GROUPS: Record<string, string[]> = {
   NEUTRO: ['Transferência entre Contas'],
 }
 
+// Plano de Contas — Varejo de Insumos Pecuários e Veterinários
 const DEFAULTS = [
-  // Receita Operacional
+  // Receita Operacional (3.1)
   { code: '3.1.01', name: 'Vendas Dinheiro / Pix', type: 'RECEITA', dreGroup: 'Receita Operacional' },
-  { code: '3.1.02', name: 'Cartão Débito', type: 'RECEITA', dreGroup: 'Receita Operacional' },
-  { code: '3.1.03', name: 'Cartão Crédito (Fluxo/Antecipado)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
-  { code: '3.1.04', name: 'Recebimento Cartões Alimentação / Refeição', type: 'RECEITA', dreGroup: 'Receita Operacional' },
-  { code: '3.1.05', name: 'Bonificações em Dinheiro (Sell-out/Metas)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
-  { code: '3.1.06', name: 'Outras Receitas', type: 'RECEITA', dreGroup: 'Receita Operacional' },
-  // Deduções sobre a Venda
-  { code: '3.2.01', name: 'Pagamento de ICMS (Próprio e ST)', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
-  { code: '3.2.02', name: 'Pagamento de PIS / COFINS', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
-  { code: '3.2.03', name: 'Pagamento de ISS', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
-  { code: '3.2.04', name: 'Parcelamentos Tributários (REFIS/Outros)', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
+  { code: '3.1.02', name: 'Vendas Cartão Débito', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.03', name: 'Vendas Cartão Crédito (Antecipado)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.04', name: 'Vendas Faturadas (Boleto / Crediário)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.05', name: 'Vendas de Medicamentos Veterinários', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.06', name: 'Vendas de Vacinas e Vermífugos', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.07', name: 'Vendas de Rações, Núcleos e Suplementos', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.08', name: 'Vendas de Sal Mineral', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.09', name: 'Vendas de Sementes e Mudas Forrageiras', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.10', name: 'Vendas de Defensivos Agrícolas e Carrapaticidas', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.11', name: 'Vendas de Fertilizantes e Adubos', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.12', name: 'Vendas de Equipamentos e Ferramentas', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.13', name: 'Vendas de Materiais para Cercas (Arames, Postes, Isoladores)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.14', name: 'Vendas de Produtos Pet (Linha Varejo)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.15', name: 'Prestação de Serviços Veterinários', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.16', name: 'Bonificações de Indústria (Sell-out / Metas)', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+  { code: '3.1.17', name: 'Outras Receitas Operacionais', type: 'RECEITA', dreGroup: 'Receita Operacional' },
+
+  // Deduções sobre a Venda (3.2)
+  { code: '3.2.01', name: 'ICMS sobre Vendas (Próprio e ST)', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
+  { code: '3.2.02', name: 'PIS / COFINS sobre Vendas', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
+  { code: '3.2.03', name: 'ISS sobre Serviços Veterinários', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
+  { code: '3.2.04', name: 'Parcelamentos Tributários (REFIS / Outros)', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
   { code: '3.2.05', name: 'Tarifas de Administração de Cartões (MDR)', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
-  // Custo do Produto/Serviço
-  { code: '4.1.01', name: 'Compras Mercearia Seca (Alimentos)', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
-  { code: '4.1.02', name: 'Compras Higiene e Limpeza', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
-  { code: '4.1.03', name: 'Compras Bebidas', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
-  { code: '4.1.04', name: 'Compras Utilidades Domésticas', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
-  { code: '4.1.05', name: 'Compras Açougue', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
-  // Despesa Variável
-  { code: '4.2.01', name: 'Compras Hortifruti', type: 'CUSTO', dreGroup: 'Despesa Variável' },
-  { code: '4.2.02', name: 'Compras Laticínios e Embutidos', type: 'CUSTO', dreGroup: 'Despesa Variável' },
-  { code: '4.2.03', name: 'Compras Congelados Gerais', type: 'CUSTO', dreGroup: 'Despesa Variável' },
-  { code: '4.2.04', name: 'Combustível Frota Própria', type: 'CUSTO', dreGroup: 'Despesa Variável' },
-  { code: '4.2.05', name: 'Pedágios e Manutenção de Frota', type: 'CUSTO', dreGroup: 'Despesa Variável' },
-  // Despesas Administrativas
-  { code: '5.1.01', name: 'Aluguel', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.02', name: 'Internet e Telefonia', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.03', name: 'Energia Elétrica', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.04', name: 'Água e Esgoto', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '3.2.06', name: 'Devoluções e Trocas de Mercadorias', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
+  { code: '3.2.07', name: 'Descontos Concedidos a Clientes', type: 'DEDUCAO', dreGroup: 'Deduções sobre a Venda' },
+
+  // Custo do Produto/Serviço — CMV (4.1)
+  { code: '4.1.01', name: 'CMV - Medicamentos Veterinários', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.02', name: 'CMV - Vacinas e Vermífugos', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.03', name: 'CMV - Rações, Núcleos e Suplementos', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.04', name: 'CMV - Sal Mineral', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.05', name: 'CMV - Sementes Forrageiras', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.06', name: 'CMV - Defensivos e Carrapaticidas', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.07', name: 'CMV - Fertilizantes e Adubos', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.08', name: 'CMV - Equipamentos e Ferramentas', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.09', name: 'CMV - Materiais para Cercas', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.10', name: 'CMV - Produtos Pet', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+  { code: '4.1.11', name: 'Frete sobre Compras (de Fornecedores)', type: 'CUSTO', dreGroup: 'Custo do Produto/Serviço' },
+
+  // Despesa Variável (4.2)
+  { code: '4.2.01', name: 'Comissão sobre Vendas (Vendedores)', type: 'CUSTO', dreGroup: 'Despesa Variável' },
+  { code: '4.2.02', name: 'Frete sobre Vendas (Entrega a Clientes)', type: 'CUSTO', dreGroup: 'Despesa Variável' },
+  { code: '4.2.03', name: 'Combustível Frota de Entregas', type: 'CUSTO', dreGroup: 'Despesa Variável' },
+  { code: '4.2.04', name: 'Pedágios e Manutenção Variável de Frota', type: 'CUSTO', dreGroup: 'Despesa Variável' },
+  { code: '4.2.05', name: 'Materiais para Aplicação (Seringas, Agulhas, Descartáveis)', type: 'CUSTO', dreGroup: 'Despesa Variável' },
+
+  // Despesas Administrativas (5.1)
+  { code: '5.1.01', name: 'Aluguel da Loja', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.02', name: 'Energia Elétrica', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.03', name: 'Água e Esgoto', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.04', name: 'Internet e Telefonia', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
   { code: '5.1.05', name: 'IPTU e Taxas Municipais', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.06', name: 'Segurança', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.07', name: 'Softwares de Gestão (ERP/PDV)', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.08', name: 'Sacolas Plásticas', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.09', name: 'Bobinas Térmicas para PDV e Balanças', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.10', name: 'Etiquetas de Gôndola e Precificação', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.11', name: 'Bandejas de Isopor e Papelão', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.12', name: 'Filme PVC e Sacos para Hortifruti', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.13', name: 'Manutenção Corretiva de Frios e Câmaras', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.14', name: 'Reparo de Carrinhos e Cestas de Compras', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.15', name: 'Manutenção de PDVs, Balanças e Scanners', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.16', name: 'Material de Escritório', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.17', name: 'Material de Limpeza e Copa', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  { code: '5.1.18', name: 'Toners, Teclados, Mouses', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
-  // Despesas Financeiras
-  { code: '5.2.01', name: 'Tarifas de Manutenção de Conta Corrente', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
+  { code: '5.1.06', name: 'Segurança e Vigilância', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.07', name: 'Software de Gestão (ERP / PDV)', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.08', name: 'Material de Escritório', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.09', name: 'Material de Limpeza e Copa', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.10', name: 'Manutenção da Loja e Câmaras Frias (Refrigerados)', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.11', name: 'Manutenção de PDVs, Balanças e Scanners', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.12', name: 'Sacolas, Embalagens e Etiquetas', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.13', name: 'Honorários Contábeis', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.14', name: 'Honorários Advocatícios', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.15', name: 'Seguros (Loja, Veículos, Vida)', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.16', name: 'Licenças e Alvarás (MAPA, Vigilância Sanitária, Bombeiros)', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+  { code: '5.1.17', name: 'Cursos e Atualizações Técnicas', type: 'DESPESA', dreGroup: 'Despesas Administrativas' },
+
+  // Despesas Financeiras (5.2)
+  { code: '5.2.01', name: 'Tarifas Bancárias (Manutenção Conta Corrente)', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
   { code: '5.2.02', name: 'Juros Bancários, IOF e Mora', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
-  { code: '5.2.03', name: 'Juros do Empréstimo', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
+  { code: '5.2.03', name: 'Juros de Empréstimos', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
   { code: '5.2.04', name: 'Amortização de Empréstimos (Principal)', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
-  { code: '5.2.05', name: 'Honorários de Contabilidade', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
-  // Despesas com Pessoal
+  { code: '5.2.05', name: 'Taxa de Antecipação de Recebíveis', type: 'DESPESA', dreGroup: 'Despesas Financeiras' },
+
+  // Despesas com Pessoal (5.3)
   { code: '5.3.01', name: 'Salários', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
   { code: '5.3.02', name: '13º Salário', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  { code: '5.3.03', name: 'Férias', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.03', name: 'Férias e 1/3 Constitucional', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
   { code: '5.3.04', name: 'Rescisões', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
   { code: '5.3.05', name: 'FGTS', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  { code: '5.3.06', name: 'INSS', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  { code: '5.3.07', name: 'Comissão', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  { code: '5.3.08', name: 'Bonificações de Funcionários', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  { code: '5.3.09', name: 'Uniformes e EPIs', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  { code: '5.3.10', name: 'Pró-labore da Diretoria e Proprietários', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
-  // Despesas com Marketing
-  { code: '5.4.01', name: 'Impressão de Encartes', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  { code: '5.4.02', name: 'Carro de Som e Gravação de Mídias', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  { code: '5.4.03', name: 'Gestão de Redes Sociais e Tráfego Pago', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  { code: '5.4.04', name: 'Viagens, Hospedagens e Despesas de Diretoria', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  { code: '5.4.05', name: 'IPVA, Vistorias e Multas', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  { code: '5.4.06', name: 'Consultorias', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  { code: '5.4.07', name: 'Aquisição de Máquinas e Equipamentos', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
-  // Investimentos
-  { code: '6.1.01', name: 'Obras, Reformas e Benfeitorias em Lojas', type: 'DESPESA', dreGroup: 'Investimentos' },
+  { code: '5.3.06', name: 'INSS Patronal', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.07', name: 'Vale Transporte', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.08', name: 'Vale Refeição / Alimentação', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.09', name: 'Plano de Saúde', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.10', name: 'Uniformes e EPIs', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.11', name: 'Pró-labore', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+  { code: '5.3.12', name: 'Treinamentos e Capacitação Técnica', type: 'DESPESA', dreGroup: 'Despesas com Pessoal' },
+
+  // Despesas com Marketing (5.4)
+  { code: '5.4.01', name: 'Publicidade e Propaganda', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
+  { code: '5.4.02', name: 'Marketing Digital e Redes Sociais', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
+  { code: '5.4.03', name: 'Encartes e Material Gráfico', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
+  { code: '5.4.04', name: 'Brindes, Amostras e Merchandising', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
+  { code: '5.4.05', name: 'Patrocínios (Leilões, Feiras e Eventos Pecuários)', type: 'DESPESA', dreGroup: 'Despesas com Marketing' },
+
+  // Investimentos (6.1)
+  { code: '6.1.01', name: 'Reformas e Benfeitorias na Loja', type: 'DESPESA', dreGroup: 'Investimentos' },
   { code: '6.1.02', name: 'Aquisição de Veículos Operacionais', type: 'DESPESA', dreGroup: 'Investimentos' },
-  // Receita Não Operacional
+  { code: '6.1.03', name: 'Aquisição de Máquinas e Equipamentos', type: 'DESPESA', dreGroup: 'Investimentos' },
+  { code: '6.1.04', name: 'Software e Sistemas (CAPEX)', type: 'DESPESA', dreGroup: 'Investimentos' },
+  { code: '6.1.05', name: 'Móveis, Utensílios e Gôndolas', type: 'DESPESA', dreGroup: 'Investimentos' },
+
+  // Receita Não Operacional (7.1)
   { code: '7.1.01', name: 'Recebimento de Empréstimo Bancário', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
-  { code: '7.1.02', name: 'Recebimento de Financiamento (BNDES/CEF)', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
+  { code: '7.1.02', name: 'Recebimento de Financiamento (BNDES / Pronaf)', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
   { code: '7.1.03', name: 'Aporte de Capital dos Sócios', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
   { code: '7.1.04', name: 'Antecipação de Recebíveis (Factoring)', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
-  { code: '7.1.05', name: 'Conta Garantida / Cheque Especial PJ', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
+  { code: '7.1.05', name: 'Rendimentos de Aplicações Financeiras', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
   { code: '7.1.06', name: 'Venda de Ativo Imobilizado', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
-  { code: '7.1.07', name: 'Rendimentos de Aplicações Financeiras', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
-  // Despesas Não Operacionais
-  { code: '7.2.01', name: 'Pagamento de Parcela de Empréstimo', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  { code: '7.2.02', name: 'Pagamento de Parcela de Financiamento', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+  { code: '7.1.07', name: 'Indenizações de Seguro Recebidas', type: 'RECEITA', dreGroup: 'Receita Não Operacional' },
+
+  // Despesas Não Operacionais (7.2)
+  { code: '7.2.01', name: 'Pagamento de Empréstimo (Parcela)', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+  { code: '7.2.02', name: 'Pagamento de Financiamento (Parcela)', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
   { code: '7.2.03', name: 'Liquidação de Dívida com Fornecedor', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  { code: '7.2.04', name: 'Acordo / Renegociação de Dívidas (REFIS)', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  { code: '7.2.05', name: 'Devolução de Conta Garantida / Cheque PJ', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  { code: '7.2.06', name: 'Distribuição de Lucros aos Sócios', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  { code: '7.2.07', name: 'Retirada Extraordinária dos Sócios', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  { code: '7.2.08', name: 'Multas e Penalidades Fiscais', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
-  // Impostos
-  { code: '8.1.01', name: 'Impostos sobre o Lucro', type: 'IMPOSTO', dreGroup: 'Impostos' },
+  { code: '7.2.04', name: 'Distribuição de Lucros aos Sócios', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+  { code: '7.2.05', name: 'Retirada Extraordinária dos Sócios', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+  { code: '7.2.06', name: 'Multas e Penalidades Fiscais', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+  { code: '7.2.07', name: 'Perdas com Mercadorias (Validade / Avaria)', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+  { code: '7.2.08', name: 'Acordos / Renegociações com Clientes', type: 'DESPESA', dreGroup: 'Despesas Não Operacionais' },
+
+  // Impostos sobre o Lucro (8.1)
+  { code: '8.1.01', name: 'IRPJ', type: 'IMPOSTO', dreGroup: 'Impostos' },
+  { code: '8.1.02', name: 'CSLL', type: 'IMPOSTO', dreGroup: 'Impostos' },
+  { code: '8.1.03', name: 'Simples Nacional (parcela sobre o lucro)', type: 'IMPOSTO', dreGroup: 'Impostos' },
+
   // Neutro — não entra no DRE
   { code: '9.9.01', name: 'Transferência entre Contas', type: 'NEUTRO', dreGroup: 'Transferência entre Contas' },
 ]

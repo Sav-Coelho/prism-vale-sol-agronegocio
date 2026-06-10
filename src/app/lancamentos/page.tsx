@@ -970,6 +970,7 @@ export default function Lancamentos() {
                   <th style={{ width: 32 }}></th>
                   <th>Data</th>
                   <th>Descrição</th>
+                  <th>Origem</th>
                   <th>Unidade</th>
                   <th style={{ textAlign: 'right' }}>Valor</th>
                   <th>Conta do Plano</th>
@@ -977,7 +978,13 @@ export default function Lancamentos() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(tx => (
+                {filtered.map(tx => {
+                  const bankType = tx.bankAccount?.type || 'CHECKING'
+                  const isCard = bankType === 'CREDIT_CARD'
+                  const originLabel = isCard ? '💳 Cartão' : bankType === 'SAVINGS' ? '💰 Poupança' : '🏦 Extrato'
+                  const originColor = isCard ? '#7d3c98' : bankType === 'SAVINGS' ? '#d35400' : '#2b2d42'
+                  const originBg    = isCard ? '#f4ecf7' : bankType === 'SAVINGS' ? '#fdebd0' : '#eef0f5'
+                  return (
                   <tr key={tx.id} style={{ background: selectedTxIds.has(tx.id) ? '#fef9e7' : undefined }}>
                     <td>
                       <input type="checkbox" checked={selectedTxIds.has(tx.id)}
@@ -988,6 +995,14 @@ export default function Lancamentos() {
                       <div style={{ fontSize: 13 }}>{tx.description}</div>
                       {tx.memo && tx.memo !== tx.description && (
                         <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>{tx.memo}</div>
+                      )}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: originColor, background: originBg, padding: '3px 8px', borderRadius: 4 }}>
+                        {originLabel}
+                      </span>
+                      {tx.bankAccount?.name && (
+                        <div style={{ fontSize: 10, color: 'var(--brave-gray)', marginTop: 2 }}>{tx.bankAccount.name}</div>
                       )}
                     </td>
                     <td style={{ fontSize: 11, color: 'var(--brave-gray)', whiteSpace: 'nowrap' }}>
@@ -1007,7 +1022,8 @@ export default function Lancamentos() {
                       <button className="btn btn-danger btn-sm" onClick={() => remove(tx.id)}>✕</button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

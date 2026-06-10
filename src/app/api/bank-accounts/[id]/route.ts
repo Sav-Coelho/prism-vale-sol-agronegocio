@@ -1,14 +1,18 @@
 import { prisma } from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 
+const VALID_TYPES = ['CHECKING', 'CREDIT_CARD', 'SAVINGS']
+
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
   const id = parseInt(params.id)
-  const { name, initialBalance } = await req.json()
+  const { name, initialBalance, type } = await req.json()
   if (!name?.trim()) return NextResponse.json({ error: 'Nome obrigatório' }, { status: 400 })
-  const account = await prisma.bankAccount.update({
-    where: { id },
-    data: { name: name.trim(), initialBalance: parseFloat(initialBalance) || 0 },
-  })
+  const data: { name: string; initialBalance: number; type?: string } = {
+    name: name.trim(),
+    initialBalance: parseFloat(initialBalance) || 0,
+  }
+  if (type && VALID_TYPES.includes(type)) data.type = type
+  const account = await prisma.bankAccount.update({ where: { id }, data })
   return NextResponse.json(account)
 }
 

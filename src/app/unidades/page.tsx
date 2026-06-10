@@ -2,8 +2,16 @@
 import { useEffect, useState } from 'react'
 import Shell from '@/components/Shell'
 
-type BankAccount = { id: number; name: string; initialBalance: number; ofxBankId?: string }
+type BankAccount = { id: number; name: string; initialBalance: number; ofxBankId?: string; type?: string }
 type Unit = { id: number; name: string; bankAccounts: BankAccount[] }
+
+const BANK_TYPES = [
+  { value: 'CHECKING',    label: '🏦 Conta Corrente' },
+  { value: 'SAVINGS',     label: '💰 Poupança' },
+  { value: 'CREDIT_CARD', label: '💳 Cartão de Crédito' },
+]
+
+const typeLabel = (t?: string) => BANK_TYPES.find(x => x.value === t)?.label ?? '🏦 Conta Corrente'
 
 export default function Unidades() {
   const [units, setUnits] = useState<Unit[]>([])
@@ -22,6 +30,7 @@ export default function Unidades() {
   const [bankUnitId, setBankUnitId] = useState<number | null>(null)
   const [bankName, setBankName] = useState('')
   const [bankBalance, setBankBalance] = useState('')
+  const [bankType, setBankType] = useState('CHECKING')
   const [bankSaving, setBankSaving] = useState(false)
 
   const load = () =>
@@ -60,10 +69,10 @@ export default function Unidades() {
 
   // ---- Bank accounts ----
   const openAddBank = (unitId: number) => {
-    setEditBank(null); setBankUnitId(unitId); setBankName(''); setBankBalance(''); setBankModal(true)
+    setEditBank(null); setBankUnitId(unitId); setBankName(''); setBankBalance(''); setBankType('CHECKING'); setBankModal(true)
   }
   const openEditBank = (bank: BankAccount, unitId: number) => {
-    setEditBank(bank); setBankUnitId(unitId); setBankName(bank.name); setBankBalance(String(bank.initialBalance || '')); setBankModal(true)
+    setEditBank(bank); setBankUnitId(unitId); setBankName(bank.name); setBankBalance(String(bank.initialBalance || '')); setBankType(bank.type || 'CHECKING'); setBankModal(true)
   }
 
   const saveBank = async () => {
@@ -72,8 +81,8 @@ export default function Unidades() {
     const url = editBank ? `/api/bank-accounts/${editBank.id}` : '/api/bank-accounts'
     const method = editBank ? 'PUT' : 'POST'
     const body = editBank
-      ? { name: bankName, initialBalance: bankBalance }
-      : { name: bankName, unitId: bankUnitId, initialBalance: bankBalance }
+      ? { name: bankName, initialBalance: bankBalance, type: bankType }
+      : { name: bankName, unitId: bankUnitId, initialBalance: bankBalance, type: bankType }
     const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json()
     setBankSaving(false)
@@ -156,6 +165,7 @@ export default function Unidades() {
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center'
                     }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 11 }}>{typeLabel(bank.type).split(' ')[0]}</span>
                         {bank.name}
                         {bank.ofxBankId && (
                           <span style={{ fontSize: 10, color: 'var(--brave-gray)', background: 'var(--brave-light)', border: '1px solid #ccc', borderRadius: 3, padding: '1px 4px' }}>
@@ -232,6 +242,15 @@ export default function Unidades() {
               onChange={e => setBankName(e.target.value)}
               autoFocus
             />
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Tipo</label>
+            <select
+              className="form-select"
+              style={{ width: '100%', marginBottom: 12 }}
+              value={bankType}
+              onChange={e => setBankType(e.target.value)}
+            >
+              {BANK_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
             <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Saldo Inicial (R$)</label>
             <input
               className="form-input"
