@@ -5,7 +5,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   const id = parseInt(params.id)
   const order = await prisma.purchaseOrder.findUnique({
     where: { id },
-    include: { supplier: true, unit: true, items: true },
+    include: { supplier: true, unit: true, buyer: true, items: true, installments: true },
   })
   if (!order) return NextResponse.json({ error: 'Pedido não encontrado' }, { status: 404 })
   return NextResponse.json(order)
@@ -14,6 +14,18 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
   const id = parseInt(params.id)
   const body = await req.json()
+
+  // Mark / unmark a single installment as paid
+  if (body.action === 'pay-installment') {
+    const { installmentId, paid } = body
+    const installment = await prisma.purchaseInstallment.update({
+      where: { id: parseInt(installmentId) },
+      data: paid
+        ? { status: 'PAID', paidDate: new Date() }
+        : { status: 'PENDING', paidDate: null },
+    })
+    return NextResponse.json(installment)
+  }
 
   // Receive action: update received quantities per item
   if (body.action === 'receive') {
@@ -60,11 +72,8 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const id = parseInt(params.id)
-  const order = await prisma.purchaseOrder.findUnique({ where: { id } })
-  if (order?.status !== 'DRAFT') {
-    return NextResponse.json({ error: 'Só é possível excluir pedidos em rascunho' }, { status: 409 })
-  }
   await prisma.purchaseItem.deleteMany({ where: { orderId: id } })
+  // installments cascade via schema
   await prisma.purchaseOrder.delete({ where: { id } })
   return NextResponse.json({ ok: true })
 }

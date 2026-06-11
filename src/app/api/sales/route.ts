@@ -12,18 +12,24 @@ export async function GET(req: Request) {
   return NextResponse.json(sales)
 }
 
+const VALID_STATUS = ['PENDING', 'PAID', 'OVERDUE', 'DEFAULTED']
+
 export async function POST(req: Request) {
-  const { clientId, description, amount, date, unitId } = await req.json()
+  const { clientId, description, amount, date, unitId, dueDate, paidDate, paymentStatus } = await req.json()
   if (!clientId || !description?.trim() || !amount || !date) {
     return NextResponse.json({ error: 'Campos obrigatórios: cliente, descrição, valor, data' }, { status: 400 })
   }
   const d = new Date(date)
+  const status = VALID_STATUS.includes(paymentStatus) ? paymentStatus : 'PENDING'
   const sale = await prisma.sale.create({
     data: {
       clientId: parseInt(clientId),
       description: description.trim(),
       amount: parseFloat(amount),
       date: d,
+      dueDate: dueDate ? new Date(dueDate) : null,
+      paidDate: paidDate ? new Date(paidDate) : null,
+      paymentStatus: status,
       month: d.getMonth() + 1,
       year: d.getFullYear(),
       unitId: unitId ? parseInt(unitId) : null,

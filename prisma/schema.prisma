@@ -88,17 +88,42 @@ model Client {
 }
 
 model Sale {
-  id          Int      @id @default(autoincrement())
-  clientId    Int
-  client      Client   @relation(fields: [clientId], references: [id])
-  description String
-  amount      Float
-  date        DateTime
-  unitId      Int?
-  unit        Unit?    @relation(fields: [unitId], references: [id])
-  month       Int
-  year        Int
-  createdAt   DateTime @default(now())
+  id            Int       @id @default(autoincrement())
+  clientId      Int
+  client        Client    @relation(fields: [clientId], references: [id])
+  description   String
+  amount        Float
+  date          DateTime
+  dueDate       DateTime?
+  paidDate      DateTime?
+  paymentStatus String    @default("PENDING")  // PENDING / PAID / OVERDUE / DEFAULTED
+  unitId        Int?
+  unit          Unit?     @relation(fields: [unitId], references: [id])
+  month         Int
+  year          Int
+  createdAt     DateTime  @default(now())
+}
+
+model Buyer {
+  id            Int             @id @default(autoincrement())
+  name          String          @unique
+  monthlyBudget Float           @default(0)
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  purchases     PurchaseOrder[]
+}
+
+model PurchaseInstallment {
+  id        Int           @id @default(autoincrement())
+  orderId   Int
+  order     PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dueDate   DateTime
+  amount    Float
+  status    String        @default("PENDING")  // PENDING / PAID
+  paidDate  DateTime?
+  month     Int
+  year      Int
+  createdAt DateTime      @default(now())
 }
 
 model Supplier {
@@ -116,21 +141,26 @@ model Supplier {
 }
 
 model PurchaseOrder {
-  id           Int            @id @default(autoincrement())
+  id           Int                   @id @default(autoincrement())
   supplierId   Int
-  supplier     Supplier       @relation(fields: [supplierId], references: [id])
+  supplier     Supplier              @relation(fields: [supplierId], references: [id])
   unitId       Int?
-  unit         Unit?          @relation(fields: [unitId], references: [id])
-  status       String         @default("DRAFT")
+  unit         Unit?                 @relation(fields: [unitId], references: [id])
+  buyerId      Int?
+  buyer        Buyer?                @relation(fields: [buyerId], references: [id])
+  status       String                @default("DRAFT")
+  description  String?
+  invoiceNumber String?
   expectedDate DateTime?
   receivedDate DateTime?
-  totalAmount  Float          @default(0)
+  totalAmount  Float                 @default(0)
   notes        String?
   month        Int
   year         Int
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
   items        PurchaseItem[]
+  installments PurchaseInstallment[]
 }
 
 model PurchaseItem {

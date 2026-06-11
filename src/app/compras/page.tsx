@@ -1,136 +1,149 @@
 'use client'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend
 } from 'recharts'
 
-// ─── Types ───────────────────────────────────────────────
+type Tab = 'buyers' | 'purchases' | 'cashflow'
+
+type Buyer = {
+  id: number
+  name: string
+  monthlyBudget: number
+  active: boolean
+  purchases?: { id: number; totalAmount: number; month: number; year: number; status: string }[]
+}
+
+type Supplier = { id: number; name: string }
 type Unit = { id: number; name: string }
-type Supplier = {
-  id: number; name: string; cnpj?: string | null
-  contactName?: string | null; email?: string | null; phone?: string | null
-  paymentTermDays: number; notes?: string | null; active: boolean; createdAt: string
-  purchaseOrders: { id: number; status: string; totalAmount: number; createdAt: string; receivedDate?: string | null; expectedDate?: string | null }[]
-}
-type PurchaseItem = { id: number; description: string; quantity: number; unitPrice: number; receivedQty: number; notes?: string | null }
-type PurchaseOrder = {
-  id: number; supplierId: number; supplier: Supplier; unitId?: number | null; unit?: Unit | null
-  status: string; expectedDate?: string | null; receivedDate?: string | null
-  totalAmount: number; notes?: string | null; month: number; year: number
-  createdAt: string; updatedAt: string; items: PurchaseItem[]
+
+type Installment = {
+  id?: number
+  dueDate: string
+  amount: number
+  status?: 'PENDING' | 'PAID'
+  paidDate?: string | null
 }
 
-// ─── Helpers ─────────────────────────────────────────────
+type Purchase = {
+  id: number
+  supplierId: number
+  supplier: Supplier
+  buyerId?: number | null
+  buyer?: Buyer | null
+  unitId?: number | null
+  unit?: Unit | null
+  description?: string | null
+  invoiceNumber?: string | null
+  totalAmount: number
+  expectedDate?: string | null
+  month: number
+  year: number
+  installments: Installment[]
+}
+
+type CashflowPoint = {
+  key: string
+  label: string
+  month: number
+  year: number
+  pending: number
+  paid: number
+  overdue: number
+  total: number
+}
+
 const fmt = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const fmtDate = (d: string | null | undefined) => d ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '—'
-const today = new Date(); today.setHours(0, 0, 0, 0)
-const isLate = (o: PurchaseOrder) =>
-  o.expectedDate && !['RECEIVED', 'CANCELLED'].includes(o.status) && new Date(o.expectedDate) < today
+const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '—'
+const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+const nowKey = monthKey(new Date())
 
-const STATUS_LABEL: Record<string, string> = {
-  DRAFT: 'Rascunho', OPEN: 'Aberto', PARTIAL: 'Parcial', RECEIVED: 'Recebido', CANCELLED: 'Cancelado',
-}
-const STATUS_COLOR: Record<string, string> = {
-  DRAFT: '#8d99ae', OPEN: '#2b6cb0', PARTIAL: '#d59f07', RECEIVED: '#1a7a4a', CANCELLED: '#c0392b',
-}
-
-// ─── Supplier score (A/B/C) ──────────────────────────────
-function calcScore(s: Supplier): { label: 'A' | 'B' | 'C'; score: number; leadTime: number; completionRate: number } {
-  const completed = s.purchaseOrders.filter(o => o.status === 'RECEIVED')
-  const total = s.purchaseOrders.filter(o => o.status !== 'CANCELLED').length
-  const completionRate = total > 0 ? (completed.length / total) * 100 : 100
-
-  const leadsMs = completed
-    .filter(o => o.receivedDate)
-    .map(o => new Date(o.receivedDate!).getTime() - new Date(o.createdAt).getTime())
-  const avgLead = leadsMs.length > 0 ? leadsMs.reduce((a, b) => a + b, 0) / leadsMs.length / 86400000 : 0
-
-  // Score: completionRate (60%) + lead time score (40%)
-  const leadScore = avgLead === 0 ? 100 : Math.max(0, 100 - avgLead * 3)
-  const score = completionRate * 0.6 + leadScore * 0.4
-
-  return {
-    score: Math.round(score),
-    label: score >= 80 ? 'A' : score >= 55 ? 'B' : 'C',
-    leadTime: Math.round(avgLead),
-    completionRate: Math.round(completionRate),
-  }
+const COLORS = {
+  dark:   '#2b2d42',
+  yellow: '#eaca2d',
+  green:  '#1a7a4a',
+  red:    '#c0392b',
+  blue:   '#3a6ea5',
+  gray:   '#8d99ae',
+  light:  '#edf2f4',
 }
 
-// ─── ABC Analysis ────────────────────────────────────────
-function calcABC(suppliers: Supplier[]) {
-  const rows = suppliers
-    .map(s => ({ id: s.id, name: s.name, total: s.purchaseOrders.reduce((a, o) => a + o.totalAmount, 0) }))
-    .sort((a, b) => b.total - a.total)
-  const grandTotal = rows.reduce((a, r) => a + r.total, 0)
-  let cum = 0
-  return rows.map(r => {
-    cum += r.total
-    const pct = grandTotal > 0 ? (cum / grandTotal) * 100 : 0
-    return { ...r, pct: r.total / (grandTotal || 1) * 100, cumPct: pct, class: pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C' }
-  })
-}
-
-// ─── Main Page ───────────────────────────────────────────
 export default function Compras() {
-  const [tab, setTab] = useState<'dashboard' | 'pedidos' | 'fornecedores' | 'analise'>('dashboard')
-  const [orders, setOrders] = useState<PurchaseOrder[]>([])
+  const [tab, setTab] = useState<Tab>('buyers')
+  const [toast, setToast] = useState('')
+  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000) }
+
+  // ───── Shared state ─────
+  const [buyers, setBuyers] = useState<Buyer[]>([])
+  const [purchases, setPurchases] = useState<Purchase[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [units, setUnits] = useState<Unit[]>([])
+  const [cashflow, setCashflow] = useState<CashflowPoint[]>([])
+  const [cashflowSummary, setCashflowSummary] = useState({ overdueTotal: 0, pendingFutureTotal: 0 })
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState('')
 
   const load = async () => {
-    const [o, s, u] = await Promise.all([
+    setLoading(true)
+    const [b, p, s, u, c] = await Promise.all([
+      fetch('/api/buyers').then(r => r.json()),
       fetch('/api/purchase-orders').then(r => r.json()),
       fetch('/api/suppliers').then(r => r.json()),
       fetch('/api/units').then(r => r.json()),
+      fetch('/api/purchase-orders/cashflow?months=12').then(r => r.json()),
     ])
-    setOrders(o); setSuppliers(s); setUnits(u); setLoading(false)
+    setBuyers(b)
+    setPurchases(p)
+    setSuppliers(s)
+    setUnits(u)
+    setCashflow(c.series || [])
+    setCashflowSummary({ overdueTotal: c.overdueTotal || 0, pendingFutureTotal: c.pendingFutureTotal || 0 })
+    setLoading(false)
   }
   useEffect(() => { load() }, [])
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
-
-  const tabBtn = (t: typeof tab, label: string) => (
-    <button
-      onClick={() => setTab(t)}
-      style={{
-        padding: '8px 18px', border: 'none', borderRadius: 6, cursor: 'pointer',
-        fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13,
-        background: tab === t ? 'var(--brave-yellow)' : 'var(--brave-light)',
-        color: tab === t ? 'var(--brave-dark)' : 'var(--brave-gray)',
-      }}
-    >
-      {label}
-    </button>
-  )
 
   return (
     <Shell>
-      <div className="page-header flex-between">
-        <div>
-          <h1 className="page-title">Compras</h1>
-          <p className="page-subtitle">Controle inteligente de pedidos e fornecedores</p>
-        </div>
+      <div className="page-header">
+        <h1 className="page-title">Controle de Compras</h1>
+        <p className="page-subtitle">Compradores, lançamentos parcelados e comprometimento do caixa</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {tabBtn('dashboard', '◈ Dashboard')}
-        {tabBtn('pedidos', '📋 Pedidos')}
-        {tabBtn('fornecedores', '🏭 Fornecedores')}
-        {tabBtn('analise', '📊 Análise Inteligente')}
+      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--brave-light)', marginBottom: 20 }}>
+        {([
+          ['buyers',    '👤 Compradores'],
+          ['purchases', '📦 Lançamentos de Compra'],
+          ['cashflow',  '📊 Fluxo Futuro'],
+        ] as [Tab, string][]).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: '12px 18px',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-sub)',
+              fontWeight: 600,
+              fontSize: 13,
+              color: tab === k ? 'var(--brave-dark)' : 'var(--brave-gray)',
+              borderBottom: `2px solid ${tab === k ? 'var(--brave-yellow)' : 'transparent'}`,
+              marginBottom: -1,
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {loading ? (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>Carregando...</div>
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--brave-gray)' }}>Carregando...</div>
       ) : (
         <>
-          {tab === 'dashboard' && <TabDashboard orders={orders} suppliers={suppliers} />}
-          {tab === 'pedidos' && <TabPedidos orders={orders} suppliers={suppliers} units={units} onRefresh={load} showToast={showToast} />}
-          {tab === 'fornecedores' && <TabFornecedores suppliers={suppliers} onRefresh={load} showToast={showToast} />}
-          {tab === 'analise' && <TabAnalise orders={orders} suppliers={suppliers} />}
+          {tab === 'buyers'    && <BuyersTab    buyers={buyers} purchases={purchases} onChange={load} showToast={showToast} />}
+          {tab === 'purchases' && <PurchasesTab buyers={buyers} suppliers={suppliers} units={units} purchases={purchases} onChange={load} showToast={showToast} />}
+          {tab === 'cashflow'  && <CashflowTab  cashflow={cashflow} summary={cashflowSummary} />}
         </>
       )}
 
@@ -139,561 +152,143 @@ export default function Compras() {
   )
 }
 
-// ═══════════════════════════════════════════════════════════
-// TAB: DASHBOARD
-// ═══════════════════════════════════════════════════════════
-function TabDashboard({ orders, suppliers }: { orders: PurchaseOrder[]; suppliers: Supplier[] }) {
-  const now = new Date()
-  const thisMonth = orders.filter(o => o.month === now.getMonth() + 1 && o.year === now.getFullYear())
-  const spentMonth = thisMonth.filter(o => o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0)
-  const openOrders = orders.filter(o => ['OPEN', 'DRAFT', 'PARTIAL'].includes(o.status))
-  const lateOrders = orders.filter(o => isLate(o))
-
-  // Monthly spend last 6 months
-  const months: { label: string; total: number }[] = []
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const m = d.getMonth() + 1; const y = d.getFullYear()
-    const total = orders.filter(o => o.month === m && o.year === y && o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0)
-    months.push({ label: d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }), total })
-  }
-
-  // Top suppliers
-  const topSuppliers = suppliers
-    .map(s => ({ name: s.name, total: s.purchaseOrders.filter(o => o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0) }))
-    .sort((a, b) => b.total - a.total).slice(0, 5)
-
-  return (
-    <>
-      <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-        <div className="metric-card">
-          <div className="metric-label">Gasto este mês</div>
-          <div className="metric-value" style={{ fontSize: 18 }}>{fmt(spentMonth)}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Pedidos em aberto</div>
-          <div className="metric-value">{openOrders.length}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Pedidos atrasados</div>
-          <div className="metric-value" style={{ color: lateOrders.length > 0 ? '#c0392b' : '#1a7a4a' }}>
-            {lateOrders.length}
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Fornecedores ativos</div>
-          <div className="metric-value">{suppliers.filter(s => s.active).length}</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <div className="card">
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, marginBottom: 16, fontSize: 14 }}>
-            Evolução de Gastos (últimos 6 meses)
-          </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={months}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `R$${(v/1000).toFixed(0)}k`} />
-              <Tooltip formatter={(v: number) => fmt(v)} />
-              <Line type="monotone" dataKey="total" stroke="var(--brave-yellow)" strokeWidth={2} dot={{ fill: 'var(--brave-yellow)' }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="card">
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, marginBottom: 16, fontSize: 14 }}>
-            Top Fornecedores
-          </div>
-          {topSuppliers.length === 0 ? (
-            <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum dado ainda</div>
-          ) : topSuppliers.map((s, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #eee', fontSize: 13 }}>
-              <span style={{ fontWeight: i === 0 ? 600 : 400 }}>{s.name}</span>
-              <span style={{ color: '#1a7a4a', fontWeight: 600 }}>{fmt(s.total)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {lateOrders.length > 0 && (
-        <div className="card" style={{ marginTop: 16, borderLeft: '4px solid #c0392b' }}>
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, color: '#c0392b', marginBottom: 10, fontSize: 14 }}>
-            ⚠ Pedidos Atrasados
-          </div>
-          {lateOrders.map(o => {
-            const daysLate = Math.floor((today.getTime() - new Date(o.expectedDate!).getTime()) / 86400000)
-            return (
-              <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #fde', fontSize: 13 }}>
-                <span><strong>PC-{String(o.id).padStart(4, '0')}</strong> — {o.supplier.name}</span>
-                <span style={{ color: '#c0392b', fontWeight: 600 }}>{daysLate} dia{daysLate !== 1 ? 's' : ''} de atraso</span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════
-// TAB: PEDIDOS
-// ═══════════════════════════════════════════════════════════
-function TabPedidos({ orders, suppliers, units, onRefresh, showToast }: {
-  orders: PurchaseOrder[]; suppliers: Supplier[]; units: Unit[]
-  onRefresh: () => void; showToast: (m: string) => void
+// ──────────────────────────────────────────────────────────
+//  Aba 1: Compradores
+// ──────────────────────────────────────────────────────────
+function BuyersTab({ buyers, purchases, onChange, showToast }: {
+  buyers: Buyer[]; purchases: Purchase[]; onChange: () => void; showToast: (m: string) => void
 }) {
-  const [filterStatus, setFilterStatus] = useState('ALL')
-  const [expanded, setExpanded] = useState<number | null>(null)
-  const [orderModal, setOrderModal] = useState(false)
-  const [receiveModal, setReceiveModal] = useState<PurchaseOrder | null>(null)
-  const [saving, setSaving] = useState(false)
+  const [modal, setModal] = useState(false)
+  const [editing, setEditing] = useState<Buyer | null>(null)
+  const [name, setName] = useState('')
+  const [budget, setBudget] = useState('')
 
-  // New order form
-  const emptyForm = { supplierId: '', unitId: '', expectedDate: '', notes: '' }
-  const emptyItem = { description: '', quantity: '1', unitPrice: '' }
-  const [form, setForm] = useState(emptyForm)
-  const [items, setItems] = useState([{ ...emptyItem }])
+  const openNew  = () => { setEditing(null); setName(''); setBudget(''); setModal(true) }
+  const openEdit = (b: Buyer) => { setEditing(b); setName(b.name); setBudget(String(b.monthlyBudget)); setModal(true) }
 
-  // Receive form
-  const [receiveQtys, setReceiveQtys] = useState<Record<number, string>>({})
-
-  const filtered = orders.filter(o => filterStatus === 'ALL' || o.status === filterStatus)
-  const total = filtered.reduce((a, o) => a + o.totalAmount, 0)
-
-  const addItem = () => setItems(i => [...i, { ...emptyItem }])
-  const removeItem = (idx: number) => setItems(i => i.filter((_, j) => j !== idx))
-  const updateItem = (idx: number, field: string, val: string) =>
-    setItems(i => i.map((item, j) => j === idx ? { ...item, [field]: val } : item))
-
-  const orderTotal = items.reduce((s, i) => s + (parseFloat(i.quantity) || 0) * (parseFloat(i.unitPrice) || 0), 0)
-
-  const saveOrder = async () => {
-    if (!form.supplierId) { showToast('Selecione um fornecedor'); return }
-    const validItems = items.filter(i => i.description.trim() && parseFloat(i.quantity) > 0 && parseFloat(i.unitPrice) >= 0)
-    if (!validItems.length) { showToast('Adicione ao menos um item válido'); return }
-    setSaving(true)
-    const res = await fetch('/api/purchase-orders', {
-      method: 'POST',
+  const save = async () => {
+    if (!name.trim()) return
+    const url = editing ? `/api/buyers/${editing.id}` : '/api/buyers'
+    const method = editing ? 'PUT' : 'POST'
+    const res = await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, items: validItems.map(i => ({ description: i.description, quantity: parseFloat(i.quantity), unitPrice: parseFloat(i.unitPrice) })) }),
+      body: JSON.stringify({ name, monthlyBudget: budget }),
     })
-    setSaving(false)
-    if (!res.ok) { const d = await res.json(); showToast(`Erro: ${d.error}`); return }
-    setOrderModal(false); setForm(emptyForm); setItems([{ ...emptyItem }])
-    await onRefresh(); showToast('✓ Pedido criado')
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    setModal(false)
+    onChange()
+    showToast(editing ? '✓ Comprador atualizado' : '✓ Comprador cadastrado')
   }
 
-  const changeStatus = async (id: number, status: string) => {
-    await fetch(`/api/purchase-orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
-    await onRefresh(); showToast(`✓ Status atualizado para ${STATUS_LABEL[status]}`)
+  const remove = async (b: Buyer) => {
+    if (!confirm(`Excluir comprador "${b.name}"?`)) return
+    const res = await fetch(`/api/buyers/${b.id}`, { method: 'DELETE' })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    onChange()
+    showToast('✓ Comprador excluído')
   }
 
-  const deleteOrder = async (o: PurchaseOrder) => {
-    if (!confirm(`Excluir pedido PC-${String(o.id).padStart(4, '0')}?`)) return
-    const res = await fetch(`/api/purchase-orders/${o.id}`, { method: 'DELETE' })
-    if (!res.ok) { const d = await res.json(); showToast(`Erro: ${d.error}`); return }
-    await onRefresh(); showToast('✓ Pedido excluído')
-  }
-
-  const openReceive = (o: PurchaseOrder) => {
-    const qtys: Record<number, string> = {}
-    o.items.forEach(i => { qtys[i.id] = String(i.quantity - i.receivedQty) })
-    setReceiveQtys(qtys); setReceiveModal(o)
-  }
-
-  const saveReceive = async () => {
-    if (!receiveModal) return
-    setSaving(true)
-    const receivedItems = receiveModal.items.map(i => ({ itemId: i.id, receivedQty: parseFloat(receiveQtys[i.id] || '0') + i.receivedQty }))
-    await fetch(`/api/purchase-orders/${receiveModal.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'receive', receivedItems }) })
-    setSaving(false); setReceiveModal(null)
-    await onRefresh(); showToast('✓ Recebimento registrado')
-  }
+  // Compute current-month usage per buyer
+  const chartData = buyers.map(b => {
+    const usedThisMonth = (b.purchases || [])
+      .filter(p => `${p.year}-${String(p.month).padStart(2, '0')}` === nowKey)
+      .reduce((s, p) => s + p.totalAmount, 0)
+    const remaining = Math.max(0, b.monthlyBudget - usedThisMonth)
+    const usagePct = b.monthlyBudget > 0 ? (usedThisMonth / b.monthlyBudget) * 100 : 0
+    return {
+      name: b.name,
+      'Utilizado': usedThisMonth,
+      'Disponível': remaining,
+      usagePct,
+      budget: b.monthlyBudget,
+    }
+  })
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-        <select className="form-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 160 }}>
-          <option value="ALL">Todos os status</option>
-          {Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <span style={{ fontSize: 13, color: 'var(--brave-gray)' }}>{filtered.length} pedido(s) · {fmt(total)}</span>
-        <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setOrderModal(true)}>
-          + Novo Pedido
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--brave-gray)' }}>
+          {buyers.length} comprador{buyers.length !== 1 ? 'es' : ''} cadastrado{buyers.length !== 1 ? 's' : ''}
+        </div>
+        <button className="btn btn-primary" onClick={openNew}>+ Novo Comprador</button>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600 }}>Nenhum pedido</div>
-          <div style={{ fontSize: 13, color: 'var(--brave-gray)', marginTop: 6, marginBottom: 20 }}>Crie o primeiro pedido de compra.</div>
-          <button className="btn btn-primary" onClick={() => setOrderModal(true)}>+ Novo Pedido</button>
+      <div className="card mb-6">
+        <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+          Orçamento utilizado neste mês
         </div>
-      ) : (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 14 }}>
+          Comparativo do utilizado vs. disponível em relação ao orçamento mensal de cada comprador
+        </div>
+        <ResponsiveContainer width="100%" height={Math.max(220, buyers.length * 38 + 40)}>
+          <BarChart data={chartData} layout="vertical" margin={{ left: 80 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={COLORS.light} />
+            <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+            <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={140} />
+            <Tooltip formatter={(v: number) => fmt(v)} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="Utilizado"  stackId="x" fill={COLORS.red}    />
+            <Bar dataKey="Disponível" stackId="x" fill={COLORS.green}  />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="table-wrap">
+          <table>
             <thead>
-              <tr style={{ background: 'var(--brave-light)', borderBottom: '1px solid #ddd' }}>
-                {['Nº', 'Fornecedor', 'Criado em', 'Previsão', 'Itens', 'Total', 'Status', 'Ações'].map(h => (
-                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: 'var(--brave-gray)', fontWeight: 600 }}>{h}</th>
-                ))}
+              <tr>
+                <th>Comprador</th>
+                <th style={{ textAlign: 'right' }}>Orçamento Mensal</th>
+                <th style={{ textAlign: 'right' }}>Utilizado (mês atual)</th>
+                <th style={{ textAlign: 'right' }}>Disponível</th>
+                <th style={{ textAlign: 'right' }}>% do Limite</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((o, idx) => {
-                const late = isLate(o)
-                const isExp = expanded === o.id
+              {buyers.length === 0 && (
+                <tr><td colSpan={6} style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>
+                  Nenhum comprador cadastrado.
+                </td></tr>
+              )}
+              {chartData.map((row, i) => {
+                const b = buyers[i]
                 return (
-                  <>
-                    <tr key={o.id} style={{ borderBottom: '1px solid #eee', background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
-                      <td style={{ padding: '10px 12px', fontWeight: 600, fontSize: 13 }}>
-                        PC-{String(o.id).padStart(4, '0')}
-                      </td>
-                      <td style={{ padding: '10px 12px', fontSize: 13 }}>{o.supplier.name}</td>
-                      <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--brave-gray)' }}>{fmtDate(o.createdAt)}</td>
-                      <td style={{ padding: '10px 12px', fontSize: 12 }}>
-                        {o.expectedDate ? (
-                          <span style={{ color: late ? '#c0392b' : 'inherit', fontWeight: late ? 700 : 400 }}>
-                            {fmtDate(o.expectedDate)}{late ? ' ⚠' : ''}
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--brave-gray)' }}>{o.items.length}</td>
-                      <td style={{ padding: '10px 12px', fontWeight: 600, fontSize: 13 }}>{fmt(o.totalAmount)}</td>
-                      <td style={{ padding: '10px 12px' }}>
-                        <span style={{ background: STATUS_COLOR[o.status] + '22', color: STATUS_COLOR[o.status], borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
-                          {STATUS_LABEL[o.status]}
-                        </span>
-                      </td>
-                      <td style={{ padding: '10px 12px' }}>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => setExpanded(isExp ? null : o.id)}>
-                            {isExp ? '▲' : '▼'}
-                          </button>
-                          {o.status === 'DRAFT' && (
-                            <button className="btn btn-sm" style={{ fontSize: 11, background: '#2b6cb0', color: '#fff' }} onClick={() => changeStatus(o.id, 'OPEN')}>
-                              Enviar
-                            </button>
-                          )}
-                          {['OPEN', 'PARTIAL'].includes(o.status) && (
-                            <button className="btn btn-sm" style={{ fontSize: 11, background: '#1a7a4a', color: '#fff' }} onClick={() => openReceive(o)}>
-                              Receber
-                            </button>
-                          )}
-                          {o.status === 'DRAFT' && (
-                            <button className="btn btn-sm btn-danger" style={{ fontSize: 11 }} onClick={() => deleteOrder(o)}>✕</button>
-                          )}
-                          {['OPEN', 'PARTIAL'].includes(o.status) && (
-                            <button className="btn btn-sm btn-danger" style={{ fontSize: 11 }} onClick={() => changeStatus(o.id, 'CANCELLED')}>✕</button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {isExp && (
-                      <tr key={`${o.id}-detail`} style={{ borderBottom: '2px solid var(--brave-yellow)' }}>
-                        <td colSpan={8} style={{ padding: 0 }}>
-                          <div style={{ background: '#f7f9fc', padding: '12px 20px' }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--brave-gray)', marginBottom: 8 }}>ITENS DO PEDIDO</div>
-                            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-                              <thead>
-                                <tr>
-                                  {['Descrição', 'Qtd.', 'Preço Unit.', 'Total', 'Recebido'].map(h => (
-                                    <th key={h} style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--brave-gray)', fontWeight: 500, fontSize: 11 }}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {o.items.map(item => {
-                                  const pct = item.quantity > 0 ? (item.receivedQty / item.quantity) * 100 : 0
-                                  return (
-                                    <tr key={item.id} style={{ borderTop: '1px solid #e8edf2' }}>
-                                      <td style={{ padding: '6px 8px' }}>{item.description}</td>
-                                      <td style={{ padding: '6px 8px', color: 'var(--brave-gray)' }}>{item.quantity}</td>
-                                      <td style={{ padding: '6px 8px' }}>{fmt(item.unitPrice)}</td>
-                                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>{fmt(item.quantity * item.unitPrice)}</td>
-                                      <td style={{ padding: '6px 8px' }}>
-                                        <span style={{ color: pct >= 100 ? '#1a7a4a' : pct > 0 ? '#d59f07' : 'var(--brave-gray)', fontWeight: 600 }}>
-                                          {item.receivedQty}/{item.quantity} ({Math.round(pct)}%)
-                                        </span>
-                                      </td>
-                                    </tr>
-                                  )
-                                })}
-                              </tbody>
-                            </table>
-                            {o.notes && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--brave-gray)' }}>Obs: {o.notes}</div>}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr key={b.id}>
+                    <td style={{ fontWeight: 600 }}>{row.name}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(row.budget)}</td>
+                    <td style={{ textAlign: 'right', color: COLORS.red }}>{fmt(row.Utilizado)}</td>
+                    <td style={{ textAlign: 'right', color: COLORS.green }}>{fmt(row.Disponível)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600, color: row.usagePct > 100 ? COLORS.red : row.usagePct > 80 ? '#d35400' : COLORS.dark }}>
+                      {row.usagePct.toFixed(0)}%
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-sm" onClick={() => openEdit(b)}>✏️</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => remove(b)} style={{ marginLeft: 4 }}>✕</button>
+                    </td>
+                  </tr>
                 )
               })}
             </tbody>
           </table>
         </div>
-      )}
-
-      {/* New Order Modal */}
-      {orderModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 200, overflowY: 'auto', padding: '24px 0' }}>
-          <div className="card" style={{ width: 600, padding: 24, margin: 'auto' }}>
-            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>Novo Pedido de Compra</h3>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Fornecedor *</label>
-                <select className="form-select" style={{ width: '100%' }} value={form.supplierId} onChange={e => setForm(f => ({ ...f, supplierId: e.target.value }))}>
-                  <option value="">— Selecione —</option>
-                  {suppliers.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Unidade</label>
-                <select className="form-select" style={{ width: '100%' }} value={form.unitId} onChange={e => setForm(f => ({ ...f, unitId: e.target.value }))}>
-                  <option value="">— Nenhuma —</option>
-                  {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Previsão de entrega</label>
-                <input className="form-input" style={{ width: '100%' }} type="date" value={form.expectedDate} onChange={e => setForm(f => ({ ...f, expectedDate: e.target.value }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Observações</label>
-                <input className="form-input" style={{ width: '100%' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 8, borderTop: '1px solid #eee', paddingTop: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--brave-gray)' }}>ITENS</span>
-                <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={addItem}>+ Item</button>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px 28px', gap: 4, marginBottom: 4 }}>
-                {['Descrição', 'Qtd.', 'Preço Unit.', ''].map(h => (
-                  <div key={h} style={{ fontSize: 10, color: 'var(--brave-gray)', fontWeight: 600 }}>{h}</div>
-                ))}
-              </div>
-              {items.map((item, idx) => (
-                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px 28px', gap: 4, marginBottom: 4 }}>
-                  <input className="form-input" style={{ fontSize: 12 }} placeholder="Nome do produto/serviço" value={item.description} onChange={e => updateItem(idx, 'description', e.target.value)} />
-                  <input className="form-input" style={{ fontSize: 12 }} type="number" min="0.01" step="0.01" placeholder="1" value={item.quantity} onChange={e => updateItem(idx, 'quantity', e.target.value)} />
-                  <input className="form-input" style={{ fontSize: 12 }} type="number" min="0" step="0.01" placeholder="0,00" value={item.unitPrice} onChange={e => updateItem(idx, 'unitPrice', e.target.value)} />
-                  <button className="btn btn-sm btn-danger" style={{ fontSize: 11, padding: '0 6px' }} onClick={() => removeItem(idx)}>✕</button>
-                </div>
-              ))}
-              <div style={{ textAlign: 'right', fontWeight: 700, fontSize: 14, marginTop: 8, color: '#1a7a4a' }}>
-                Total: {fmt(orderTotal)}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-              <button className="btn" onClick={() => setOrderModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={saveOrder} disabled={saving}>
-                {saving ? 'Salvando...' : 'Criar Pedido'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Receive Modal */}
-      {receiveModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-          <div className="card" style={{ width: 500, padding: 24 }}>
-            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 4 }}>Registrar Recebimento</h3>
-            <div style={{ fontSize: 13, color: 'var(--brave-gray)', marginBottom: 16 }}>
-              PC-{String(receiveModal.id).padStart(4, '0')} — {receiveModal.supplier.name}
-            </div>
-            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse', marginBottom: 16 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #eee' }}>
-                  <th style={{ textAlign: 'left', padding: '4px 0', color: 'var(--brave-gray)', fontSize: 11, fontWeight: 600 }}>Descrição</th>
-                  <th style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--brave-gray)', fontSize: 11, fontWeight: 600 }}>Pedido</th>
-                  <th style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--brave-gray)', fontSize: 11, fontWeight: 600 }}>Já recebido</th>
-                  <th style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--brave-gray)', fontSize: 11, fontWeight: 600 }}>Receber agora</th>
-                </tr>
-              </thead>
-              <tbody>
-                {receiveModal.items.map(item => (
-                  <tr key={item.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: '8px 0' }}>{item.description}</td>
-                    <td style={{ textAlign: 'center', padding: '8px' }}>{item.quantity}</td>
-                    <td style={{ textAlign: 'center', padding: '8px', color: 'var(--brave-gray)' }}>{item.receivedQty}</td>
-                    <td style={{ padding: '8px' }}>
-                      <input
-                        className="form-input"
-                        type="number" min="0" max={item.quantity - item.receivedQty} step="0.01"
-                        style={{ width: 80, textAlign: 'center', fontSize: 12 }}
-                        value={receiveQtys[item.id] || ''}
-                        onChange={e => setReceiveQtys(q => ({ ...q, [item.id]: e.target.value }))}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setReceiveModal(null)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={saveReceive} disabled={saving}>
-                {saving ? 'Salvando...' : 'Confirmar Recebimento'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════
-// TAB: FORNECEDORES
-// ═══════════════════════════════════════════════════════════
-function TabFornecedores({ suppliers, onRefresh, showToast }: {
-  suppliers: Supplier[]; onRefresh: () => void; showToast: (m: string) => void
-}) {
-  const [modal, setModal] = useState(false)
-  const [edit, setEdit] = useState<Supplier | null>(null)
-  const [saving, setSaving] = useState(false)
-  const emptyForm = { name: '', cnpj: '', contactName: '', email: '', phone: '', paymentTermDays: '30', notes: '' }
-  const [form, setForm] = useState(emptyForm)
-
-  const openAdd = () => { setEdit(null); setForm(emptyForm); setModal(true) }
-  const openEdit = (s: Supplier) => {
-    setEdit(s)
-    setForm({ name: s.name, cnpj: s.cnpj || '', contactName: s.contactName || '', email: s.email || '', phone: s.phone || '', paymentTermDays: String(s.paymentTermDays), notes: s.notes || '' })
-    setModal(true)
-  }
-
-  const save = async () => {
-    if (!form.name.trim()) return
-    setSaving(true)
-    const url = edit ? `/api/suppliers/${edit.id}` : '/api/suppliers'
-    const method = edit ? 'PUT' : 'POST'
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
-    setSaving(false)
-    if (!res.ok) { const d = await res.json(); showToast(`Erro: ${d.error}`); return }
-    setModal(false); await onRefresh(); showToast(edit ? '✓ Fornecedor atualizado' : '✓ Fornecedor cadastrado')
-  }
-
-  const del = async (s: Supplier) => {
-    if (!confirm(`Excluir fornecedor "${s.name}"?`)) return
-    const res = await fetch(`/api/suppliers/${s.id}`, { method: 'DELETE' })
-    if (!res.ok) { const d = await res.json(); showToast(`Erro: ${d.error}`); return }
-    await onRefresh(); showToast('✓ Fornecedor excluído')
-  }
-
-  const SCORE_COLOR = { A: '#1a7a4a', B: '#d59f07', C: '#c0392b' }
-
-  return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        <button className="btn btn-primary" onClick={openAdd}>+ Novo Fornecedor</button>
       </div>
-
-      {suppliers.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>🏭</div>
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600 }}>Nenhum fornecedor cadastrado</div>
-          <div style={{ fontSize: 13, color: 'var(--brave-gray)', marginTop: 6, marginBottom: 20 }}>Cadastre o primeiro fornecedor.</div>
-          <button className="btn btn-primary" onClick={openAdd}>+ Novo Fornecedor</button>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-          {suppliers.map(s => {
-            const { label, score, leadTime, completionRate } = calcScore(s)
-            const totalSpent = s.purchaseOrders.filter(o => o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0)
-            const orders = s.purchaseOrders.filter(o => o.status !== 'CANCELLED').length
-            return (
-              <div key={s.id} className="card" style={{ opacity: s.active ? 1 : 0.6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                  <div>
-                    <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 15 }}>{s.name}</div>
-                    {s.cnpj && <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>{s.cnpj}</div>}
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                    <span style={{
-                      background: SCORE_COLOR[label] + '22', color: SCORE_COLOR[label],
-                      border: `1px solid ${SCORE_COLOR[label]}`, borderRadius: 4,
-                      padding: '2px 8px', fontWeight: 700, fontSize: 13,
-                    }}>
-                      {label}
-                    </span>
-                    <button className="btn btn-sm" onClick={() => openEdit(s)}>✏️</button>
-                    <button className="btn btn-sm btn-danger" onClick={() => del(s)}>✕</button>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12, marginBottom: 10 }}>
-                  {s.contactName && <div style={{ color: 'var(--brave-gray)' }}>👤 {s.contactName}</div>}
-                  {s.phone && <div style={{ color: 'var(--brave-gray)' }}>📞 {s.phone}</div>}
-                  {s.email && <div style={{ color: 'var(--brave-gray)', gridColumn: s.contactName || s.phone ? undefined : '1/-1' }}>✉ {s.email}</div>}
-                  <div style={{ color: 'var(--brave-gray)' }}>💳 {s.paymentTermDays}d</div>
-                </div>
-
-                <div style={{ borderTop: '1px solid #eee', paddingTop: 10, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, textAlign: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Pedidos</div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{orders}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Lead Time</div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{leadTime > 0 ? `${leadTime}d` : '—'}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>Completo</div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{completionRate}%</div>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 8, textAlign: 'right', fontWeight: 700, color: '#1a7a4a', fontSize: 14 }}>
-                  Total: {fmt(totalSpent)}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
 
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-          <div className="card" style={{ width: 460, padding: 24 }}>
-            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>{edit ? 'Editar Fornecedor' : 'Novo Fornecedor'}</h3>
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Nome *</label>
-            <input className="form-input" style={{ width: '100%', marginBottom: 12 }} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>CNPJ</label>
-                <input className="form-input" style={{ width: '100%' }} placeholder="00.000.000/0000-00" value={form.cnpj} onChange={e => setForm(f => ({ ...f, cnpj: e.target.value }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Prazo de pagamento (dias)</label>
-                <input className="form-input" style={{ width: '100%' }} type="number" min="0" value={form.paymentTermDays} onChange={e => setForm(f => ({ ...f, paymentTermDays: e.target.value }))} />
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Contato</label>
-                <input className="form-input" style={{ width: '100%' }} placeholder="Nome do contato" value={form.contactName} onChange={e => setForm(f => ({ ...f, contactName: e.target.value }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Telefone</label>
-                <input className="form-input" style={{ width: '100%' }} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
-              </div>
-            </div>
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>E-mail</label>
-            <input className="form-input" style={{ width: '100%', marginBottom: 12 }} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Observações</label>
-            <input className="form-input" style={{ width: '100%', marginBottom: 16 }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+          <div className="card" style={{ width: 380, padding: 24 }}>
+            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>{editing ? 'Editar' : 'Novo'} Comprador</h3>
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Nome</label>
+            <input className="form-input" style={{ width: '100%', marginBottom: 12 }} value={name} onChange={e => setName(e.target.value)} autoFocus />
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Orçamento Mensal (R$)</label>
+            <input className="form-input" style={{ width: '100%', marginBottom: 16 }} type="number" step="0.01" value={budget} onChange={e => setBudget(e.target.value)} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn" onClick={() => setModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !form.name.trim()}>{saving ? 'Salvando...' : 'Salvar'}</button>
+              <button className="btn btn-primary" onClick={save} disabled={!name.trim()}>Salvar</button>
             </div>
           </div>
         </div>
@@ -702,256 +297,364 @@ function TabFornecedores({ suppliers, onRefresh, showToast }: {
   )
 }
 
-// ═══════════════════════════════════════════════════════════
-// TAB: ANÁLISE INTELIGENTE
-// ═══════════════════════════════════════════════════════════
-function TabAnalise({ orders, suppliers }: { orders: PurchaseOrder[]; suppliers: Supplier[] }) {
-  const abc = useMemo(() => calcABC(suppliers), [suppliers])
-  const CLASS_COLOR = { A: '#1a7a4a', B: '#d59f07', C: '#c0392b' }
+// ──────────────────────────────────────────────────────────
+//  Aba 2: Lançamentos de compra
+// ──────────────────────────────────────────────────────────
+function PurchasesTab({ buyers, suppliers, units, purchases, onChange, showToast }: {
+  buyers: Buyer[]; suppliers: Supplier[]; units: Unit[]; purchases: Purchase[]; onChange: () => void; showToast: (m: string) => void
+}) {
+  const [modal, setModal] = useState(false)
+  const [buyerId, setBuyerId] = useState('')
+  const [supplierId, setSupplierId] = useState('')
+  const [unitId, setUnitId] = useState('')
+  const [description, setDescription] = useState('')
+  const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [totalAmount, setTotalAmount] = useState('')
+  const [parcels, setParcels] = useState<{ days: number; amount: string }[]>([{ days: 30, amount: '' }])
 
-  // Lead time per supplier (completed orders only)
-  const leadData = useMemo(() => suppliers
-    .map(s => {
-      const completed = s.purchaseOrders.filter(o => o.status === 'RECEIVED' && o.receivedDate)
-      const leads = completed.map(o => (new Date(o.receivedDate!).getTime() - new Date(o.createdAt).getTime()) / 86400000)
-      const avg = leads.length > 0 ? leads.reduce((a, b) => a + b, 0) / leads.length : 0
-      return { name: s.name, leadTime: Math.round(avg), orders: completed.length }
-    })
-    .filter(s => s.orders > 0)
-    .sort((a, b) => a.leadTime - b.leadTime)
-    .slice(0, 10), [suppliers])
+  const openNew = () => {
+    setBuyerId(''); setSupplierId(''); setUnitId('')
+    setDescription(''); setInvoiceNumber('')
+    setPurchaseDate(new Date().toISOString().slice(0, 10))
+    setTotalAmount('')
+    setParcels([{ days: 30, amount: '' }])
+    setModal(true)
+  }
 
-  // Price history: group by description → show price over time per supplier
-  const priceHistory = useMemo(() => {
-    const map: Record<string, { description: string; entries: { date: string; price: number; supplier: string; qty: number }[] }> = {}
-    orders.filter(o => o.status !== 'CANCELLED').forEach(o => {
-      o.items.forEach(item => {
-        const key = item.description.toLowerCase().trim()
-        if (!map[key]) map[key] = { description: item.description, entries: [] }
-        map[key].entries.push({ date: o.createdAt.slice(0, 10), price: item.unitPrice, supplier: o.supplier.name, qty: item.quantity })
-      })
-    })
-    return Object.values(map)
-      .filter(p => p.entries.length >= 2)
-      .sort((a, b) => b.entries.length - a.entries.length)
-      .slice(0, 10)
-  }, [orders])
+  // Distribute total evenly across parcels when total changes (unless user typed amounts)
+  const totalParcels = useMemo(
+    () => parcels.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0),
+    [parcels]
+  )
 
-  // Spend by month (bar)
-  const monthlySpend = useMemo(() => {
-    const now = new Date()
-    return Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
-      const m = d.getMonth() + 1; const y = d.getFullYear()
-      return {
-        label: d.toLocaleDateString('pt-BR', { month: 'short' }),
-        total: orders.filter(o => o.month === m && o.year === y && o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0),
-      }
+  const splitEvenly = () => {
+    const t = parseFloat(totalAmount) || 0
+    if (t <= 0 || parcels.length === 0) return
+    const each = (t / parcels.length).toFixed(2)
+    setParcels(prev => prev.map(p => ({ ...p, amount: each })))
+  }
+
+  const set303090 = () => {
+    const t = parseFloat(totalAmount) || 0
+    if (t <= 0) return
+    const each = (t / 3).toFixed(2)
+    setParcels([
+      { days: 30, amount: each },
+      { days: 60, amount: each },
+      { days: 90, amount: each },
+    ])
+  }
+
+  const addParcel  = () => setParcels(p => [...p, { days: (p[p.length - 1]?.days || 0) + 30, amount: '' }])
+  const rmParcel   = (i: number) => setParcels(p => p.filter((_, k) => k !== i))
+  const updParcel  = (i: number, k: 'days' | 'amount', v: string) =>
+    setParcels(p => p.map((x, idx) => idx === i ? { ...x, [k]: k === 'days' ? parseInt(v) || 0 : v } : x))
+
+  const save = async () => {
+    if (!supplierId)  { showToast('Selecione o fornecedor'); return }
+    if (!buyerId)     { showToast('Selecione o comprador');  return }
+    const total = parseFloat(totalAmount) || 0
+    if (total <= 0)   { showToast('Valor total inválido');   return }
+    const sumParcels = parcels.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+    if (Math.abs(sumParcels - total) > 0.01) {
+      showToast(`Soma das parcelas (${fmt(sumParcels)}) ≠ total (${fmt(total)})`)
+      return
+    }
+    const base = new Date(purchaseDate)
+    const installments = parcels.map(p => {
+      const due = new Date(base)
+      due.setDate(due.getDate() + p.days)
+      return { dueDate: due.toISOString(), amount: parseFloat(p.amount) }
     })
-  }, [orders])
+    const res = await fetch('/api/purchase-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supplierId, buyerId, unitId: unitId || null,
+        description, invoiceNumber,
+        expectedDate: purchaseDate,
+        totalAmount: total,
+        installments,
+        status: 'CONFIRMED',
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    setModal(false)
+    onChange()
+    showToast('✓ Compra registrada')
+  }
+
+  const togglePay = async (purchaseId: number, installmentId: number, currentlyPaid: boolean) => {
+    const res = await fetch(`/api/purchase-orders/${purchaseId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'pay-installment', installmentId, paid: !currentlyPaid }),
+    })
+    if (res.ok) { onChange(); showToast(currentlyPaid ? '✓ Marcada como pendente' : '✓ Parcela paga') }
+  }
+
+  const remove = async (p: Purchase) => {
+    if (!confirm(`Excluir compra de ${fmt(p.totalAmount)} (${p.supplier.name})?`)) return
+    const res = await fetch(`/api/purchase-orders/${p.id}`, { method: 'DELETE' })
+    if (res.ok) { onChange(); showToast('✓ Compra excluída') }
+  }
+
+  // Sort newest first
+  const sorted = [...purchases].sort((a, b) => (b.expectedDate || '').localeCompare(a.expectedDate || ''))
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--brave-gray)' }}>
+          {purchases.length} compra{purchases.length !== 1 ? 's' : ''} registrada{purchases.length !== 1 ? 's' : ''}
+        </div>
+        <button className="btn btn-primary" onClick={openNew} disabled={buyers.length === 0 || suppliers.length === 0}>
+          + Nova Compra
+        </button>
+      </div>
 
-      {/* Curva ABC */}
-      <div className="card">
-        <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
-          Curva ABC — Fornecedores por Gasto
+      {(buyers.length === 0 || suppliers.length === 0) && (
+        <div className="card" style={{ marginBottom: 16, background: '#fef9e7', borderLeft: `3px solid ${COLORS.yellow}` }}>
+          <div style={{ fontSize: 13 }}>
+            Pra registrar compras, cadastre primeiro:
+            {buyers.length === 0    && <div>• Pelo menos um <b>comprador</b> na aba Compradores</div>}
+            {suppliers.length === 0 && <div>• Pelo menos um <b>fornecedor</b> em <a href="/compras" style={{ textDecoration: 'underline' }}>Fornecedores</a> (a configurar)</div>}
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--brave-gray)', marginBottom: 16 }}>
-          A = 80% do gasto · B = próximos 15% · C = últimos 5%
-        </div>
-        {abc.length === 0 ? (
-          <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum dado de compras ainda.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      )}
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="table-wrap">
+          <table>
             <thead>
-              <tr style={{ borderBottom: '1px solid #eee' }}>
-                {['Classe', 'Fornecedor', 'Gasto Total', '% do Total', '% Acum.'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontSize: 11, color: 'var(--brave-gray)', fontWeight: 600 }}>{h}</th>
-                ))}
+              <tr>
+                <th>Data</th>
+                <th>Comprador</th>
+                <th>Fornecedor</th>
+                <th>NF / Descrição</th>
+                <th style={{ textAlign: 'right' }}>Valor</th>
+                <th style={{ textAlign: 'right' }}>Restante Orçamento</th>
+                <th>Parcelas</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {abc.map((row, i) => (
-                <tr key={row.id} style={{ borderBottom: '1px solid #f5f5f5', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
-                  <td style={{ padding: '8px 10px' }}>
-                    <span style={{ background: CLASS_COLOR[row.class as keyof typeof CLASS_COLOR] + '22', color: CLASS_COLOR[row.class as keyof typeof CLASS_COLOR], border: `1px solid ${CLASS_COLOR[row.class as keyof typeof CLASS_COLOR]}`, borderRadius: 4, padding: '1px 8px', fontWeight: 700, fontSize: 12 }}>
-                      {row.class}
-                    </span>
-                  </td>
-                  <td style={{ padding: '8px 10px', fontWeight: row.class === 'A' ? 600 : 400 }}>{row.name}</td>
-                  <td style={{ padding: '8px 10px', color: '#1a7a4a', fontWeight: 600 }}>{fmt(row.total)}</td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ flex: 1, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' }}>
-                        <div style={{ width: `${row.pct}%`, height: '100%', background: CLASS_COLOR[row.class as keyof typeof CLASS_COLOR], borderRadius: 3 }} />
+              {sorted.length === 0 && (
+                <tr><td colSpan={8} style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>
+                  Nenhuma compra registrada.
+                </td></tr>
+              )}
+              {sorted.map(p => {
+                const buyer = buyers.find(b => b.id === p.buyerId)
+                const usedSameMonth = purchases
+                  .filter(x => x.buyerId === p.buyerId && x.month === p.month && x.year === p.year)
+                  .reduce((s, x) => s + x.totalAmount, 0)
+                const remaining = buyer ? Math.max(0, buyer.monthlyBudget - usedSameMonth) : 0
+                return (
+                  <tr key={p.id}>
+                    <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(p.expectedDate)}</td>
+                    <td style={{ fontSize: 13 }}>{buyer?.name || '—'}</td>
+                    <td style={{ fontSize: 13 }}>{p.supplier.name}</td>
+                    <td>
+                      <div style={{ fontSize: 13 }}>{p.invoiceNumber || '—'}</div>
+                      {p.description && <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>{p.description}</div>}
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(p.totalAmount)}</td>
+                    <td style={{ textAlign: 'right', fontSize: 12, color: remaining > 0 ? COLORS.green : COLORS.red }}>
+                      {buyer ? fmt(remaining) : '—'}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {p.installments.map(ins => {
+                          const paid = ins.status === 'PAID'
+                          const isOverdue = !paid && ins.dueDate && new Date(ins.dueDate) < new Date()
+                          return (
+                            <button
+                              key={ins.id}
+                              onClick={() => togglePay(p.id, ins.id!, paid)}
+                              style={{
+                                fontSize: 11,
+                                background: paid ? '#e8f6ef' : isOverdue ? '#fdecea' : '#eef0f5',
+                                color:      paid ? COLORS.green : isOverdue ? COLORS.red : COLORS.dark,
+                                border: 'none',
+                                borderRadius: 4,
+                                padding: '3px 8px',
+                                cursor: 'pointer',
+                                textAlign: 'left',
+                              }}
+                              title={paid ? 'Clique para desmarcar' : 'Clique para marcar como paga'}
+                            >
+                              {paid ? '✓' : isOverdue ? '⚠' : '○'} {fmtDate(ins.dueDate)} — {fmt(ins.amount)}
+                            </button>
+                          )
+                        })}
                       </div>
-                      <span>{row.pct.toFixed(1)}%</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: '8px 10px', color: 'var(--brave-gray)' }}>{row.cumPct.toFixed(1)}%</td>
+                    </td>
+                    <td><button className="btn btn-sm btn-danger" onClick={() => remove(p)}>✕</button></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {modal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, overflow: 'auto', padding: 20 }}>
+          <div className="card" style={{ width: 560, padding: 24, maxHeight: '90vh', overflow: 'auto' }}>
+            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>Nova Compra</h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Comprador</label>
+                <select className="form-select" style={{ width: '100%' }} value={buyerId} onChange={e => setBuyerId(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {buyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Fornecedor</label>
+                <select className="form-select" style={{ width: '100%' }} value={supplierId} onChange={e => setSupplierId(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Unidade</label>
+                <select className="form-select" style={{ width: '100%' }} value={unitId} onChange={e => setUnitId(e.target.value)}>
+                  <option value="">—</option>
+                  {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Data da Compra</label>
+                <input type="date" className="form-input" style={{ width: '100%' }} value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Nº NF</label>
+                <input className="form-input" style={{ width: '100%' }} value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Valor Total (R$)</label>
+                <input type="number" step="0.01" className="form-input" style={{ width: '100%' }} value={totalAmount} onChange={e => setTotalAmount(e.target.value)} />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Descrição</label>
+              <input className="form-input" style={{ width: '100%' }} value={description} onChange={e => setDescription(e.target.value)} />
+            </div>
+
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--brave-light)', paddingTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>Parcelas</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className="btn btn-sm" onClick={set303090}>30/60/90</button>
+                  <button type="button" className="btn btn-sm" onClick={splitEvenly}>Dividir igualmente</button>
+                  <button type="button" className="btn btn-sm" onClick={addParcel}>+ Parcela</button>
+                </div>
+              </div>
+
+              {parcels.map((p, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr auto', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input type="number" min="0" className="form-input" style={{ width: 60 }} value={p.days} onChange={e => updParcel(i, 'days', e.target.value)} />
+                    <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>dias</span>
+                  </div>
+                  <input type="number" step="0.01" placeholder="Valor (R$)" className="form-input" value={p.amount} onChange={e => updParcel(i, 'amount', e.target.value)} />
+                  <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>
+                    Venc: {(() => {
+                      const d = new Date(purchaseDate); d.setDate(d.getDate() + p.days)
+                      return d.toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+                    })()}
+                  </div>
+                  {parcels.length > 1 && (
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => rmParcel(i)}>✕</button>
+                  )}
+                </div>
+              ))}
+
+              <div style={{ fontSize: 12, color: Math.abs(totalParcels - (parseFloat(totalAmount) || 0)) > 0.01 ? COLORS.red : COLORS.green, marginTop: 6 }}>
+                Soma das parcelas: {fmt(totalParcels)} {totalAmount && ` / ${fmt(parseFloat(totalAmount))}`}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+              <button className="btn" onClick={() => setModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={save}>Salvar Compra</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ──────────────────────────────────────────────────────────
+//  Aba 3: Fluxo Futuro
+// ──────────────────────────────────────────────────────────
+function CashflowTab({ cashflow, summary }: { cashflow: CashflowPoint[]; summary: { overdueTotal: number; pendingFutureTotal: number } }) {
+  const totalSeries = cashflow.reduce((s, p) => s + p.total, 0)
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 20, fontSize: 13, color: 'var(--brave-gray)', marginBottom: 16 }}>
+        <div>Total a pagar próximos 12 meses: <b style={{ color: 'var(--brave-dark)' }}>{fmt(totalSeries)}</b></div>
+        {summary.overdueTotal > 0 && (
+          <div>Vencidas em aberto: <b style={{ color: COLORS.red }}>{fmt(summary.overdueTotal)}</b></div>
+        )}
+        <div>Comprometido a vencer: <b style={{ color: 'var(--brave-dark)' }}>{fmt(summary.pendingFutureTotal)}</b></div>
+      </div>
+
+      <div className="card mb-6">
+        <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+          Comprometimento de Caixa — próximos 12 meses
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 14 }}>
+          Empilhado por status: <b style={{ color: COLORS.green }}>pago</b> · <b style={{ color: COLORS.blue }}>a vencer</b> · <b style={{ color: COLORS.red }}>vencido em aberto</b>
+        </div>
+        <ResponsiveContainer width="100%" height={340}>
+          <BarChart data={cashflow}>
+            <CartesianGrid strokeDasharray="3 3" stroke={COLORS.light} />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+            <Tooltip formatter={(v: number) => fmt(v)} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="paid"    name="Pago"    stackId="x" fill={COLORS.green} />
+            <Bar dataKey="pending" name="A vencer" stackId="x" fill={COLORS.blue} />
+            <Bar dataKey="overdue" name="Vencido"  stackId="x" fill={COLORS.red} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mês</th>
+                <th style={{ textAlign: 'right' }}>Pago</th>
+                <th style={{ textAlign: 'right' }}>A vencer</th>
+                <th style={{ textAlign: 'right' }}>Vencido</th>
+                <th style={{ textAlign: 'right' }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cashflow.map(p => (
+                <tr key={p.key}>
+                  <td style={{ fontWeight: 600 }}>{p.label}</td>
+                  <td style={{ textAlign: 'right', color: COLORS.green }}>{fmt(p.paid)}</td>
+                  <td style={{ textAlign: 'right', color: COLORS.blue  }}>{fmt(p.pending)}</td>
+                  <td style={{ textAlign: 'right', color: COLORS.red   }}>{fmt(p.overdue)}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(p.total)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        )}
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {/* Lead Time */}
-        <div className="card">
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-            Lead Time por Fornecedor
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Dias médios entre pedido e recebimento</div>
-          {leadData.length === 0 ? (
-            <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum pedido recebido ainda.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={leadData} layout="vertical" margin={{ left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eee" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 10 }} unit="d" />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={90} />
-                <Tooltip formatter={(v: number) => [`${v} dias`, 'Lead Time']} />
-                <Bar dataKey="leadTime" radius={3}>
-                  {leadData.map((entry, i) => (
-                    <Cell key={i} fill={entry.leadTime <= 7 ? '#1a7a4a' : entry.leadTime <= 15 ? '#d59f07' : '#c0392b'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* Monthly Spend Bar */}
-        <div className="card">
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-            Gasto Mensal (últimos 6 meses)
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 12 }}>Total em pedidos não cancelados</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={monthlySpend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-              <Tooltip formatter={(v: number) => fmt(v)} />
-              <Bar dataKey="total" fill="var(--brave-yellow)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
         </div>
       </div>
-
-      {/* Price History */}
-      {priceHistory.length > 0 && (
-        <div className="card">
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-            Histórico de Preços por Produto
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
-            Produtos que aparecem em 2+ pedidos — detecta variação de preço entre compras
-          </div>
-          {priceHistory.map(product => {
-            const prices = product.entries.map(e => e.price)
-            const minP = Math.min(...prices); const maxP = Math.max(...prices)
-            const variation = minP > 0 ? ((maxP - minP) / minP) * 100 : 0
-            const sorted = [...product.entries].sort((a, b) => a.date.localeCompare(b.date))
-            const last = sorted[sorted.length - 1]
-            const prev = sorted[sorted.length - 2]
-            const trend = prev ? last.price - prev.price : 0
-            return (
-              <div key={product.description} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #eee' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{product.description}</span>
-                  <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
-                    {variation > 10 && (
-                      <span style={{ color: '#c0392b', fontWeight: 600 }}>⚠ {variation.toFixed(0)}% variação</span>
-                    )}
-                    {trend !== 0 && (
-                      <span style={{ color: trend > 0 ? '#c0392b' : '#1a7a4a', fontWeight: 600 }}>
-                        {trend > 0 ? '↑' : '↓'} {fmt(Math.abs(trend))} na última compra
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      {['Data', 'Fornecedor', 'Qtd.', 'Preço Unit.'].map(h => (
-                        <th key={h} style={{ textAlign: 'left', padding: '2px 8px', color: 'var(--brave-gray)', fontSize: 10, fontWeight: 600 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sorted.map((e, i) => (
-                      <tr key={i} style={{ borderTop: '1px solid #f0f0f0', background: i === sorted.length - 1 ? '#fffde7' : 'transparent' }}>
-                        <td style={{ padding: '4px 8px', color: 'var(--brave-gray)' }}>{fmtDate(e.date)}</td>
-                        <td style={{ padding: '4px 8px' }}>{e.supplier}</td>
-                        <td style={{ padding: '4px 8px', color: 'var(--brave-gray)' }}>{e.qty}</td>
-                        <td style={{ padding: '4px 8px', fontWeight: i === sorted.length - 1 ? 700 : 400, color: '#1a7a4a' }}>{fmt(e.price)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Score Summary */}
-      <div className="card">
-        <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 700, fontSize: 14, marginBottom: 4 }}>
-          Ranking de Fornecedores
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16 }}>
-          Score = 60% taxa de entrega completa + 40% velocidade de entrega
-        </div>
-        {suppliers.length === 0 ? (
-          <div style={{ color: 'var(--brave-gray)', fontSize: 13 }}>Nenhum fornecedor cadastrado.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #eee' }}>
-                {['Score', 'Fornecedor', 'Pedidos', 'Lead Time Médio', 'Taxa de Completude', 'Gasto Total'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontSize: 11, color: 'var(--brave-gray)', fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {suppliers
-                .map(s => ({ ...s, ...calcScore(s) }))
-                .sort((a, b) => b.score - a.score)
-                .map((s, i) => {
-                  const totalSpent = s.purchaseOrders.filter(o => o.status !== 'CANCELLED').reduce((a, o) => a + o.totalAmount, 0)
-                  const totalOrders = s.purchaseOrders.filter(o => o.status !== 'CANCELLED').length
-                  const color = { A: '#1a7a4a', B: '#d59f07', C: '#c0392b' }[s.label]
-                  return (
-                    <tr key={s.id} style={{ borderBottom: '1px solid #f5f5f5', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
-                      <td style={{ padding: '8px 10px' }}>
-                        <span style={{ background: color + '22', color, border: `1px solid ${color}`, borderRadius: 4, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
-                          {s.label} · {s.score}
-                        </span>
-                      </td>
-                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{s.name}</td>
-                      <td style={{ padding: '8px 10px', color: 'var(--brave-gray)' }}>{totalOrders}</td>
-                      <td style={{ padding: '8px 10px' }}>{s.leadTime > 0 ? `${s.leadTime} dias` : '—'}</td>
-                      <td style={{ padding: '8px 10px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{ width: 60, height: 6, background: '#eee', borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ width: `${s.completionRate}%`, height: '100%', background: color, borderRadius: 3 }} />
-                          </div>
-                          <span>{s.completionRate}%</span>
-                        </div>
-                      </td>
-                      <td style={{ padding: '8px 10px', color: '#1a7a4a', fontWeight: 600 }}>{fmt(totalSpent)}</td>
-                    </tr>
-                  )
-                })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+    </>
   )
 }

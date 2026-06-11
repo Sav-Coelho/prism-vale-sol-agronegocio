@@ -1,469 +1,332 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend, ReferenceArea, Cell,
+} from 'recharts'
 
-type Unit = { id: number; name: string }
-type Sale = { id: number; description: string; amount: number; date: string; unitId?: number | null }
-type Client = {
-  id: number; name: string; email?: string | null; phone?: string | null
-  cpf?: string | null; unitId?: number | null; unit?: Unit | null
-  active: boolean; createdAt: string; sales: Sale[]
+type CreditRow = {
+  id: number
+  name: string
+  cpf?: string | null
+  active: boolean
+  alpha: number
+  beta: number
+  paid: number
+  defaulted: number
+  pending: number
+  score: number
+  risk: number
+  confidenceLow: number
+  confidenceHigh: number
+  observations: number
+  salesCount: number
+  openBalance: number
+  aging: { bucket0_30: number; bucket31_60: number; bucket61_90: number; bucket90plus: number }
 }
 
-const fmt = (n: number) =>
-  n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+type RiskPoint = {
+  key: string
+  label: string
+  year: number
+  month: number
+  weightedRisk: number
+  meanRisk: number
+  exposure: number
+  clientsWithExposure: number
+}
 
-const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+const fmt    = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`
+
+const COLORS = {
+  dark:    '#2b2d42',
+  yellow:  '#eaca2d',
+  green:   '#1a7a4a',
+  red:     '#c0392b',
+  blue:    '#3a6ea5',
+  purple:  '#7d3c98',
+  orange:  '#d35400',
+  gray:    '#8d99ae',
+  light:   '#edf2f4',
+}
+
+const riskColor = (r: number) =>
+  r < 0.2 ? COLORS.green  :
+  r < 0.4 ? '#7da93f'     :
+  r < 0.6 ? COLORS.yellow :
+  r < 0.8 ? COLORS.orange :
+            COLORS.red
+
+const riskLabel = (r: number) =>
+  r < 0.2 ? 'AA' :
+  r < 0.4 ? 'A'  :
+  r < 0.6 ? 'B'  :
+  r < 0.8 ? 'C'  :
+            'D'
 
 export default function Clientes() {
-  const [clients, setClients] = useState<Client[]>([])
-  const [units, setUnits] = useState<Unit[]>([])
+  const [rows, setRows] = useState<CreditRow[]>([])
+  const [risk, setRisk] = useState<RiskPoint[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
   const [toast, setToast] = useState('')
-
-  // Client modal
-  const [clientModal, setClientModal] = useState(false)
-  const [editClient, setEditClient] = useState<Client | null>(null)
-  const [form, setForm] = useState({ name: '', email: '', phone: '', cpf: '', unitId: '' })
-  const [saving, setSaving] = useState(false)
-
-  // Sale modal
-  const [saleModal, setSaleModal] = useState(false)
-  const [saleClient, setSaleClient] = useState<Client | null>(null)
-  const [saleForm, setSaleForm] = useState({ description: '', amount: '', date: new Date().toISOString().slice(0, 10), unitId: '' })
-  const [saleSaving, setSaleSaving] = useState(false)
-
-  // Expanded client
-  const [expanded, setExpanded] = useState<number | null>(null)
+  const [modal, setModal] = useState(false)
+  const [editing, setEditing] = useState<CreditRow | null>(null)
+  const [name, setName] = useState('')
+  const [cpf, setCpf] = useState('')
+  const [phone, setPhone] = useState('')
 
   const load = async () => {
-    const [c, u] = await Promise.all([
-      fetch('/api/clients').then(r => r.json()),
-      fetch('/api/units').then(r => r.json()),
+    setLoading(true)
+    const [r, s] = await Promise.all([
+      fetch('/api/credit').then(x => x.json()),
+      fetch('/api/credit/aggregate-risk?months=12').then(x => x.json()),
     ])
-    setClients(c)
-    setUnits(u)
+    setRows(r)
+    setRisk(s.series || [])
     setLoading(false)
   }
-
   useEffect(() => { load() }, [])
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000) }
 
-  // --- Client CRUD ---
-  const openAdd = () => {
-    setEditClient(null)
-    setForm({ name: '', email: '', phone: '', cpf: '', unitId: '' })
-    setClientModal(true)
-  }
-  const openEdit = (c: Client) => {
-    setEditClient(c)
-    setForm({ name: c.name, email: c.email || '', phone: c.phone || '', cpf: c.cpf || '', unitId: c.unitId ? String(c.unitId) : '' })
-    setClientModal(true)
-  }
+  const portfolio = useMemo(() => {
+    const open = rows.reduce((s, r) => s + r.openBalance, 0)
+    const weightedRisk = open > 0
+      ? rows.reduce((s, r) => s + r.openBalance * r.risk, 0) / open
+      : 0
+    return { open, weightedRisk }
+  }, [rows])
 
-  const saveClient = async () => {
-    if (!form.name.trim()) return
-    setSaving(true)
-    const url = editClient ? `/api/clients/${editClient.id}` : '/api/clients'
-    const method = editClient ? 'PUT' : 'POST'
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
-    const data = await res.json()
-    setSaving(false)
-    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
-    setClientModal(false)
-    await load()
-    showToast(editClient ? '✓ Cliente atualizado' : '✓ Cliente cadastrado')
-  }
+  const distribution = useMemo(() => {
+    const bands = [
+      { label: 'AA (<20%)', min: 0,   max: 0.2,  color: COLORS.green  },
+      { label: 'A (20–40)', min: 0.2, max: 0.4,  color: '#7da93f'     },
+      { label: 'B (40–60)', min: 0.4, max: 0.6,  color: COLORS.yellow },
+      { label: 'C (60–80)', min: 0.6, max: 0.8,  color: COLORS.orange },
+      { label: 'D (≥80%)',  min: 0.8, max: 1.01, color: COLORS.red    },
+    ]
+    return bands.map(b => ({
+      ...b,
+      clientes: rows.filter(r => r.risk >= b.min && r.risk < b.max).length,
+    }))
+  }, [rows])
 
-  const deleteClient = async (c: Client) => {
-    if (!confirm(`Excluir cliente "${c.name}"? As vendas vinculadas também serão excluídas.`)) return
-    const res = await fetch(`/api/clients/${c.id}`, { method: 'DELETE' })
-    if (!res.ok) { showToast('Erro ao excluir'); return }
-    await load()
-    if (expanded === c.id) setExpanded(null)
-    showToast('✓ Cliente excluído')
-  }
-
-  const toggleActive = async (c: Client) => {
-    await fetch(`/api/clients/${c.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...c, active: !c.active }),
+  const agingTotals = useMemo(() => {
+    const t = { '0–30': 0, '31–60': 0, '61–90': 0, '>90': 0 }
+    rows.forEach(r => {
+      t['0–30']  += r.aging.bucket0_30
+      t['31–60'] += r.aging.bucket31_60
+      t['61–90'] += r.aging.bucket61_90
+      t['>90']   += r.aging.bucket90plus
     })
-    await load()
-  }
+    return Object.entries(t).map(([faixa, valor]) => ({ faixa, valor }))
+  }, [rows])
 
-  // --- Sales ---
-  const openSale = (c: Client) => {
-    setSaleClient(c)
-    setSaleForm({ description: '', amount: '', date: new Date().toISOString().slice(0, 10), unitId: c.unitId ? String(c.unitId) : '' })
-    setSaleModal(true)
-  }
+  const sortedRows = [...rows].sort((a, b) => b.risk - a.risk)
 
-  const saveSale = async () => {
-    if (!saleClient || !saleForm.description.trim() || !saleForm.amount || !saleForm.date) return
-    setSaleSaving(true)
-    const res = await fetch('/api/sales', {
-      method: 'POST',
+  const openNew  = () => { setEditing(null); setName(''); setCpf(''); setPhone(''); setModal(true) }
+  const openEdit = (r: CreditRow) => { setEditing(r); setName(r.name); setCpf(r.cpf || ''); setPhone(''); setModal(true) }
+
+  const save = async () => {
+    if (!name.trim()) return
+    const url = editing ? `/api/clients/${editing.id}` : '/api/clients'
+    const method = editing ? 'PUT' : 'POST'
+    const res = await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId: saleClient.id, ...saleForm }),
+      body: JSON.stringify({ name, cpf, phone }),
     })
     const data = await res.json()
-    setSaleSaving(false)
     if (!res.ok) { showToast(`Erro: ${data.error}`); return }
-    setSaleModal(false)
-    await load()
-    showToast('✓ Compra registrada')
+    setModal(false)
+    load()
+    showToast(editing ? '✓ Cliente atualizado' : '✓ Cliente cadastrado')
   }
 
-  const deleteSale = async (saleId: number) => {
-    if (!confirm('Excluir esta compra?')) return
-    await fetch(`/api/sales/${saleId}`, { method: 'DELETE' })
-    await load()
-    showToast('✓ Compra removida')
+  const remove = async (r: CreditRow) => {
+    if (!confirm(`Excluir cliente "${r.name}"?`)) return
+    const res = await fetch(`/api/clients/${r.id}`, { method: 'DELETE' })
+    if (res.ok) { load(); showToast('✓ Cliente excluído') }
   }
-
-  const filtered = clients.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.email || '').toLowerCase().includes(search.toLowerCase()) ||
-    (c.phone || '').includes(search)
-  )
-
-  const totalClients = clients.filter(c => c.active).length
-  const totalSales = clients.reduce((acc, c) => acc + c.sales.reduce((s, v) => s + v.amount, 0), 0)
-  const ticketMedio = totalClients > 0 ? totalSales / totalClients : 0
 
   return (
     <Shell>
       <div className="page-header flex-between">
         <div>
-          <h1 className="page-title">Clientes</h1>
-          <p className="page-subtitle">Cadastro e controle de compras por cliente</p>
+          <h1 className="page-title">Análise de Crédito</h1>
+          <p className="page-subtitle">
+            Score bayesiano (prior Beta(2,2)) · Carteira em aberto: <b>{fmt(portfolio.open)}</b> · Risco médio ponderado: <b>{fmtPct(portfolio.weightedRisk)}</b>
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={openAdd}>+ Novo Cliente</button>
-      </div>
-
-      {/* Metrics */}
-      <div className="metrics-grid mb-6" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        <div className="metric-card">
-          <div className="metric-label">Clientes Ativos</div>
-          <div className="metric-value">{totalClients}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Total em Compras</div>
-          <div className="metric-value" style={{ fontSize: 18 }}>{fmt(totalSales)}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Ticket Médio</div>
-          <div className="metric-value" style={{ fontSize: 18 }}>{fmt(ticketMedio)}</div>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div style={{ marginBottom: 16 }}>
-        <input
-          className="form-input"
-          style={{ width: 320 }}
-          placeholder="Buscar por nome, e-mail ou telefone..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+        <button className="btn btn-primary" onClick={openNew}>+ Novo Cliente</button>
       </div>
 
       {loading ? (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>Carregando...</div>
-      ) : filtered.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 60 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>👤</div>
-          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600 }}>
-            {search ? 'Nenhum cliente encontrado' : 'Nenhum cliente cadastrado'}
-          </div>
-          {!search && (
-            <div style={{ fontSize: 13, color: 'var(--brave-gray)', marginTop: 6, marginBottom: 20 }}>
-              Comece cadastrando o primeiro cliente.
-            </div>
-          )}
-          {!search && <button className="btn btn-primary" onClick={openAdd}>+ Novo Cliente</button>}
-        </div>
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--brave-gray)' }}>Calculando scores...</div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: 'var(--brave-light)', borderBottom: '1px solid #ddd' }}>
-                <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, color: 'var(--brave-gray)', fontWeight: 600 }}>Cliente</th>
-                <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, color: 'var(--brave-gray)', fontWeight: 600 }}>Unidade</th>
-                <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, color: 'var(--brave-gray)', fontWeight: 600 }}>Contato</th>
-                <th style={{ padding: '10px 16px', textAlign: 'right', fontSize: 12, color: 'var(--brave-gray)', fontWeight: 600 }}>Total Compras</th>
-                <th style={{ padding: '10px 16px', textAlign: 'center', fontSize: 12, color: 'var(--brave-gray)', fontWeight: 600 }}>Compras</th>
-                <th style={{ padding: '10px 16px', textAlign: 'center', fontSize: 12, color: 'var(--brave-gray)', fontWeight: 600 }}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((c, i) => {
-                const totalClient = c.sales.reduce((s, v) => s + v.amount, 0)
-                const lastSale = c.sales.length > 0 ? c.sales.reduce((a, b) => a.date > b.date ? a : b) : null
-                const isExpanded = expanded === c.id
-                return (
-                  <>
-                    <tr
-                      key={c.id}
-                      style={{
-                        borderBottom: '1px solid #eee',
-                        background: i % 2 === 0 ? '#fff' : 'var(--brave-light)',
-                        opacity: c.active ? 1 : 0.5,
-                      }}
-                    >
-                      <td style={{ padding: '12px 16px' }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</div>
-                        {!c.active && <span style={{ fontSize: 10, color: '#999', background: '#eee', borderRadius: 3, padding: '1px 4px' }}>inativo</span>}
+        <>
+          <div className="card mb-6">
+            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+              Risco de Crédito Agregado — últimos 12 meses
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 14 }}>
+              Probabilidade esperada de inadimplência ponderada pela exposição em aberto da carteira no fim de cada mês
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={risk}>
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.light} />
+                <ReferenceArea y1={0}    y2={0.2}  fill={COLORS.green}  fillOpacity={0.06} />
+                <ReferenceArea y1={0.2}  y2={0.4}  fill="#7da93f"       fillOpacity={0.06} />
+                <ReferenceArea y1={0.4}  y2={0.6}  fill={COLORS.yellow} fillOpacity={0.08} />
+                <ReferenceArea y1={0.6}  y2={0.8}  fill={COLORS.orange} fillOpacity={0.08} />
+                <ReferenceArea y1={0.8}  y2={1}    fill={COLORS.red}    fillOpacity={0.08} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} domain={[0, 1]} tickFormatter={v => `${(v*100).toFixed(0)}%`} />
+                <Tooltip formatter={(v: number) => fmtPct(v)} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="weightedRisk" name="Risco ponderado pela exposição" stroke={COLORS.red}  strokeWidth={3} dot={{ r: 4 }} />
+                <Line type="monotone" dataKey="meanRisk"     name="Risco médio simples"             stroke={COLORS.gray} strokeWidth={2} strokeDasharray="4 4" dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="grid-2 mb-6">
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                Distribuição de Clientes por Faixa de Risco
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 14 }}>
+                AA (muito baixo) a D (crítico), baseado no posterior Beta
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={distribution}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.light} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="clientes" name="Clientes" radius={[3, 3, 0, 0]}>
+                    {distribution.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="card">
+              <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                Aging da Carteira em Aberto
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 14 }}>
+                Valor em aberto por idade do vencimento (dias)
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={agingTotals}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.light} />
+                  <XAxis dataKey="faixa" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => fmt(v)} />
+                  <Bar dataKey="valor" name="Em aberto" fill={COLORS.orange} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--brave-light)', fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>
+              Clientes — ordenados por risco (mais críticos primeiro)
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cliente</th>
+                    <th>Pagas / Inadimplentes / Pendentes</th>
+                    <th style={{ width: 240 }}>Probabilidade de Pagar (IC 95%)</th>
+                    <th>Faixa</th>
+                    <th style={{ textAlign: 'right' }}>Em aberto</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRows.length === 0 && (
+                    <tr><td colSpan={6} style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>
+                      Nenhum cliente cadastrado.
+                    </td></tr>
+                  )}
+                  {sortedRows.map(r => (
+                    <tr key={r.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{r.name}</div>
+                        {r.cpf && <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>{r.cpf}</div>}
                       </td>
-                      <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--brave-gray)' }}>
-                        {c.unit?.name || '—'}
+                      <td style={{ fontSize: 12 }}>
+                        <span style={{ color: COLORS.green }}>{r.paid}</span> / <span style={{ color: COLORS.red }}>{r.defaulted}</span> / <span style={{ color: COLORS.gray }}>{r.pending}</span>
                       </td>
-                      <td style={{ padding: '12px 16px', fontSize: 12, color: 'var(--brave-gray)' }}>
-                        {c.phone && <div>{c.phone}</div>}
-                        {c.email && <div style={{ color: '#4a90d9' }}>{c.email}</div>}
-                        {!c.phone && !c.email && '—'}
-                      </td>
-                      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                        <div style={{ fontWeight: 700, color: totalClient > 0 ? '#1a7a4a' : 'var(--brave-gray)', fontSize: 14 }}>
-                          {fmt(totalClient)}
+                      <td>
+                        <div style={{ position: 'relative', height: 16, background: COLORS.light, borderRadius: 4 }}>
+                          <div style={{
+                            position: 'absolute',
+                            left:  `${r.confidenceLow * 100}%`,
+                            width: `${(r.confidenceHigh - r.confidenceLow) * 100}%`,
+                            top: 3, bottom: 3,
+                            background: riskColor(r.risk),
+                            opacity: 0.35,
+                            borderRadius: 2,
+                          }} />
+                          <div style={{
+                            position: 'absolute',
+                            left: `${r.score * 100}%`,
+                            top: -1, bottom: -1,
+                            width: 3,
+                            background: riskColor(r.risk),
+                            borderRadius: 1,
+                          }} />
                         </div>
-                        {lastSale && (
-                          <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>
-                            última: {fmtDate(lastSale.date)}
-                          </div>
-                        )}
-                        {c.sales.length > 0 && (
-                          <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>
-                            {c.sales.length} compra{c.sales.length !== 1 ? 's' : ''}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                        <button
-                          className="btn btn-sm"
-                          style={{ fontSize: 12 }}
-                          onClick={() => openSale(c)}
-                        >
-                          + Registrar
-                        </button>
-                        {c.sales.length > 0 && (
-                          <button
-                            className="btn btn-sm"
-                            style={{ fontSize: 12, marginLeft: 4, background: isExpanded ? 'var(--brave-yellow)' : undefined }}
-                            onClick={() => setExpanded(isExpanded ? null : c.id)}
-                          >
-                            {isExpanded ? '▲' : '▼'} Histórico
-                          </button>
-                        )}
-                      </td>
-                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
-                          <button className="btn btn-sm" title="Editar" onClick={() => openEdit(c)}>✏️</button>
-                          <button
-                            className="btn btn-sm"
-                            title={c.active ? 'Desativar' : 'Ativar'}
-                            onClick={() => toggleActive(c)}
-                            style={{ fontSize: 11 }}
-                          >
-                            {c.active ? '⏸' : '▶'}
-                          </button>
-                          <button className="btn btn-sm btn-danger" title="Excluir" onClick={() => deleteClient(c)}>✕</button>
+                        <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginTop: 3 }}>
+                          {fmtPct(r.score)} · IC: {fmtPct(r.confidenceLow)}–{fmtPct(r.confidenceHigh)}
                         </div>
+                      </td>
+                      <td>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700,
+                          color: riskColor(r.risk),
+                          background: riskColor(r.risk) + '22',
+                          padding: '3px 8px',
+                          borderRadius: 4,
+                        }}>
+                          {riskLabel(r.risk)}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: r.openBalance > 0 ? COLORS.orange : COLORS.gray }}>
+                        {fmt(r.openBalance)}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn btn-sm" onClick={() => openEdit(r)}>✏️</button>
+                        <button className="btn btn-sm btn-danger" onClick={() => remove(r)} style={{ marginLeft: 4 }}>✕</button>
                       </td>
                     </tr>
-
-                    {isExpanded && (
-                      <tr key={`${c.id}-sales`} style={{ borderBottom: '2px solid var(--brave-yellow)' }}>
-                        <td colSpan={6} style={{ padding: 0 }}>
-                          <div style={{ background: '#f7f9fc', padding: '12px 24px' }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--brave-gray)', marginBottom: 8 }}>
-                              HISTÓRICO DE COMPRAS — {c.name}
-                            </div>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                              <thead>
-                                <tr>
-                                  <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--brave-gray)', fontWeight: 500 }}>Data</th>
-                                  <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--brave-gray)', fontWeight: 500 }}>Descrição</th>
-                                  <th style={{ textAlign: 'right', padding: '4px 8px', color: 'var(--brave-gray)', fontWeight: 500 }}>Valor</th>
-                                  <th style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--brave-gray)', fontWeight: 500 }}>Ação</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {c.sales.sort((a, b) => b.date.localeCompare(a.date)).map(sale => (
-                                  <tr key={sale.id} style={{ borderTop: '1px solid #e8edf2' }}>
-                                    <td style={{ padding: '6px 8px', color: 'var(--brave-gray)' }}>{fmtDate(sale.date)}</td>
-                                    <td style={{ padding: '6px 8px' }}>{sale.description}</td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600, color: '#1a7a4a' }}>{fmt(sale.amount)}</td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                                      <button
-                                        className="btn btn-sm btn-danger"
-                                        style={{ padding: '2px 6px', fontSize: 11 }}
-                                        onClick={() => deleteSale(sale.id)}
-                                      >
-                                        ✕
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                                <tr style={{ borderTop: '2px solid #ccc', fontWeight: 700 }}>
-                                  <td colSpan={2} style={{ padding: '8px 8px', textAlign: 'right' }}>Total</td>
-                                  <td style={{ padding: '8px 8px', textAlign: 'right', color: '#1a7a4a' }}>{fmt(totalClient)}</td>
-                                  <td />
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Client Modal */}
-      {clientModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-          <div className="card" style={{ width: 420, padding: 24 }}>
-            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>
-              {editClient ? 'Editar Cliente' : 'Novo Cliente'}
-            </h3>
-
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Nome *</label>
-            <input
-              className="form-input"
-              style={{ width: '100%', marginBottom: 12 }}
-              placeholder="Nome completo"
-              value={form.name}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              autoFocus
-            />
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Telefone</label>
-                <input
-                  className="form-input"
-                  style={{ width: '100%' }}
-                  placeholder="(00) 00000-0000"
-                  value={form.phone}
-                  onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>CPF</label>
-                <input
-                  className="form-input"
-                  style={{ width: '100%' }}
-                  placeholder="000.000.000-00"
-                  value={form.cpf}
-                  onChange={e => setForm(f => ({ ...f, cpf: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>E-mail</label>
-            <input
-              className="form-input"
-              style={{ width: '100%', marginBottom: 12 }}
-              type="email"
-              placeholder="email@exemplo.com"
-              value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            />
-
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Unidade</label>
-            <select
-              className="form-select"
-              style={{ width: '100%', marginBottom: 16 }}
-              value={form.unitId}
-              onChange={e => setForm(f => ({ ...f, unitId: e.target.value }))}
-            >
-              <option value="">— Nenhuma —</option>
-              {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setClientModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={saveClient} disabled={saving || !form.name.trim()}>
-                {saving ? 'Salvando...' : 'Salvar'}
-              </button>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
+        </>
       )}
 
-      {/* Sale Modal */}
-      {saleModal && saleClient && (
+      {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
           <div className="card" style={{ width: 400, padding: 24 }}>
-            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 4 }}>Registrar Compra</h3>
-            <div style={{ fontSize: 13, color: 'var(--brave-gray)', marginBottom: 16 }}>Cliente: <strong>{saleClient.name}</strong></div>
-
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Descrição *</label>
-            <input
-              className="form-input"
-              style={{ width: '100%', marginBottom: 12 }}
-              placeholder="Ex: Plano mensal, Aula avulsa..."
-              value={saleForm.description}
-              onChange={e => setSaleForm(f => ({ ...f, description: e.target.value }))}
-              autoFocus
-            />
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Valor (R$) *</label>
-                <input
-                  className="form-input"
-                  style={{ width: '100%' }}
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={saleForm.amount}
-                  onChange={e => setSaleForm(f => ({ ...f, amount: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Data *</label>
-                <input
-                  className="form-input"
-                  style={{ width: '100%' }}
-                  type="date"
-                  value={saleForm.date}
-                  onChange={e => setSaleForm(f => ({ ...f, date: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <label style={{ fontSize: 12, color: 'var(--brave-gray)', display: 'block', marginBottom: 4 }}>Unidade</label>
-            <select
-              className="form-select"
-              style={{ width: '100%', marginBottom: 16 }}
-              value={saleForm.unitId}
-              onChange={e => setSaleForm(f => ({ ...f, unitId: e.target.value }))}
-            >
-              <option value="">— Nenhuma —</option>
-              {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-
+            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>{editing ? 'Editar' : 'Novo'} Cliente</h3>
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Nome</label>
+            <input className="form-input" style={{ width: '100%', marginBottom: 10 }} value={name} onChange={e => setName(e.target.value)} autoFocus />
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>CPF/CNPJ</label>
+            <input className="form-input" style={{ width: '100%', marginBottom: 10 }} value={cpf} onChange={e => setCpf(e.target.value)} />
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Telefone</label>
+            <input className="form-input" style={{ width: '100%', marginBottom: 16 }} value={phone} onChange={e => setPhone(e.target.value)} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setSaleModal(false)}>Cancelar</button>
-              <button
-                className="btn btn-primary"
-                onClick={saveSale}
-                disabled={saleSaving || !saleForm.description.trim() || !saleForm.amount || !saleForm.date}
-              >
-                {saleSaving ? 'Salvando...' : 'Registrar'}
-              </button>
+              <button className="btn" onClick={() => setModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={save} disabled={!name.trim()}>Salvar</button>
             </div>
           </div>
         </div>
