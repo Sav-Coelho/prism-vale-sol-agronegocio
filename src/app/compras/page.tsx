@@ -6,7 +6,7 @@ import {
   Tooltip, ResponsiveContainer, Legend
 } from 'recharts'
 
-type Tab = 'buyers' | 'purchases' | 'cashflow'
+type Tab = 'buyers' | 'suppliers' | 'purchases' | 'cashflow'
 
 type Buyer = {
   id: number
@@ -16,7 +16,18 @@ type Buyer = {
   purchases?: { id: number; totalAmount: number; month: number; year: number; status: string }[]
 }
 
-type Supplier = { id: number; name: string }
+type Supplier = {
+  id: number
+  name: string
+  cnpj?: string | null
+  contactName?: string | null
+  email?: string | null
+  phone?: string | null
+  paymentTermDays?: number
+  notes?: string | null
+  active?: boolean
+  purchaseOrders?: { id: number; totalAmount: number }[]
+}
 type Unit = { id: number; name: string }
 
 type Installment = {
@@ -113,6 +124,7 @@ export default function Compras() {
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--brave-light)', marginBottom: 20 }}>
         {([
           ['buyers',    '👤 Compradores'],
+          ['suppliers', '🏭 Fornecedores'],
           ['purchases', '📦 Lançamentos de Compra'],
           ['cashflow',  '📊 Fluxo Futuro'],
         ] as [Tab, string][]).map(([k, label]) => (
@@ -142,6 +154,7 @@ export default function Compras() {
       ) : (
         <>
           {tab === 'buyers'    && <BuyersTab    buyers={buyers} purchases={purchases} onChange={load} showToast={showToast} />}
+          {tab === 'suppliers' && <SuppliersTab suppliers={suppliers} onChange={load} showToast={showToast} />}
           {tab === 'purchases' && <PurchasesTab buyers={buyers} suppliers={suppliers} units={units} purchases={purchases} onChange={load} showToast={showToast} />}
           {tab === 'cashflow'  && <CashflowTab  cashflow={cashflow} summary={cashflowSummary} />}
         </>
@@ -149,6 +162,190 @@ export default function Compras() {
 
       {toast && <div className="toast">{toast}</div>}
     </Shell>
+  )
+}
+
+// ──────────────────────────────────────────────────────────
+//  Aba: Fornecedores
+// ──────────────────────────────────────────────────────────
+function SuppliersTab({ suppliers, onChange, showToast }: {
+  suppliers: Supplier[]; onChange: () => void; showToast: (m: string) => void
+}) {
+  const [modal, setModal] = useState(false)
+  const [editing, setEditing] = useState<Supplier | null>(null)
+  const [name, setName] = useState('')
+  const [cnpj, setCnpj] = useState('')
+  const [contact, setContact] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [terms, setTerms] = useState('30')
+  const [notes, setNotes] = useState('')
+
+  const openNew = () => {
+    setEditing(null); setName(''); setCnpj(''); setContact(''); setEmail(''); setPhone(''); setTerms('30'); setNotes(''); setModal(true)
+  }
+  const openEdit = (s: Supplier) => {
+    setEditing(s)
+    setName(s.name)
+    setCnpj(s.cnpj || ''); setContact(s.contactName || ''); setEmail(s.email || ''); setPhone(s.phone || '')
+    setTerms(String(s.paymentTermDays ?? 30)); setNotes(s.notes || '')
+    setModal(true)
+  }
+
+  const save = async () => {
+    if (!name.trim()) return
+    const url = editing ? `/api/suppliers/${editing.id}` : '/api/suppliers'
+    const method = editing ? 'PUT' : 'POST'
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, cnpj, contactName: contact, email, phone,
+        paymentTermDays: parseInt(terms) || 30, notes,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    setModal(false)
+    onChange()
+    showToast(editing ? '✓ Fornecedor atualizado' : '✓ Fornecedor cadastrado')
+  }
+
+  const remove = async (s: Supplier) => {
+    if (!confirm(`Excluir fornecedor "${s.name}"?`)) return
+    const res = await fetch(`/api/suppliers/${s.id}`, { method: 'DELETE' })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    onChange()
+    showToast('✓ Fornecedor excluído')
+  }
+
+  // Spend by supplier (all-time, from purchaseOrders included in API response)
+  const spendBySupplier = suppliers
+    .map(s => ({
+      name: s.name,
+      total: (s.purchaseOrders || []).reduce((acc, o) => acc + o.totalAmount, 0),
+      orders: (s.purchaseOrders || []).length,
+    }))
+    .filter(x => x.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 12)
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--brave-gray)' }}>
+          {suppliers.length} fornecedor{suppliers.length !== 1 ? 'es' : ''} cadastrado{suppliers.length !== 1 ? 's' : ''}
+        </div>
+        <button className="btn btn-primary" onClick={openNew}>+ Novo Fornecedor</button>
+      </div>
+
+      {spendBySupplier.length > 0 && (
+        <div className="card mb-6">
+          <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+            Gasto Acumulado por Fornecedor (top 12)
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 14 }}>
+            Soma de todas as compras emitidas a cada fornecedor
+          </div>
+          <ResponsiveContainer width="100%" height={Math.max(220, spendBySupplier.length * 32 + 40)}>
+            <BarChart data={spendBySupplier} layout="vertical" margin={{ left: 80 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={COLORS.light} />
+              <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+              <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={140} />
+              <Tooltip formatter={(v: number) => fmt(v)} />
+              <Bar dataKey="total" name="Total" fill={COLORS.dark} radius={[0, 3, 3, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fornecedor</th>
+                <th>CNPJ</th>
+                <th>Contato</th>
+                <th>Telefone</th>
+                <th style={{ textAlign: 'right' }}>Prazo padrão (dias)</th>
+                <th style={{ textAlign: 'right' }}># Compras</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {suppliers.length === 0 && (
+                <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: 'var(--brave-gray)' }}>
+                  Nenhum fornecedor cadastrado.
+                </td></tr>
+              )}
+              {suppliers.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.name}</td>
+                  <td style={{ fontSize: 12, color: 'var(--brave-gray)' }}>{s.cnpj || '—'}</td>
+                  <td style={{ fontSize: 13 }}>
+                    {s.contactName || '—'}
+                    {s.email && <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>{s.email}</div>}
+                  </td>
+                  <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{s.phone || '—'}</td>
+                  <td style={{ textAlign: 'right' }}>{s.paymentTermDays ?? 30}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12 }}>{s.purchaseOrders?.length ?? 0}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="btn btn-sm" onClick={() => openEdit(s)}>✏️</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => remove(s)} style={{ marginLeft: 4 }}>✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {modal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, overflow: 'auto', padding: 20 }}>
+          <div className="card" style={{ width: 500, padding: 24, maxHeight: '90vh', overflow: 'auto' }}>
+            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>
+              {editing ? 'Editar' : 'Novo'} Fornecedor
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Nome / Razão Social *</label>
+                <input className="form-input" style={{ width: '100%' }} value={name} onChange={e => setName(e.target.value)} autoFocus />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>CNPJ</label>
+                <input className="form-input" style={{ width: '100%' }} value={cnpj} onChange={e => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Prazo padrão (dias)</label>
+                <input type="number" className="form-input" style={{ width: '100%' }} value={terms} onChange={e => setTerms(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Contato</label>
+                <input className="form-input" style={{ width: '100%' }} value={contact} onChange={e => setContact(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Telefone</label>
+                <input className="form-input" style={{ width: '100%' }} value={phone} onChange={e => setPhone(e.target.value)} />
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Email</label>
+                <input className="form-input" style={{ width: '100%' }} value={email} onChange={e => setEmail(e.target.value)} />
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Observações</label>
+                <textarea className="form-input" style={{ width: '100%', minHeight: 60 }} value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn" onClick={() => setModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={save} disabled={!name.trim()}>Salvar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -420,7 +617,7 @@ function PurchasesTab({ buyers, suppliers, units, purchases, onChange, showToast
           <div style={{ fontSize: 13 }}>
             Pra registrar compras, cadastre primeiro:
             {buyers.length === 0    && <div>• Pelo menos um <b>comprador</b> na aba Compradores</div>}
-            {suppliers.length === 0 && <div>• Pelo menos um <b>fornecedor</b> em <a href="/compras" style={{ textDecoration: 'underline' }}>Fornecedores</a> (a configurar)</div>}
+            {suppliers.length === 0 && <div>• Pelo menos um <b>fornecedor</b> na aba Fornecedores</div>}
           </div>
         </div>
       )}
