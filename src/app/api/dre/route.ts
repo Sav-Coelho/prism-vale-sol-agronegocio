@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { calcDRE } from '@/lib/dre'
+import { calcDRE, type DreGroupConfig, type DreSection } from '@/lib/dre'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(req: NextRequest) {
@@ -14,13 +14,20 @@ export async function GET(req: NextRequest) {
 
   const unitFilter = unitId ? { unitId: parseInt(unitId) } : {}
 
+  const dreGroupsDb = await prisma.dreGroup.findMany({ orderBy: { sortOrder: 'asc' } })
+  const dreGroups: DreGroupConfig[] = dreGroupsDb.map(g => ({
+    name: g.name,
+    section: g.section as DreSection,
+    sortOrder: g.sortOrder,
+  }))
+
   const transactions = await prisma.transaction.findMany({
     where: { month, year, accountId: { not: null }, ...unitFilter },
     include: { account: true }
   })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dre = calcDRE(transactions as any, month, year)
+  const dre = calcDRE(transactions as any, month, year, dreGroups)
 
   const yearData = await Promise.all(
     Array.from({ length: 12 }, async (_, i) => {
@@ -30,7 +37,7 @@ export async function GET(req: NextRequest) {
         include: { account: true }
       })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return calcDRE(txs as any, m, year)
+      return calcDRE(txs as any, m, year, dreGroups)
     })
   )
 

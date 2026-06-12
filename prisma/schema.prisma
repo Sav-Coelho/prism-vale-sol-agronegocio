@@ -43,6 +43,16 @@ model Account {
   transactions Transaction[]
 }
 
+model DreGroup {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  type      String   // RECEITA / DEDUCAO / CUSTO / DESPESA / IMPOSTO / NEUTRO
+  section   String   // RECEITA_OP / DEDUCAO / CUSTO_VAR / DESPESA_FIXA / INVESTIMENTO / RECEITA_NOP / DESPESA_NOP / IMPOSTO_LUCRO / NEUTRO
+  sortOrder Int      @default(0)
+  protected Boolean  @default(false)   // true = não pode ser deletado nem renomeado
+  createdAt DateTime @default(now())
+}
+
 model Transaction {
   id            Int          @id @default(autoincrement())
   date          DateTime

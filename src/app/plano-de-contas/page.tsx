@@ -4,21 +4,29 @@ import Shell from '@/components/Shell'
 
 const TYPES = ['RECEITA', 'DEDUCAO', 'CUSTO', 'DESPESA', 'IMPOSTO', 'NEUTRO']
 
-const DRE_GROUPS: Record<string, string[]> = {
-  RECEITA: ['Receita Operacional', 'Receita Não Operacional'],
-  DEDUCAO: ['Deduções sobre a Venda'],
-  CUSTO: ['Custo do Produto/Serviço', 'Despesa Variável'],
-  DESPESA: [
-    'Despesas Administrativas',
-    'Despesas Financeiras',
-    'Despesas com Pessoal',
-    'Despesas com Marketing',
-    'Investimentos',
-    'Despesas Não Operacionais',
-  ],
-  IMPOSTO: ['Impostos'],
-  NEUTRO: ['Transferência entre Contas'],
+type DreGroupRow = {
+  id: number
+  name: string
+  type: string
+  section: string
+  sortOrder: number
+  protected: boolean
 }
+
+// UI-side mapping: section → human label and which DRE block it belongs to
+const SECTION_OPTIONS: { value: string; label: string; type: string }[] = [
+  { value: 'RECEITA_OP',    label: 'Receita Operacional',     type: 'RECEITA' },
+  { value: 'DEDUCAO',       label: 'Dedução sobre a Venda',   type: 'DEDUCAO' },
+  { value: 'CUSTO_VAR',     label: 'Custo Variável (CMV / Variável)', type: 'CUSTO' },
+  { value: 'DESPESA_FIXA',  label: 'Despesa Fixa (Admin / Pessoal / Mkt / Financeira)', type: 'DESPESA' },
+  { value: 'INVESTIMENTO',  label: 'Investimento',            type: 'DESPESA' },
+  { value: 'RECEITA_NOP',   label: 'Receita Não Operacional', type: 'RECEITA' },
+  { value: 'DESPESA_NOP',   label: 'Despesa Não Operacional', type: 'DESPESA' },
+  { value: 'IMPOSTO_LUCRO', label: 'Imposto sobre o Lucro',   type: 'IMPOSTO' },
+  { value: 'NEUTRO',        label: 'Neutro (não entra no DRE)', type: 'NEUTRO' },
+]
+
+const SECTION_LABEL = Object.fromEntries(SECTION_OPTIONS.map(o => [o.value, o.label]))
 
 // Plano de Contas — Vale do Sol (classificação importada do XLSX)
 const DEFAULTS = [
@@ -145,6 +153,7 @@ const DEFAULTS = [
 
 export default function PlanoDeContas() {
   const [accounts, setAccounts] = useState<any[]>([])
+  const [dreGroups, setDreGroups] = useState<DreGroupRow[]>([])
   const [form, setForm] = useState({ code: '', name: '', type: 'RECEITA', dreGroup: 'Receita Operacional' })
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
@@ -152,10 +161,32 @@ export default function PlanoDeContas() {
   const [importing, setImporting] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
 
-  const load = () => fetch('/api/accounts').then(r => r.json()).then(d => { setAccounts(d); setLoading(false) })
+  // DreGroup modal state
+  const [grpModal, setGrpModal] = useState(false)
+  const [grpEditing, setGrpEditing] = useState<DreGroupRow | null>(null)
+  const [grpName, setGrpName] = useState('')
+  const [grpSection, setGrpSection] = useState('DESPESA_FIXA')
+
+  const load = async () => {
+    const [a, g] = await Promise.all([
+      fetch('/api/accounts').then(r => r.json()),
+      fetch('/api/dre-groups').then(r => r.json()),
+    ])
+    setAccounts(a)
+    setDreGroups(g)
+    // Reset the form to first valid group for the current type
+    setForm(f => {
+      const firstName = g.find((x: DreGroupRow) => x.type === f.type)?.name
+      return firstName ? { ...f, dreGroup: firstName } : f
+    })
+    setLoading(false)
+  }
   useEffect(() => { load() }, [])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  // DreGroups available per Account type
+  const groupsForType = (type: string) => dreGroups.filter(g => g.type === type)
 
   const save = async () => {
     const res = await fetch('/api/accounts', {
@@ -164,13 +195,42 @@ export default function PlanoDeContas() {
       body: JSON.stringify(form)
     })
     if (res.ok) {
-      setForm({ code: '', name: '', type: 'RECEITA', dreGroup: 'Receita Operacional' })
+      setForm({ code: '', name: '', type: 'RECEITA', dreGroup: groupsForType('RECEITA')[0]?.name || '' })
       load()
       showToast('Conta criada com sucesso!')
     } else {
       const err = await res.json()
       showToast(err.error || 'Erro ao criar conta')
     }
+  }
+
+  // ── DreGroup CRUD ────────────────────────────────────────
+  const openNewGroup = () => { setGrpEditing(null); setGrpName(''); setGrpSection('DESPESA_FIXA'); setGrpModal(true) }
+  const openEditGroup = (g: DreGroupRow) => { setGrpEditing(g); setGrpName(g.name); setGrpSection(g.section); setGrpModal(true) }
+
+  const saveGroup = async () => {
+    if (!grpName.trim()) return
+    const url = grpEditing ? `/api/dre-groups/${grpEditing.id}` : '/api/dre-groups'
+    const method = grpEditing ? 'PUT' : 'POST'
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: grpName, section: grpSection }),
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    setGrpModal(false)
+    await load()
+    showToast(grpEditing ? '✓ Categoria atualizada' : '✓ Categoria criada')
+  }
+
+  const removeGroup = async (g: DreGroupRow) => {
+    if (!confirm(`Excluir categoria "${g.name}"?`)) return
+    const res = await fetch(`/api/dre-groups/${g.id}`, { method: 'DELETE' })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    await load()
+    showToast('✓ Categoria removida')
   }
 
   const remove = async (id: number) => {
@@ -258,6 +318,52 @@ export default function PlanoDeContas() {
         </div>
       </div>
 
+      {/* Categorias DRE editáveis */}
+      <div className="card mb-6" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--brave-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13 }}>Categorias do DRE</div>
+            <div style={{ fontSize: 11, color: 'var(--brave-gray)' }}>
+              Subgrupos que aparecem na DRE — renomeie, crie ou exclua. Mudanças refletem nas contas vinculadas.
+            </div>
+          </div>
+          <button className="btn btn-sm btn-primary" onClick={openNewGroup}>+ Nova Categoria</button>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Aparece na DRE como</th>
+                <th>Tipo</th>
+                <th style={{ textAlign: 'right' }}># Contas</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {dreGroups.map(g => {
+                const count = accounts.filter(a => a.dreGroup === g.name).length
+                return (
+                  <tr key={g.id}>
+                    <td style={{ fontWeight: 600 }}>
+                      {g.name}
+                      {g.protected && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--brave-gray)', background: '#f4f4f4', padding: '2px 6px', borderRadius: 3 }}>protegida</span>}
+                    </td>
+                    <td style={{ fontSize: 12, color: 'var(--brave-gray)' }}>{SECTION_LABEL[g.section] || g.section}</td>
+                    <td><span className={`badge ${typeBadge(g.type)}`}>{g.type}</span></td>
+                    <td style={{ textAlign: 'right', fontSize: 12 }}>{count}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-sm" onClick={() => openEditGroup(g)} disabled={g.protected}>✏️</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => removeGroup(g)} disabled={g.protected || count > 0} style={{ marginLeft: 4 }} title={count > 0 ? 'Mova as contas antes de excluir' : ''}>✕</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="grid-2 mb-6">
         <div className="card">
           <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 13, marginBottom: 20 }}>
@@ -278,16 +384,18 @@ export default function PlanoDeContas() {
             <select className="form-select" value={form.type}
               onChange={e => {
                 const t = e.target.value
-                setForm(f => ({ ...f, type: t, dreGroup: DRE_GROUPS[t][0] }))
+                const first = groupsForType(t)[0]?.name || ''
+                setForm(f => ({ ...f, type: t, dreGroup: first }))
               }}>
               {TYPES.map(t => <option key={t}>{t}</option>)}
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Grupo no DRE</label>
+            <label className="form-label">Categoria do DRE</label>
             <select className="form-select" value={form.dreGroup}
               onChange={e => setForm(f => ({ ...f, dreGroup: e.target.value }))}>
-              {(DRE_GROUPS[form.type] || []).map(g => <option key={g}>{g}</option>)}
+              {groupsForType(form.type).map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
+              {groupsForType(form.type).length === 0 && <option value="">— nenhuma categoria deste tipo —</option>}
             </select>
           </div>
           <button className="btn btn-primary" style={{ width: '100%' }} onClick={save}>
@@ -355,6 +463,29 @@ export default function PlanoDeContas() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {grpModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+          <div className="card" style={{ width: 460, padding: 24 }}>
+            <h3 style={{ fontFamily: 'var(--font-sub)', marginBottom: 16 }}>
+              {grpEditing ? 'Editar' : 'Nova'} Categoria do DRE
+            </h3>
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Nome</label>
+            <input className="form-input" style={{ width: '100%', marginBottom: 12 }} value={grpName} onChange={e => setGrpName(e.target.value)} autoFocus placeholder="ex: Despesas com Estoque" />
+            <label style={{ fontSize: 12, color: 'var(--brave-gray)' }}>Onde aparece na DRE</label>
+            <select className="form-select" style={{ width: '100%', marginBottom: 16 }} value={grpSection} onChange={e => setGrpSection(e.target.value)}>
+              {SECTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--brave-gray)', marginBottom: 16, padding: '8px 12px', background: 'var(--brave-light)', borderRadius: 4 }}>
+              💡 O tipo (RECEITA/CUSTO/DESPESA/etc) é definido automaticamente pela seção escolhida. Renomear uma categoria atualiza todas as contas vinculadas em cascata.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setGrpModal(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={saveGroup} disabled={!grpName.trim()}>Salvar</button>
+            </div>
           </div>
         </div>
       )}
