@@ -71,7 +71,10 @@ const DRE_GROUP_KEYWORDS: { match: RegExp; dreGroup: string }[] = [
   { match: /FORNECEDOR\s+MERCADORIAS/i,                dreGroup: 'Custo do Produto/Serviço' },
   { match: /IMOBILIZADO/i,                             dreGroup: 'Investimentos' },
   { match: /EMPR[ÉE]STIMOS?|FINANCIAMENT|LUCROS?\s+DIST/i, dreGroup: 'Despesas Não Operacionais' },
-  { match: /TRANSFER[ÊE]NCIA|DEPOSITO\s+C\/C|SUPRIMENTO/i, dreGroup: 'Transferência entre Contas' },
+  { match: /TRANSFER[ÊE]NCIA|DEPOSITO\s+C\/C|SUPRIMENTO|DEP[ÓO]SITO\s+DO\s+CAIXA|TROCO\s+MISTURADO/i, dreGroup: 'Transferência entre Contas' },
+  { match: /OUTRAS\s+CONTAS/i,                          dreGroup: 'Transferência entre Contas' },
+  { match: /REND\s+PAGO\s+APLIC|REND\.\s+APLIC/i,       dreGroup: 'Receita Não Operacional' },
+  { match: /DIFEREN[ÇC]A\s+DO\s+CAIXA/i,                dreGroup: 'Despesas Não Operacionais' },
 ]
 
 // Bancos conhecidos — quando aparecem como agrupador, geralmente o subgrupo
