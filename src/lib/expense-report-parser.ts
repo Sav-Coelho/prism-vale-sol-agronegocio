@@ -50,8 +50,11 @@ const SHEETS_TO_SKIP = new Set(['CONSOLIDADO', 'CONSOLIDADO ', 'Consolidado'])
 // que a linha é um agrupador (não uma folha)
 const GROUP_HEADERS = new Set([
   'DESPESAS', 'BANCOS', 'BANCO', 'TAXAS',
-  'BRADESCO', 'ITAU', 'SAFRA', 'SICREDI', 'CAIXA', 'SANTANDER',
+  'BRADESCO', 'ITAU', 'SAFRA', 'SICREDI', 'SICOOB', 'CAIXA', 'SANTANDER',
   'BB', 'INTER', 'BANCO DO BRASIL',
+  // Categorias contábeis que aparecem sem sufixo "- LOJA N"
+  'FORNECEDOR MERCADORIAS', 'OUTRAS CONTAS', 'CARTAO DE CREDITO',
+  'CARTÃO DE CRÉDITO', 'PARCELAMENTO ICMS FEEF FOT',
 ])
 
 // Mapeia o nome do "agrupador" da planilha pro dreGroup do Prism.
@@ -59,12 +62,13 @@ const GROUP_HEADERS = new Set([
 // (e às vezes também com "MULTMUNDE"/"VALE DO SOL" prefixado).
 const DRE_GROUP_KEYWORDS: { match: RegExp; dreGroup: string }[] = [
   { match: /DESP[\.\s]*ADM|DESPESAS\s+ADMINISTRATIV/i, dreGroup: 'Despesas Administrativas' },
-  { match: /TAXAS|JUROS BANC|TARIFAS/i,                dreGroup: 'Despesas Financeiras' },
+  { match: /TAXAS|JUROS BANC|TARIFAS|CARTAO\s+DE\s+CREDITO|CARTÃO\s+DE\s+CRÉDITO/i, dreGroup: 'Despesas Financeiras' },
   { match: /DESPESAS\s+COM\s+PESSOAL/i,                dreGroup: 'Despesas com Pessoal' },
-  { match: /FOLHA\s+DE\s+PGTO/i,                       dreGroup: 'Despesas com Pessoal' },
+  { match: /FOLHA\s+DE\s+PG/i,                         dreGroup: 'Despesas com Pessoal' },
   { match: /DESPESAS?\s+COMERCIAL|MARKETING/i,         dreGroup: 'Despesas com Marketing' },
   { match: /DESPESAS\s+COM\s+VE[ÍI]CULO/i,             dreGroup: 'Despesa Variável' },
   { match: /TRIBUTOS\s+E\s+IMPOSTOS|PARCELAMENTOS?\s+DE\s+IMPOSTOS|PARCELAMENTO\s+ICMS/i, dreGroup: 'Deduções sobre a Venda' },
+  { match: /FORNECEDOR\s+MERCADORIAS/i,                dreGroup: 'Custo do Produto/Serviço' },
   { match: /IMOBILIZADO/i,                             dreGroup: 'Investimentos' },
   { match: /EMPR[ÉE]STIMOS?|FINANCIAMENT|LUCROS?\s+DIST/i, dreGroup: 'Despesas Não Operacionais' },
   { match: /TRANSFER[ÊE]NCIA|DEPOSITO\s+C\/C|SUPRIMENTO/i, dreGroup: 'Transferência entre Contas' },
@@ -106,9 +110,39 @@ function isGroupRow(classification: string): boolean {
   return false
 }
 
+// Aliases para consolidar variações de nome do ERP
+const ACCOUNT_ALIASES: { match: RegExp; replace: string }[] = [
+  { match: /^FOLHA\s+(DE\s+)?PG(TO)?$/i,                  replace: 'Folha de Pagamento' },
+  { match: /^SERV\s+TERC\s+PESSOA\s+JURIDICA$/i,          replace: 'Serv. Terc. Pessoa Jurídica' },
+  { match: /^SERV\s+TERC\s+PESSOA\s+FISICA$/i,            replace: 'Serv. Terc. Pessoa Física' },
+  { match: /^HONORARIO\s+CONTABIL$/i,                     replace: 'Honorário Contábil' },
+  { match: /^HONORARIO\s+JURIDICO$/i,                     replace: 'Honorário Jurídico' },
+  { match: /^DARF\s+PREVIDENCIARIO$/i,                    replace: 'DARF Previdenciário' },
+  { match: /^FORNECEDOR\s+MERCADORIAS$/i,                 replace: 'Fornecedor Mercadorias' },
+  { match: /^CARTAO\s+DE\s+CREDITO$/i,                    replace: 'Cartão de Crédito (Encargos)' },
+  { match: /^CARTAO\s+DESPESAS\s+PRE\s+PAGO$/i,           replace: 'Cartão Despesas Pré-pago' },
+  { match: /^ICMS$/i,                                     replace: 'ICMS sobre Vendas' },
+  { match: /^ICMS\s*-\s*SUBSTITUICAO\s+TRIBUTARIA$/i,     replace: 'ICMS sobre Vendas (ST)' },
+  { match: /^DIFAL$/i,                                    replace: 'DIFAL' },
+  { match: /^DIFAL\s*-?\s*MG$/i,                          replace: 'DIFAL MG' },
+  { match: /^PARCELAMENTO\s+ICMS\s+FEEF\s+FOT$/i,         replace: 'Parcelamento ICMS FEEF/FOT' },
+  { match: /^PEDAGIO$/i,                                  replace: 'Pedágio' },
+  { match: /^TARIFAS?\s+BRADESCO$/i,                      replace: 'Tarifas Bradesco' },
+  { match: /^TARIFAS?\s+ITAU$/i,                          replace: 'Tarifas Itaú' },
+  { match: /^TARIFAS?\s+SAFRA$/i,                         replace: 'Tarifas Safra' },
+  { match: /^TARIFAS?\s+SICREDI$/i,                       replace: 'Tarifas Sicredi' },
+  { match: /^TARIFAS?\s+SICOOB$/i,                        replace: 'Tarifas Sicoob' },
+  { match: /^DEPOSITO\s+C\/C$/i,                          replace: 'Depósito C/C' },
+]
+
 /** Cleaning do nome da conta plano */
 function cleanAccountName(raw: string): string {
   const cleaned = stripLojaSuffix(raw).trim()
+  // Aliases primeiro (case-insensitive, antes do title case)
+  const upper = cleaned.toUpperCase()
+  for (const { match, replace } of ACCOUNT_ALIASES) {
+    if (match.test(upper)) return replace
+  }
   // Title case manual respeitando preposições/conjunções comuns em PT
   const lowers = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'a', 'o'])
   return cleaned
@@ -307,7 +341,10 @@ function classifyGroupKind(cls: string): GroupKind {
       /^DESPESAS\s+(ADMINISTRATIV|COM\s+PESSOAL|COMERCIAL|COM\s+VE[ÍI]CULO|N[ÃA]O\s+OPERACIONAIS?)/i.test(cls) ||
       /^TRIBUTOS\s+E\s+IMPOSTOS/i.test(cls) ||
       /^PARCELAMENTOS?\s+DE\s+IMPOSTOS/i.test(cls) ||
-      /^OUTRAS\s+CONTAS/i.test(cls)) {
+      /^OUTRAS\s+CONTAS/i.test(cls) ||
+      /^FORNECEDOR\s+MERCADORIAS/i.test(cls) ||
+      /^CARTAO\s+DE\s+CREDITO/i.test(cls) ||
+      /^CART[ÃA]O\s+DE\s+CR[ÉE]DITO/i.test(cls)) {
     return 'dreGroupHeader'
   }
   // "BANCOS" / "BANCO" (categoria bancária)
