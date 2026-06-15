@@ -285,73 +285,172 @@ function readRows(sheet: XLSX.WorkSheet): RawRow[] {
   return rows
 }
 
+/**
+ * Classifica o "tipo" de uma linha-grupo pra atualizar o contexto correto.
+ * Cada tipo SOBRESCREVE seu valor anterior (não acumula como stack).
+ */
+type GroupKind = 'companyLoja' | 'dreGroupHeader' | 'bankCategory' | 'bankName' | 'taxas' | 'accountName' | 'unknown'
+
+function classifyGroupKind(cls: string): GroupKind {
+  const upper = cls.toUpperCase().trim()
+  const stripped = stripLojaSuffix(upper).trim()
+
+  // Nível 1: "DESPESAS XXX - LOJA N" (empresa + loja)
+  if (/^DESPESAS\s+(MULTMUNDE|VALE\s+DO\s+SOL)\b.*-\s*LOJA\s+\d+\s*$/i.test(cls)) {
+    return 'companyLoja'
+  }
+  // "DESPESAS" sozinho (raiz da árvore)
+  if (upper === 'DESPESAS') return 'unknown'
+
+  // Nível 2: dreGroup headers (DESP ADM, BANCOS, DESPESAS COM PESSOAL, etc)
+  if (/^DESP[\.\s]+ADM/i.test(cls) ||
+      /^DESPESAS\s+(ADMINISTRATIV|COM\s+PESSOAL|COMERCIAL|COM\s+VE[ÍI]CULO|N[ÃA]O\s+OPERACIONAIS?)/i.test(cls) ||
+      /^TRIBUTOS\s+E\s+IMPOSTOS/i.test(cls) ||
+      /^PARCELAMENTOS?\s+DE\s+IMPOSTOS/i.test(cls) ||
+      /^OUTRAS\s+CONTAS/i.test(cls)) {
+    return 'dreGroupHeader'
+  }
+  // "BANCOS" / "BANCO" (categoria bancária)
+  if (/^BANCOS?\b/i.test(stripped)) return 'bankCategory'
+
+  // Banco específico
+  if (BANK_NAMES.has(stripped)) return 'bankName'
+
+  // TAXAS dentro de banco
+  if (stripped === 'TAXAS') return 'taxas'
+
+  // Senão: conta do plano (termina com "- LOJA N")
+  if (/\s-\s*LOJA\s+\d+\s*$/i.test(cls)) return 'accountName'
+
+  return 'unknown'
+}
+
+interface ParseContext {
+  companyLoja:     string | null  // "DESPESAS VALE DO SOL RIO BONITO - LOJA 6"
+  dreGroupHeader:  string | null  // "DESP ADM VL RB - LOJA 6" / "BANCOS" / etc
+  bankCategory:    string | null  // "BANCOS" / "BANCO"
+  bankName:        string | null  // "SAFRA - LOJA 6"
+  insideTaxas:     boolean
+  accountName:     string | null  // "ALUGUEL DE IMOVEIS - LOJA 7"
+}
+
+function emptyContext(): ParseContext {
+  return {
+    companyLoja: null,
+    dreGroupHeader: null,
+    bankCategory: null,
+    bankName: null,
+    insideTaxas: false,
+    accountName: null,
+  }
+}
+
+function updateContext(ctx: ParseContext, cls: string, kind: GroupKind): void {
+  switch (kind) {
+    case 'companyLoja':
+      // Nível 1: reseta tudo abaixo
+      ctx.companyLoja = cls
+      ctx.dreGroupHeader = null
+      ctx.bankCategory = null
+      ctx.bankName = null
+      ctx.insideTaxas = false
+      ctx.accountName = null
+      break
+    case 'dreGroupHeader':
+      ctx.dreGroupHeader = cls
+      ctx.bankCategory = null
+      ctx.bankName = null
+      ctx.insideTaxas = false
+      ctx.accountName = null
+      break
+    case 'bankCategory':
+      ctx.bankCategory = cls
+      ctx.bankName = null
+      ctx.insideTaxas = false
+      ctx.accountName = null
+      break
+    case 'bankName':
+      ctx.bankName = cls
+      ctx.insideTaxas = false
+      ctx.accountName = null
+      break
+    case 'taxas':
+      ctx.insideTaxas = true
+      ctx.accountName = null
+      break
+    case 'accountName':
+      ctx.accountName = cls
+      break
+  }
+}
+
+function contextToPath(ctx: ParseContext): string[] {
+  const path: string[] = []
+  if (ctx.companyLoja)    path.push(ctx.companyLoja)
+  if (ctx.dreGroupHeader) path.push(ctx.dreGroupHeader)
+  if (ctx.bankCategory)   path.push(ctx.bankCategory)
+  if (ctx.bankName)       path.push(ctx.bankName)
+  if (ctx.insideTaxas)    path.push('TAXAS')
+  if (ctx.accountName)    path.push(ctx.accountName)
+  return path
+}
+
 function parseSheet(sheetName: string, rows: RawRow[]): ParsedExpense[] {
   const expenses: ParsedExpense[] = []
-  const stack: string[] = []   // caminho hierárquico até a linha atual
-
-  // Pra controlar profundidade: cada linha-grupo "empurra" no stack;
-  // quando vemos uma classificação que parece ser de mesmo nível ou superior,
-  // damos pop até alinhar.
-  //
-  // Heurística simplificada: linha vazia (classificação vazia) → pop até estado
-  // consistente com o próximo bloco. Como não temos depth explícita, vamos
-  // resetar parcialmente quando vemos uma linha em branco que separa blocos.
+  const ctx: ParseContext = emptyContext()
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const cls = row.classification
 
-    // Linha em branco: pop do último item
     if (!cls && !row.valor && !row.historico) {
-      if (stack.length > 0) stack.pop()
+      // Linha em branco: limpa apenas o nível mais específico (accountName / taxas)
+      ctx.accountName = null
+      ctx.insideTaxas = false
       continue
     }
 
-    // Linha tem classificação preenchida
-    if (cls) {
-      const isGroup = isGroupRow(cls)
-      if (isGroup) {
-        // Antes de empurrar, pop até encontrar um possível "pai" no stack.
-        // Como não temos depth explícita, vamos usar o seguinte: se o nome
-        // do novo grupo se sobrepõe com um já no stack, dropamos até aquele
-        // nível. Caso contrário, apenas adicionamos.
-        const existingIdx = stack.findIndex(s => s === cls)
-        if (existingIdx >= 0) stack.length = existingIdx
-        stack.push(cls)
-        continue
-      }
+    if (!cls) continue
 
-      // É folha
-      const dateIso = row.datePag || row.dateEnt
-      if (!dateIso) continue   // sem data não é uma folha real (ou é cabeçalho mal formatado)
-
-      const inferredUnit       = extractLoja(stack.join(' ') + ' ' + cls)
-      const inferredDreGroup   = resolveDreGroup(stack)
-      const inferredAccountName = resolveAccountName(stack, inferredDreGroup)
-      const inferredBankAccount = extractBankAccount(row.conta)
-
-      const description = row.historico || cls
-
-      // fitid determinístico: combina sheet + data + valor + descrição + cnpj
-      const fitidSeed = `${sheetName}|${dateIso}|${row.valor.toFixed(2)}|${description}|${row.cnpj}|${row.conta}`
-      const fitid = `xlsx-${hash(fitidSeed)}`
-
-      expenses.push({
-        rowIdx: i + 2,                 // 1-based + header
-        sheet: sheetName,
-        date: dateIso,
-        paidDate: row.datePag,
-        amount: row.valor,
-        description,
-        cnpj: row.cnpj || null,
-        docType: row.docto || null,
-        inferredUnit,
-        inferredDreGroup,
-        inferredAccountName,
-        inferredBankAccount,
-        fitid,
-      })
+    const isGroup = isGroupRow(cls)
+    if (isGroup) {
+      const kind = classifyGroupKind(cls)
+      updateContext(ctx, cls, kind)
+      continue
     }
+
+    // É folha
+    const dateIso = row.datePag || row.dateEnt
+    if (!dateIso) continue
+
+    const path = contextToPath(ctx)
+
+    // Unit: extraída do contexto da companyLoja (preferido) ou dreGroupHeader
+    const inferredUnit       = extractLoja(ctx.companyLoja ?? '') || extractLoja(ctx.dreGroupHeader ?? '') || extractLoja(ctx.accountName ?? '')
+    const inferredDreGroup   = resolveDreGroup(path)
+    const inferredAccountName = resolveAccountName(path, inferredDreGroup)
+    const inferredBankAccount = extractBankAccount(row.conta)
+
+    const description = row.historico || cls
+
+    const fitidSeed = `${sheetName}|${dateIso}|${row.valor.toFixed(2)}|${description}|${row.cnpj}|${row.conta}`
+    const fitid = `xlsx-${hash(fitidSeed)}`
+
+    expenses.push({
+      rowIdx: i + 2,
+      sheet: sheetName,
+      date: dateIso,
+      paidDate: row.datePag,
+      amount: row.valor,
+      description,
+      cnpj: row.cnpj || null,
+      docType: row.docto || null,
+      inferredUnit,
+      inferredDreGroup,
+      inferredAccountName,
+      inferredBankAccount,
+      fitid,
+    })
   }
 
   return expenses
