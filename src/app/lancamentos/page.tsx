@@ -17,7 +17,48 @@ const fmtDate = (d: string) => new Date(d).toLocaleDateString('pt-BR')
 
 const now = new Date()
 
-type Tab = 'ofx' | 'cartao' | 'manual'
+type Tab = 'ofx' | 'cartao' | 'expense-report' | 'manual'
+
+interface ExpensePreview {
+  fitid: string
+  rowIdx: number
+  sheet: string
+  date: string
+  paidDate: string | null
+  amount: number
+  description: string
+  cnpj: string | null
+  docType: string | null
+  inferredUnit: string | null
+  inferredDreGroup: string | null
+  inferredAccountName: string | null
+  inferredBankAccount: string | null
+  unit:        { id: number; name: string } | null
+  account:     { id: number; code: string; name: string; dreGroup: string } | null
+  bankAccount: { id: number; name: string; unitId: number } | null
+  confidence:  number
+  needsNewUnit: boolean
+  needsNewAccount: boolean
+  needsNewBankAccount: boolean
+  alreadyImported: boolean
+  // Local user-confirmed overrides (when matched fields are null/wrong)
+  selectedAccountId?: string
+  selectedUnitId?: string
+  selectedBankAccountId?: string
+  approved?: boolean   // user clicked confirm
+}
+
+interface ExpenseSummary {
+  totalRows: number
+  totalLeaves: number
+  totalSheets: number
+  totalValue: number
+  alreadyImported: number
+  avgConfidence: number
+  uniqUnitsToCreate: string[]
+  uniqAccountsToCreate: { name: string; dreGroup: string }[]
+  uniqBanksToCreate: string[]
+}
 
 interface PreviewTx {
   fitid: string
@@ -61,6 +102,13 @@ export default function Lancamentos() {
   const [selectedTxIds, setSelectedTxIds] = useState<Set<number>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
   const csvFileRef = useRef<HTMLInputElement>(null)
+  const xlsxFileRef = useRef<HTMLInputElement>(null)
+
+  // Expense report state
+  const [xlsxParsing, setXlsxParsing] = useState(false)
+  const [xlsxSaving, setXlsxSaving] = useState(false)
+  const [expensesPreview, setExpensesPreview] = useState<ExpensePreview[] | null>(null)
+  const [expensesSummary, setExpensesSummary] = useState<ExpenseSummary | null>(null)
 
   // Tab
   const [tab, setTab] = useState<Tab>('ofx')
@@ -283,6 +331,104 @@ export default function Lancamentos() {
     } else {
       parseCSVFile(file)
     }
+  }
+
+  // ── Expense report (XLSX) ──────────────────────────────────
+  const parseXLSXFile = async (file: File) => {
+    setXlsxParsing(true)
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch('/api/expense-report/parse', { method: 'POST', body: fd })
+    const data = await res.json()
+    setXlsxParsing(false)
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    const initialized: ExpensePreview[] = (data.expenses as ExpensePreview[]).map(e => ({
+      ...e,
+      selectedAccountId: e.account ? String(e.account.id) : '',
+      selectedUnitId:    e.unit    ? String(e.unit.id)    : '',
+      selectedBankAccountId: e.bankAccount ? String(e.bankAccount.id) : '',
+      approved: e.confidence >= 90 && !e.alreadyImported,
+    }))
+    setExpensesPreview(initialized)
+    setExpensesSummary(data.summary)
+  }
+
+  const handleXLSXFile = (file?: File | null) => { if (file) parseXLSXFile(file) }
+
+  const resetXlsxPreview = () => {
+    setExpensesPreview(null)
+    setExpensesSummary(null)
+  }
+
+  const toggleApprove = (fitid: string) => {
+    setExpensesPreview(prev => prev?.map(e =>
+      e.fitid === fitid ? { ...e, approved: !e.approved } : e) ?? null)
+  }
+
+  const approveAll = () => {
+    setExpensesPreview(prev => prev?.map(e =>
+      !e.alreadyImported ? { ...e, approved: true } : e) ?? null)
+  }
+
+  const approveHighConfidence = () => {
+    setExpensesPreview(prev => prev?.map(e =>
+      e.confidence >= 90 && !e.alreadyImported ? { ...e, approved: true } : e) ?? null)
+  }
+
+  const updateExpenseField = (fitid: string, field: 'selectedAccountId'|'selectedUnitId'|'selectedBankAccountId', val: string) => {
+    setExpensesPreview(prev => prev?.map(e =>
+      e.fitid === fitid ? { ...e, [field]: val } : e) ?? null)
+  }
+
+  const saveExpenseReport = async () => {
+    if (!expensesPreview) return
+    const approved = expensesPreview.filter(e => e.approved && !e.alreadyImported)
+    if (approved.length === 0) { showToast('Nenhuma linha aprovada pra salvar'); return }
+    setXlsxSaving(true)
+
+    // Decide quais entidades novas precisam ser criadas
+    const unitNames = new Set<string>()
+    const acctMap = new Map<string, { name: string; dreGroup: string }>()
+    const bankMap = new Map<string, { name: string; unitName: string | null }>()
+    for (const e of approved) {
+      if (e.needsNewUnit && e.inferredUnit && !e.selectedUnitId) unitNames.add(e.inferredUnit)
+      if (e.needsNewAccount && e.inferredAccountName && !e.selectedAccountId) {
+        const dre = e.inferredDreGroup || 'Despesas Administrativas'
+        acctMap.set(e.inferredAccountName, { name: e.inferredAccountName, dreGroup: dre })
+      }
+      if (e.needsNewBankAccount && e.inferredBankAccount && !e.selectedBankAccountId) {
+        bankMap.set(e.inferredBankAccount, {
+          name: e.inferredBankAccount,
+          unitName: e.inferredUnit,
+        })
+      }
+    }
+
+    const res = await fetch('/api/expense-report/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expenses: approved.map(e => ({
+          fitid: e.fitid,
+          date: e.date,
+          amount: e.amount,
+          description: e.description,
+          memo: [e.cnpj && `CNPJ: ${e.cnpj}`, e.docType && `Doc: ${e.docType}`].filter(Boolean).join(' · ') || null,
+          accountId: e.selectedAccountId ? parseInt(e.selectedAccountId) : null,
+          unitId:    e.selectedUnitId    ? parseInt(e.selectedUnitId)    : null,
+          bankAccountId: e.selectedBankAccountId ? parseInt(e.selectedBankAccountId) : null,
+        })),
+        newUnits:        Array.from(unitNames).map(name => ({ name })),
+        newAccounts:     Array.from(acctMap.values()),
+        newBankAccounts: Array.from(bankMap.values()),
+      }),
+    })
+    const data = await res.json()
+    setXlsxSaving(false)
+    if (!res.ok) { showToast(`Erro: ${data.error}`); return }
+    showToast(`✓ ${data.imported} importadas (${data.skipped} já existiam). Criadas: ${data.createdUnits} unidades, ${data.createdAccounts} contas, ${data.createdBankAccounts} bancos.`)
+    resetXlsxPreview()
+    load()
   }
 
   const handlePreviewAccountChange = (fitid: string, accountId: string) => {
@@ -556,6 +702,9 @@ export default function Lancamentos() {
           <button style={TAB_STYLE(tab === 'cartao')} onClick={() => setTab('cartao')}>
             💳 Fatura Cartão de Crédito
           </button>
+          <button style={TAB_STYLE(tab === 'expense-report')} onClick={() => setTab('expense-report')}>
+            📊 Relatório de Despesas (XLSX)
+          </button>
           <button style={TAB_STYLE(tab === 'manual')} onClick={() => setTab('manual')}>
             ✏️ Lançamento Manual
           </button>
@@ -617,6 +766,55 @@ export default function Lancamentos() {
             <div className="upload-sub">Clique ou arraste o arquivo <strong>.PDF</strong> (Sicoob) ou <strong>.CSV</strong> (outros cartões)</div>
           </div>
         </div>
+      )}
+
+      {/* Expense Report (XLSX) Upload — sem preview */}
+      {tab === 'expense-report' && !expensesPreview && (
+        <div className="mb-6">
+          <div className="card mb-3" style={{ padding: '12px 20px', background: '#eef5ff', border: '1px solid #b8d4f0' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: '#1d4a7a' }}>Relatório de Despesas do ERP (XLSX)</div>
+            <div style={{ fontSize: 12, color: '#1d4a7a', lineHeight: 1.6 }}>
+              Aceita o arquivo de despesas com classificação hierárquica gerado pelo sistema interno.
+              Cada linha-folha é detectada, a categoria do plano de contas é inferida do caminho hierárquico,
+              e você confirma na prévia. As entidades faltantes (unidade, conta, banco) são criadas no momento de salvar.
+            </div>
+          </div>
+          <div
+            className={`upload-zone ${drag ? 'drag' : ''}`}
+            onDragOver={e => { e.preventDefault(); setDrag(true) }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={e => { e.preventDefault(); setDrag(false); handleXLSXFile(e.dataTransfer.files?.[0]) }}
+            onClick={() => xlsxFileRef.current?.click()}
+          >
+            <input
+              ref={xlsxFileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={e => { handleXLSXFile(e.target.files?.[0]); e.target.value = '' }}
+            />
+            <div className="upload-icon">{xlsxParsing ? '⏳' : '📊'}</div>
+            <div className="upload-title">{xlsxParsing ? 'Lendo planilha...' : 'Importar Relatório de Despesas'}</div>
+            <div className="upload-sub">Clique ou arraste o arquivo <strong>.XLSX</strong> — você verá uma prévia com as classificações que o sistema já trouxe</div>
+          </div>
+        </div>
+      )}
+
+      {/* Expense Report preview */}
+      {tab === 'expense-report' && expensesPreview && expensesSummary && (
+        <ExpenseReportPreview
+          preview={expensesPreview}
+          summary={expensesSummary}
+          accounts={accounts}
+          units={units}
+          saving={xlsxSaving}
+          onReset={resetXlsxPreview}
+          onToggleApprove={toggleApprove}
+          onApproveAll={approveAll}
+          onApproveHighConfidence={approveHighConfidence}
+          onUpdateField={updateExpenseField}
+          onSave={saveExpenseReport}
+        />
       )}
 
       {/* Manual Entry Form */}
@@ -1115,5 +1313,161 @@ export default function Lancamentos() {
 
       {toast && <div className="toast">{toast}</div>}
     </Shell>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Expense Report Preview component
+// ─────────────────────────────────────────────────────────────
+interface ExpenseReportPreviewProps {
+  preview: ExpensePreview[]
+  summary: ExpenseSummary
+  accounts: any[]
+  units: any[]
+  saving: boolean
+  onReset: () => void
+  onToggleApprove: (fitid: string) => void
+  onApproveAll: () => void
+  onApproveHighConfidence: () => void
+  onUpdateField: (fitid: string, field: 'selectedAccountId'|'selectedUnitId'|'selectedBankAccountId', val: string) => void
+  onSave: () => void
+}
+
+function ExpenseReportPreview({
+  preview, summary, accounts, units, saving,
+  onReset, onToggleApprove, onApproveAll, onApproveHighConfidence, onUpdateField, onSave,
+}: ExpenseReportPreviewProps) {
+  const approvedCount = preview.filter(p => p.approved && !p.alreadyImported).length
+  const unapprovedCount = preview.filter(p => !p.approved && !p.alreadyImported).length
+
+  return (
+    <>
+      <div className="card mb-3" style={{ padding: '14px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-sub)', fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
+              Prévia do Relatório de Despesas
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--brave-gray)' }}>
+              {summary.totalLeaves} lançamentos · {summary.totalSheets} sheets · Valor total: <b>{fmt(summary.totalValue)}</b>
+              {summary.alreadyImported > 0 && <> · <span style={{ color: '#c0392b' }}>{summary.alreadyImported} já importados anteriormente</span></>}
+              · Confiança média: <b>{summary.avgConfidence}%</b>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-sm btn-secondary" onClick={onApproveHighConfidence}>✓ Aprovar ≥ 90%</button>
+            <button className="btn btn-sm btn-secondary" onClick={onApproveAll}>✓ Aprovar todas</button>
+            <button className="btn btn-sm" onClick={onReset}>Descartar</button>
+            <button className="btn btn-primary btn-sm" disabled={saving || approvedCount === 0} onClick={onSave}>
+              {saving ? 'Salvando...' : `Salvar ${approvedCount} aprovadas`}
+            </button>
+          </div>
+        </div>
+
+        {(summary.uniqUnitsToCreate.length > 0 || summary.uniqAccountsToCreate.length > 0 || summary.uniqBanksToCreate.length > 0) && (
+          <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff8e1', borderRadius: 6, fontSize: 12, lineHeight: 1.6, color: '#7a5c00' }}>
+            <b>Entidades novas que serão criadas ao salvar:</b><br/>
+            {summary.uniqUnitsToCreate.length > 0    && <>• <b>{summary.uniqUnitsToCreate.length} unidade(s):</b> {summary.uniqUnitsToCreate.join(', ')}<br/></>}
+            {summary.uniqAccountsToCreate.length > 0 && <>• <b>{summary.uniqAccountsToCreate.length} conta(s) do plano:</b> {summary.uniqAccountsToCreate.map(a => `${a.name} (${a.dreGroup})`).join(', ')}<br/></>}
+            {summary.uniqBanksToCreate.length > 0    && <>• <b>{summary.uniqBanksToCreate.length} conta(s) bancária(s):</b> {summary.uniqBanksToCreate.join(', ')}</>}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--brave-light)', fontSize: 12, color: 'var(--brave-gray)' }}>
+          <b style={{ color: '#1a7a4a' }}>{approvedCount}</b> aprovadas · <b style={{ color: '#c0392b' }}>{unapprovedCount}</b> aguardando · clique no ✓ pra alternar.
+          Use os selects pra ajustar a classificação manualmente.
+        </div>
+        <div className="table-wrap" style={{ maxHeight: '60vh' }}>
+          <table>
+            <thead style={{ position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
+              <tr>
+                <th style={{ width: 40 }}>✓</th>
+                <th>Data</th>
+                <th>Descrição</th>
+                <th style={{ textAlign: 'right' }}>Valor</th>
+                <th>Conf.</th>
+                <th>Unidade</th>
+                <th>Conta do Plano (DRE)</th>
+                <th>Banco</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.map(e => {
+                const bgRow = e.alreadyImported ? '#f0f0f0' : e.approved ? '#f0fbf4' : '#fffaf0'
+                const confColor = e.confidence >= 90 ? '#1a7a4a' : e.confidence >= 60 ? '#7a5c00' : '#c0392b'
+                return (
+                  <tr key={e.fitid} style={{ background: bgRow, opacity: e.alreadyImported ? 0.6 : 1 }}>
+                    <td>
+                      {e.alreadyImported ? (
+                        <span title="Já importado anteriormente" style={{ fontSize: 11, color: 'var(--brave-gray)' }}>—</span>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={!!e.approved}
+                          onChange={() => onToggleApprove(e.fitid)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      )}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap', fontSize: 11 }}>{new Date(e.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</td>
+                    <td style={{ maxWidth: 280 }}>
+                      <div style={{ fontSize: 12 }}>{e.description}</div>
+                      <div style={{ fontSize: 10, color: 'var(--brave-gray)', marginTop: 2 }}>
+                        {e.sheet}
+                        {e.cnpj && <> · CNPJ {e.cnpj}</>}
+                        {e.docType && <> · {e.docType}</>}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: e.amount < 0 ? '#c0392b' : '#1a7a4a', whiteSpace: 'nowrap' }}>
+                      {fmt(e.amount)}
+                    </td>
+                    <td><span style={{ fontSize: 11, fontWeight: 600, color: confColor }}>{e.confidence}%</span></td>
+                    <td style={{ minWidth: 130 }}>
+                      <select
+                        className="form-select"
+                        style={{ fontSize: 11, padding: '4px 6px' }}
+                        value={e.selectedUnitId || ''}
+                        onChange={ev => onUpdateField(e.fitid, 'selectedUnitId', ev.target.value)}
+                      >
+                        <option value="">{e.needsNewUnit && e.inferredUnit ? `+ Criar ${e.inferredUnit}` : '— sem unidade —'}</option>
+                        {units.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ minWidth: 180 }}>
+                      <select
+                        className="form-select"
+                        style={{ fontSize: 11, padding: '4px 6px' }}
+                        value={e.selectedAccountId || ''}
+                        onChange={ev => onUpdateField(e.fitid, 'selectedAccountId', ev.target.value)}
+                      >
+                        <option value="">
+                          {e.needsNewAccount && e.inferredAccountName
+                            ? `+ Criar "${e.inferredAccountName}" (${e.inferredDreGroup ?? '?'})`
+                            : '— sem classificar —'}
+                        </option>
+                        {accounts.map((a: any) => (
+                          <option key={a.id} value={a.id}>{a.code} · {a.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ minWidth: 140 }}>
+                      {e.inferredBankAccount ? (
+                        <div style={{ fontSize: 11 }}>
+                          {e.bankAccount?.name ?? <span style={{ color: '#7a5c00' }}>+ {e.inferredBankAccount}</span>}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--brave-gray)' }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   )
 }
