@@ -417,6 +417,10 @@ export default function Lancamentos() {
           accountId: e.selectedAccountId ? parseInt(e.selectedAccountId) : null,
           unitId:    e.selectedUnitId    ? parseInt(e.selectedUnitId)    : null,
           bankAccountId: e.selectedBankAccountId ? parseInt(e.selectedBankAccountId) : null,
+          // Fallback textual — o save resolve depois de criar as entidades novas
+          inferredUnit:        e.inferredUnit,
+          inferredAccountName: e.inferredAccountName,
+          inferredBankAccount: e.inferredBankAccount,
         })),
         newUnits:        Array.from(unitNames).map(name => ({ name })),
         newAccounts:     Array.from(acctMap.values()),
