@@ -464,38 +464,60 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
       </div>
 
       {/* 6. Gap PMP - PMR */}
-      <div className="card mb-6 card-accent-yellow">
-        <div className="card-header">
-          <div>
-            <div className="card-eyebrow">Gráfico 6 · Indicador estratégico</div>
-            <div className="card-title">Gap PMP × PMR — Série Temporal</div>
+      {(() => {
+        // Mostrar só meses com ambos PMP e PMR > 0 (evita vies de sobrevivencia:
+        // meses antigos onde só sobrou contas a receber em aberto, ou meses
+        // futuros sem dados ainda).
+        const validSeries = series.pmpPmrSeries.filter(p => p.pmp > 0 && p.pmr > 0)
+        const omitted = series.pmpPmrSeries.length - validSeries.length
+        return (
+          <div className="card mb-6 card-accent-yellow">
+            <div className="card-header">
+              <div>
+                <div className="card-eyebrow">Gráfico 6 · Indicador estratégico</div>
+                <div className="card-title">Gap PMP × PMR — Série Temporal</div>
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
+              Diferença mensal (ponderada pelos valores) entre o prazo médio que você <b>tem</b> para
+              pagar fornecedores (PMP) e o prazo que você <b>concede</b> aos clientes (PMR). Agrupado
+              pelo <b>mês de emissão</b> do título. Mostramos apenas meses com PMP e PMR válidos
+              simultaneamente (omitidos {omitted} bucket(s) sem dado de um dos lados).
+              Gap positivo = fornecedor te financia (saudável); negativo = você financia o cliente.
+            </p>
+            {validSeries.length === 0 ? (
+              <div className="empty-state" style={{ padding: '40px 16px' }}>
+                <div className="empty-state-icon">◇</div>
+                <div style={{ fontSize: 12, color: C.textMuted }}>
+                  Não há nenhum mês com PMP e PMR registrados simultaneamente.
+                </div>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={340}>
+                <LineChart data={validSeries} margin={{ top: 12, right: 32, bottom: 4, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line} />
+                  <YAxis tick={{ fontSize: 11, fill: C.textSoft }}
+                         tickFormatter={v => `${v}d`} stroke={C.line} />
+                  <Tooltip formatter={(v: number) => `${v} dias`}
+                           contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                           labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                           itemStyle={{ color: '#fff', padding: 0 }} />
+                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
+                  <ReferenceLine y={0} stroke={C.textMuted} strokeDasharray="3 3"
+                                 label={{ value: 'Equilíbrio', position: 'insideTopRight', fill: C.textMuted, fontSize: 10 }} />
+                  <Line type="monotone" dataKey="pmp" name="PMP — Prazo de pagamento" stroke={C.red}
+                        strokeWidth={1.8} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="pmr" name="PMR — Prazo de recebimento" stroke={C.green}
+                        strokeWidth={1.8} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="gap" name="Gap (PMP − PMR)" stroke={C.navy}
+                        strokeWidth={3} dot={{ r: 5, fill: C.yellow, stroke: C.navy, strokeWidth: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
-        </div>
-        <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
-          Diferença mensal (ponderada pelos valores) entre o prazo médio que você <b>tem</b> para
-          pagar fornecedores (PMP) e o prazo que você <b>concede</b> aos clientes (PMR). Agrupado
-          pelo <b>mês de emissão</b> do título — mede o comportamento de negociação naquele mês.
-          Gap positivo = você financia menos sua operação (saudável). Gap negativo = você está
-          financiando os clientes.
-        </p>
-        <ResponsiveContainer width="100%" height={320}>
-          <LineChart data={series.pmpPmrSeries} margin={{ top: 8, right: 24, bottom: 4, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line} />
-            <YAxis tick={{ fontSize: 11, fill: C.textSoft }}
-                   tickFormatter={v => `${v}d`} stroke={C.line} />
-            <Tooltip formatter={(v: number) => `${v} dias`}
-                     contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
-                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
-                     itemStyle={{ color: '#fff', padding: 0 }} />
-            <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
-            <Line type="monotone" dataKey="pmp" name="PMP" stroke={C.red}    strokeWidth={1.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="pmr" name="PMR" stroke={C.green}  strokeWidth={1.5} dot={{ r: 3 }} />
-            <Line type="monotone" dataKey="gap" name="Gap (PMP − PMR)" stroke={C.navy}
-                  strokeWidth={2.5} dot={{ r: 4, fill: C.yellow, stroke: C.navy, strokeWidth: 2 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+        )
+      })()}
     </>
   )
 }
