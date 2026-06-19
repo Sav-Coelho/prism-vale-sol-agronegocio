@@ -1,6 +1,9 @@
 import { prisma } from '@/lib/prisma'
 import { NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 // Devolve em UMA chamada tudo que os 6 gráficos precisam, calculado no servidor:
 //
 //   1. monthlyFlow:   { month, year, label, receber, pagar, gap } — 12 meses (passado+futuro)

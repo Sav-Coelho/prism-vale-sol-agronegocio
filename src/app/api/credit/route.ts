@@ -2,6 +2,9 @@ import { prisma } from '@/lib/prisma'
 import { scoreClient, classifySale, type SaleForCredit } from '@/lib/credit'
 import { NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 // GET /api/credit
 // Returns one row per client with the bayesian score and aging buckets.
 export async function GET() {
