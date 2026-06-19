@@ -4,7 +4,7 @@ import Shell from '@/components/Shell'
 import {
   BarChart, Bar, LineChart, Line, ScatterChart, Scatter,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  ZAxis,
+  ReferenceLine,
 } from 'recharts'
 
 type Tab = 'import' | 'view'
@@ -445,65 +445,22 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
         </div>
       </div>
 
-      {/* 5. Dispersão PMR e PMP ─ separados */}
+      {/* 5. Dispersão valor × data ─ separados */}
       <div className="grid-2 mb-6">
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-eyebrow">Gráfico 5a · PMR — Prazo Médio de Recebimento</div>
-              <div className="card-title">Dispersão dos Recebíveis</div>
-            </div>
-          </div>
-          <p style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>
-            Cada ponto é um título a receber, posicionado pelo vencimento (eixo X) e dias
-            entre emissão e vencimento (eixo Y). O tamanho representa o valor do título.
-          </p>
-          <ResponsiveContainer width="100%" height={280}>
-            <ScatterChart margin={{ top: 8, right: 24, bottom: 4, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-              <XAxis dataKey="label" type="category" tick={{ fontSize: 10, fill: C.textSoft }}
-                     stroke={C.line} allowDuplicatedCategory={false} />
-              <YAxis dataKey="days" type="number" name="Dias"
-                     tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line} />
-              <ZAxis dataKey="amount" range={[20, 400]} name="Valor" />
-              <Tooltip cursor={{ strokeDasharray: '3 3' }}
-                       formatter={(v: number, n: string) => n === 'Valor' ? fmt(v) : `${v} dias`}
-                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
-                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
-                     itemStyle={{ color: '#fff', padding: 0 }} />
-              <Scatter data={series.pmrScatter} fill={C.green} fillOpacity={0.5} />
-            </ScatterChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-eyebrow">Gráfico 5b · PMP — Prazo Médio de Pagamento</div>
-              <div className="card-title">Dispersão dos Pagáveis</div>
-            </div>
-          </div>
-          <p style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>
-            Cada ponto é um pagamento a efetuar, posicionado pelo vencimento (eixo X) e dias
-            entre entrada da nota e vencimento (eixo Y).
-          </p>
-          <ResponsiveContainer width="100%" height={280}>
-            <ScatterChart margin={{ top: 8, right: 24, bottom: 4, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-              <XAxis dataKey="label" type="category" tick={{ fontSize: 10, fill: C.textSoft }}
-                     stroke={C.line} allowDuplicatedCategory={false} />
-              <YAxis dataKey="days" type="number" name="Dias"
-                     tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line} />
-              <ZAxis dataKey="amount" range={[20, 400]} name="Valor" />
-              <Tooltip cursor={{ strokeDasharray: '3 3' }}
-                       formatter={(v: number, n: string) => n === 'Valor' ? fmt(v) : `${v} dias`}
-                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
-                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
-                     itemStyle={{ color: '#fff', padding: 0 }} />
-              <Scatter data={series.pmpScatter} fill={C.red} fillOpacity={0.5} />
-            </ScatterChart>
-          </ResponsiveContainer>
-        </div>
+        <ScatterValueByDate
+          title="Distribuição dos Recebíveis"
+          eyebrow="Gráfico 5a · Títulos a Receber"
+          description="Cada ponto é um título a receber, posicionado pela data de emissão (eixo X) e valor (eixo Y). A linha tracejada é a média de todos os títulos."
+          points={series.pmrScatter}
+          color={C.green}
+        />
+        <ScatterValueByDate
+          title="Distribuição dos Pagáveis"
+          eyebrow="Gráfico 5b · Pagamentos a Efetuar"
+          description="Cada ponto é um pagamento a efetuar, posicionado pela data de entrada da nota (eixo X) e valor (eixo Y). A linha tracejada é a média de todos os pagamentos."
+          points={series.pmpScatter}
+          color={C.red}
+        />
       </div>
 
       {/* 6. Gap PMP - PMR */}
@@ -540,6 +497,113 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
         </ResponsiveContainer>
       </div>
     </>
+  )
+}
+
+// ─────────────────────────────────────────────────────────
+//  Scatter — valor por data, com linha de média horizontal
+// ─────────────────────────────────────────────────────────
+function ScatterValueByDate({
+  title, eyebrow, description, points, color,
+}: {
+  title: string; eyebrow: string; description: string
+  points: { date: string; amount: number }[]
+  color: string
+}) {
+  // Converte para coordenadas numéricas (epoch ms no X, valor no Y)
+  const data = points
+    .filter(p => p.date && Number.isFinite(p.amount) && p.amount > 0)
+    .map(p => ({ x: new Date(p.date).getTime(), y: p.amount, date: p.date }))
+    .sort((a, b) => a.x - b.x)
+
+  if (data.length === 0) {
+    return (
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <div className="card-eyebrow">{eyebrow}</div>
+            <div className="card-title">{title}</div>
+          </div>
+        </div>
+        <div className="empty-state" style={{ padding: '32px 16px' }}>
+          <div className="empty-state-icon">◇</div>
+          <div style={{ fontSize: 12, color: C.textMuted }}>Sem dados pra exibir</div>
+        </div>
+      </div>
+    )
+  }
+
+  const avg = data.reduce((s, p) => s + p.y, 0) / data.length
+  const minX = data[0].x
+  const maxX = data[data.length - 1].x
+
+  const fmtTickX = (t: number) => {
+    const d = new Date(t)
+    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+    return `${months[d.getUTCMonth()]}/${String(d.getUTCFullYear()).slice(-2)}`
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <div className="card-eyebrow">{eyebrow}</div>
+          <div className="card-title">{title}</div>
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: C.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+        {description}
+      </p>
+      <ResponsiveContainer width="100%" height={320}>
+        <ScatterChart margin={{ top: 12, right: 32, bottom: 8, left: 16 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+          <XAxis
+            type="number"
+            dataKey="x"
+            domain={[minX, maxX]}
+            tickFormatter={fmtTickX}
+            tick={{ fontSize: 10, fill: C.textSoft }}
+            stroke={C.line}
+            tickCount={8}
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`}
+            tick={{ fontSize: 11, fill: C.textSoft }}
+            stroke={C.line}
+          />
+          <Tooltip
+            cursor={{ strokeDasharray: '3 3', stroke: C.textMuted }}
+            formatter={(v: number) => [fmt(v), 'Valor']}
+            labelFormatter={(v: number) => {
+              const d = new Date(v)
+              return `Data: ${d.toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
+            }}
+            contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+            labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+            itemStyle={{ color: '#fff', padding: 0 }}
+          />
+          <ReferenceLine
+            y={avg}
+            stroke={C.navy}
+            strokeDasharray="6 4"
+            strokeWidth={1.5}
+            label={{
+              value: `Média ${fmt(avg)}`,
+              position: 'insideTopRight',
+              fill: C.navy,
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          />
+          <Scatter data={data} fill={color} fillOpacity={0.55} />
+        </ScatterChart>
+      </ResponsiveContainer>
+      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, textAlign: 'right' }}>
+        {data.length} títulos · média <b style={{ color: C.navy }}>{fmt(avg)}</b>
+      </div>
+    </div>
   )
 }
 
