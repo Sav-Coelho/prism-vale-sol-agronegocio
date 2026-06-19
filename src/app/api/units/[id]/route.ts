@@ -18,11 +18,10 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const id = parseInt(params.id)
-  const hasTx = await prisma.transaction.findFirst({ where: { unitId: id } })
-  if (hasTx) return NextResponse.json({ error: 'Unidade possui lançamentos vinculados' }, { status: 409 })
   const hasSales = await prisma.sale.findFirst({ where: { unitId: id } })
   if (hasSales) return NextResponse.json({ error: 'Unidade possui vendas vinculadas' }, { status: 409 })
-  await prisma.bankAccount.deleteMany({ where: { unitId: id } })
+  const hasClients = await prisma.client.findFirst({ where: { unitId: id } })
+  if (hasClients) return NextResponse.json({ error: 'Unidade possui clientes vinculados' }, { status: 409 })
   await prisma.unit.delete({ where: { id } })
   return NextResponse.json({ ok: true })
 }

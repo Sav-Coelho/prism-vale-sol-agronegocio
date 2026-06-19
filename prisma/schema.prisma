@@ -10,78 +10,11 @@ datasource db {
 }
 
 model Unit {
-  id             Int             @id @default(autoincrement())
-  name           String          @unique
-  bankAccounts   BankAccount[]
-  transactions   Transaction[]
-  clients        Client[]
-  sales          Sale[]
-  purchaseOrders PurchaseOrder[]
-}
-
-model BankAccount {
-  id               Int               @id @default(autoincrement())
-  name             String
-  unitId           Int
-  unit             Unit              @relation(fields: [unitId], references: [id])
-  initialBalance   Float             @default(0)
-  ofxBankId        String?
-  ofxAcctId        String?
-  type             String            @default("CHECKING")
-  transactions     Transaction[]
-  balanceSnapshots BalanceSnapshot[]
-}
-
-model Account {
-  id           Int           @id @default(autoincrement())
-  code         String        @unique
-  name         String
-  type         String
-  dreGroup     String
-  active       Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  transactions Transaction[]
-}
-
-model DreGroup {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
-  type      String   // RECEITA / DEDUCAO / CUSTO / DESPESA / IMPOSTO / NEUTRO
-  section   String   // RECEITA_OP / DEDUCAO / CUSTO_VAR / DESPESA_FIXA / INVESTIMENTO / RECEITA_NOP / DESPESA_NOP / IMPOSTO_LUCRO / NEUTRO
-  sortOrder Int      @default(0)
-  protected Boolean  @default(false)   // true = não pode ser deletado nem renomeado
-  createdAt DateTime @default(now())
-}
-
-model Transaction {
-  id            Int          @id @default(autoincrement())
-  date          DateTime
-  description   String
-  amount        Float
-  memo          String?
-  fitid         String?      @unique
-  accountId     Int?
-  account       Account?     @relation(fields: [accountId], references: [id])
-  unitId        Int?
-  unit          Unit?        @relation(fields: [unitId], references: [id])
-  bankAccountId           Int?
-  bankAccount             BankAccount? @relation(fields: [bankAccountId], references: [id])
-  transferToUnitId        Int?
-  transferToBankAccountId Int?
-  month                   Int
-  year                    Int
-  createdAt               DateTime     @default(now())
-}
-
-model BalanceSnapshot {
-  id            Int         @id @default(autoincrement())
-  bankAccountId Int
-  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id])
-  date          DateTime
-  balance       Float
-  createdAt     DateTime    @default(now())
-
-  @@unique([bankAccountId, date])
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  active  Boolean  @default(true)
+  clients Client[]
+  sales   Sale[]
 }
 
 model Client {
@@ -106,80 +39,10 @@ model Sale {
   date          DateTime
   dueDate       DateTime?
   paidDate      DateTime?
-  paymentStatus String    @default("PENDING")  // PENDING / PAID / OVERDUE / DEFAULTED
+  paymentStatus String    @default("PENDING") // PENDING / PAID / OVERDUE / DEFAULTED
   unitId        Int?
   unit          Unit?     @relation(fields: [unitId], references: [id])
   month         Int
   year          Int
   createdAt     DateTime  @default(now())
-}
-
-model Buyer {
-  id            Int             @id @default(autoincrement())
-  name          String          @unique
-  monthlyBudget Float           @default(0)
-  active        Boolean         @default(true)
-  createdAt     DateTime        @default(now())
-  purchases     PurchaseOrder[]
-}
-
-model PurchaseInstallment {
-  id        Int           @id @default(autoincrement())
-  orderId   Int
-  order     PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  dueDate   DateTime
-  amount    Float
-  status    String        @default("PENDING")  // PENDING / PAID
-  paidDate  DateTime?
-  month     Int
-  year      Int
-  createdAt DateTime      @default(now())
-}
-
-model Supplier {
-  id              Int             @id @default(autoincrement())
-  name            String
-  cnpj            String?
-  contactName     String?
-  email           String?
-  phone           String?
-  paymentTermDays Int             @default(30)
-  notes           String?
-  active          Boolean         @default(true)
-  createdAt       DateTime        @default(now())
-  purchaseOrders  PurchaseOrder[]
-}
-
-model PurchaseOrder {
-  id           Int                   @id @default(autoincrement())
-  supplierId   Int
-  supplier     Supplier              @relation(fields: [supplierId], references: [id])
-  unitId       Int?
-  unit         Unit?                 @relation(fields: [unitId], references: [id])
-  buyerId      Int?
-  buyer        Buyer?                @relation(fields: [buyerId], references: [id])
-  status       String                @default("DRAFT")
-  description  String?
-  invoiceNumber String?
-  expectedDate DateTime?
-  receivedDate DateTime?
-  totalAmount  Float                 @default(0)
-  notes        String?
-  month        Int
-  year         Int
-  createdAt    DateTime              @default(now())
-  updatedAt    DateTime              @updatedAt
-  items        PurchaseItem[]
-  installments PurchaseInstallment[]
-}
-
-model PurchaseItem {
-  id          Int           @id @default(autoincrement())
-  orderId     Int
-  order       PurchaseOrder @relation(fields: [orderId], references: [id])
-  description String
-  quantity    Float
-  unitPrice   Float
-  receivedQty Float         @default(0)
-  notes       String?
 }
