@@ -46,3 +46,67 @@ model Sale {
   year          Int
   createdAt     DateTime  @default(now())
 }
+
+// Títulos a receber importados do ERP do cliente
+model Receivable {
+  id              Int       @id @default(autoincrement())
+  fitid           String    @unique
+  dueDate         DateTime
+  issueDate       DateTime?
+  customerCode    String?
+  customerName    String
+  customerDoc     String?
+  titulo          String
+  parcela         String?
+  portador        String?
+  tipoCobranca    String?
+  sellerCode      String?
+  sellerName      String?
+  farmName        String?
+  phone           String?
+  amount          Float
+  discount        Float     @default(0)
+  interest        Float     @default(0)
+  fine            Float     @default(0)
+  netAmount       Float
+  filial          String?
+  observation     String?
+  status          String    @default("PENDING")    // PENDING / RECEIVED
+  receivedDate    DateTime?
+  importedAt      DateTime  @default(now())
+
+  @@index([dueDate])
+  @@index([customerDoc])
+  @@index([status])
+}
+
+// Pagamentos a efetuar importados do ERP do cliente
+model Payable {
+  id              Int       @id @default(autoincrement())
+  fitid           String    @unique
+  dueDate         DateTime
+  entryDate       DateTime?
+  supplierCode    String?
+  supplierName    String
+  supplierDoc     String?
+  titulo          String
+  parcela         String?
+  amount          Float
+  discount        Float     @default(0)
+  interest        Float     @default(0)
+  fine            Float     @default(0)
+  netAmount       Float
+  portador        String?
+  chequeNumber    String?
+  tipoDocto       String?
+  filial          String?
+  operacao        String?
+  observation     String?
+  status          String    @default("PENDING")    // PENDING / PAID
+  paidDate        DateTime?
+  importedAt      DateTime  @default(now())
+
+  @@index([dueDate])
+  @@index([supplierDoc])
+  @@index([status])
+}

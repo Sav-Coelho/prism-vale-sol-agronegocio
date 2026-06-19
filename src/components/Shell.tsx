@@ -4,7 +4,8 @@ import { usePathname, useRouter } from 'next/navigation'
 const COMPANY_NAME = 'Vale Sol Agronegócio'
 
 const NAV = [
-  { href: '/risco-cliente', icon: '◆', label: 'Risco de Cliente' },
+  { href: '/fluxo-de-caixa', icon: '◈', label: 'Fluxo de Caixa' },
+  { href: '/risco-cliente',  icon: '◆', label: 'Risco de Cliente' },
 ]
 
 export default function Shell({ children }: { children: React.ReactNode }) {
