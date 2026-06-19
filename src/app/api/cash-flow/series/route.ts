@@ -108,34 +108,53 @@ export async function GET() {
     .sort((a, b) => b.total - a.total)
     .slice(0, 10)
 
-  // ── 5. Dispersão dos prazos ────────────────────────────
-  // Eixo X = mês de EMISSÃO / ENTRADA (não vencimento). Isso reflete o
-  // comportamento de negociação naquele mês — quando o título nasceu — em
-  // vez de empilhar prazos antigos no mês em que vencem.
-  const pmrScatter: { date: string; days: number; amount: number; label: string }[] = []
+  // ── 5. Dispersão dos prazos — AGREGADO por cliente/fornecedor ─────
+  // Cada ponto é uma entidade única (cliente ou fornecedor):
+  //   x = prazo médio ponderado pelo valor (PMR ou PMP daquela entidade)
+  //   y = exposição total (soma do netAmount dos títulos)
+  //   count = quantos títulos
+  //
+  // Permite enxergar quem são os "fornecedores generosos" (X alto = longo prazo) e
+  // os clientes mais demorados pra pagar. Y separa por exposição.
+  const recvByCustomer2: Record<string, { sumDaysXAmount: number; sumAmount: number; count: number }> = {}
   for (const r of receivables) {
-    if (!r.issueDate) continue
+    if (!r.issueDate || !r.customerName) continue
     const days = daysBetween(r.dueDate, r.issueDate)
-    if (days < 0 || days > 365) continue   // outliers (data invertida ou prazo absurdo)
-    pmrScatter.push({
-      date: r.issueDate.toISOString().slice(0, 10),
-      label: ymLabel(r.issueDate),
-      days,
-      amount: r.netAmount,
-    })
+    if (days < 0 || days > 365) continue
+    const key = r.customerName
+    const e = recvByCustomer2[key] || (recvByCustomer2[key] = { sumDaysXAmount: 0, sumAmount: 0, count: 0 })
+    e.sumDaysXAmount += days * r.netAmount
+    e.sumAmount      += r.netAmount
+    e.count          += 1
   }
-  const pmpScatter: { date: string; days: number; amount: number; label: string }[] = []
+  const pmrScatter = Object.entries(recvByCustomer2)
+    .filter(([, v]) => v.sumAmount > 0)
+    .map(([name, v]) => ({
+      name,
+      days:   Math.round(v.sumDaysXAmount / v.sumAmount),
+      amount: v.sumAmount,
+      count:  v.count,
+    }))
+
+  const payBySupplier2: Record<string, { sumDaysXAmount: number; sumAmount: number; count: number }> = {}
   for (const p of payables) {
-    if (!p.entryDate) continue
+    if (!p.entryDate || !p.supplierName) continue
     const days = daysBetween(p.dueDate, p.entryDate)
     if (days < 0 || days > 365) continue
-    pmpScatter.push({
-      date: p.entryDate.toISOString().slice(0, 10),
-      label: ymLabel(p.entryDate),
-      days,
-      amount: p.netAmount,
-    })
+    const key = p.supplierName
+    const e = payBySupplier2[key] || (payBySupplier2[key] = { sumDaysXAmount: 0, sumAmount: 0, count: 0 })
+    e.sumDaysXAmount += days * p.netAmount
+    e.sumAmount      += p.netAmount
+    e.count          += 1
   }
+  const pmpScatter = Object.entries(payBySupplier2)
+    .filter(([, v]) => v.sumAmount > 0)
+    .map(([name, v]) => ({
+      name,
+      days:   Math.round(v.sumDaysXAmount / v.sumAmount),
+      amount: v.sumAmount,
+      count:  v.count,
+    }))
 
   // ── 6. Série temporal PMP/PMR (ponderada pelo valor) ───
   // Agrupa pelo mês de EMISSÃO/ENTRADA (não vencimento) — mede negociação

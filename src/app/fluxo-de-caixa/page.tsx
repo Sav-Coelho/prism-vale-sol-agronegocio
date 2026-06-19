@@ -54,8 +54,8 @@ interface SeriesResponse {
   cumulativeBalance: { date: string; label: string; balance: number }[]
   topReceivables: { name: string; total: number }[]
   topPayables:    { name: string; total: number }[]
-  pmrScatter: { date: string; days: number; amount: number; label: string }[]
-  pmpScatter: { date: string; days: number; amount: number; label: string }[]
+  pmrScatter: { name: string; days: number; amount: number; count: number }[]
+  pmpScatter: { name: string; days: number; amount: number; count: number }[]
   pmpPmrSeries: { key: string; label: string; pmp: number; pmr: number; gap: number }[]
 }
 
@@ -449,17 +449,19 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
       <div className="grid-2 mb-6">
         <ScatterDaysVsValue
           title="Dispersão dos Recebíveis — PMR"
-          eyebrow="Gráfico 5a · Títulos a Receber"
-          description="Cada ponto é um título a receber individual, posicionado pelo prazo concedido em dias (X) e valor (Y). A linha tracejada vertical é a média de dias ponderada pelo valor."
+          eyebrow="Gráfico 5a · Clientes"
+          description="Cada ponto é um cliente único, posicionado pelo prazo médio de recebimento em dias (X) e exposição total em R$ (Y). A linha tracejada vertical é a média de dias ponderada pelo valor."
           points={series.pmrScatter}
           color={C.green}
+          entityLabel="cliente"
         />
         <ScatterDaysVsValue
           title="Dispersão dos Pagáveis — PMP"
-          eyebrow="Gráfico 5b · Pagamentos a Efetuar"
-          description="Cada ponto é um pagamento a efetuar individual, posicionado pelo prazo recebido em dias (X) e valor (Y). A linha tracejada vertical é a média de dias ponderada pelo valor."
+          eyebrow="Gráfico 5b · Fornecedores"
+          description="Cada ponto é um fornecedor único, posicionado pelo prazo médio de pagamento em dias (X) e exposição total em R$ (Y). A linha tracejada vertical é a média de dias ponderada pelo valor."
           points={series.pmpScatter}
           color={C.red}
+          entityLabel="fornecedor"
         />
       </div>
 
@@ -523,20 +525,19 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
 }
 
 // ─────────────────────────────────────────────────────────
-//  Scatter — dias (X) × valor (Y), com linha vertical na média de dias
+//  Scatter — dias (X) × exposição (Y), 1 ponto por cliente/fornecedor
 // ─────────────────────────────────────────────────────────
 function ScatterDaysVsValue({
-  title, eyebrow, description, points, color,
+  title, eyebrow, description, points, color, entityLabel,
 }: {
   title: string; eyebrow: string; description: string
-  points: { date: string; days: number; amount: number }[]
+  points: { name: string; days: number; amount: number; count: number }[]
   color: string
+  entityLabel: string  // "cliente" ou "fornecedor"
 }) {
-  // X = dias para pagamento/recebimento, Y = valor
-  // Cada bolinha = 1 título individual (sem agregação por fornecedor/cliente)
   const data = points
     .filter(p => Number.isFinite(p.days) && p.days >= 0 && Number.isFinite(p.amount) && p.amount > 0)
-    .map(p => ({ x: p.days, y: p.amount, date: p.date }))
+    .map(p => ({ x: p.days, y: p.amount, name: p.name, count: p.count }))
 
   if (data.length === 0) {
     return (
@@ -555,14 +556,13 @@ function ScatterDaysVsValue({
     )
   }
 
-  // Média de dias ponderada pelo valor
+  // Média de dias ponderada pela exposição
   const sumAmt = data.reduce((s, p) => s + p.y, 0)
   const avgDays = sumAmt > 0
     ? data.reduce((s, p) => s + p.x * p.y, 0) / sumAmt
     : 0
   const avgRound = Math.round(avgDays)
 
-  // Domínios pra deixar a linha vertical bem visível
   const maxDays = Math.max(...data.map(p => p.x))
   const maxValue = Math.max(...data.map(p => p.y))
 
@@ -578,7 +578,7 @@ function ScatterDaysVsValue({
         {description}
       </p>
       <ResponsiveContainer width="100%" height={340}>
-        <ScatterChart margin={{ top: 12, right: 32, bottom: 12, left: 16 }}>
+        <ScatterChart margin={{ top: 12, right: 32, bottom: 24, left: 16 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
           <XAxis
             type="number"
@@ -588,12 +588,12 @@ function ScatterDaysVsValue({
             tickFormatter={v => `${v}d`}
             tick={{ fontSize: 11, fill: C.textSoft }}
             stroke={C.line}
-            label={{ value: 'Dias para vencimento', position: 'insideBottom', offset: -2, fontSize: 11, fill: C.textMuted }}
+            label={{ value: 'Prazo médio em dias', position: 'insideBottom', offset: -10, fontSize: 11, fill: C.textMuted }}
           />
           <YAxis
             type="number"
             dataKey="y"
-            name="Valor"
+            name="Exposição"
             domain={[0, maxValue]}
             tickFormatter={v => v >= 1000 ? `R$${(v/1000).toFixed(0)}k` : `R$${v.toFixed(0)}`}
             tick={{ fontSize: 11, fill: C.textSoft }}
@@ -602,17 +602,18 @@ function ScatterDaysVsValue({
           <Tooltip
             cursor={{ strokeDasharray: '3 3', stroke: C.textMuted }}
             content={(props) => {
-              const payload = (props as { active?: boolean; payload?: { payload?: { x: number; y: number; date: string } }[] }).payload
+              const payload = (props as { active?: boolean; payload?: { payload?: { x: number; y: number; name: string; count: number } }[] }).payload
               const active = (props as { active?: boolean }).active
               if (!active || !payload || !payload[0]?.payload) return null
               const p = payload[0].payload
               return (
-                <div style={{ background: C.navy, padding: '10px 14px', borderRadius: 4, fontSize: 12 }}>
-                  <div style={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                    {new Date(p.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                <div style={{ background: C.navy, padding: '10px 14px', borderRadius: 4, fontSize: 12, maxWidth: 320 }}>
+                  <div style={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.04em' }}>
+                    {p.name}
                   </div>
-                  <div style={{ color: '#fff' }}>Prazo: <b>{p.x} dias</b></div>
-                  <div style={{ color: '#fff' }}>Valor: <b>{fmt(p.y)}</b></div>
+                  <div style={{ color: '#fff' }}>Prazo médio: <b>{p.x} dias</b></div>
+                  <div style={{ color: '#fff' }}>Exposição: <b>{fmt(p.y)}</b></div>
+                  <div style={{ color: '#fff', opacity: 0.8 }}>Títulos: {p.count}</div>
                 </div>
               )
             }}
@@ -630,11 +631,11 @@ function ScatterDaysVsValue({
               fontWeight: 600,
             }}
           />
-          <Scatter data={data} fill={color} fillOpacity={0.4} shape="circle" />
+          <Scatter data={data} fill={color} fillOpacity={0.55} shape="circle" />
         </ScatterChart>
       </ResponsiveContainer>
       <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, textAlign: 'right' }}>
-        {data.length} títulos · média ponderada pelo valor: <b style={{ color: C.navy }}>{avgRound} dias</b>
+        {data.length} {entityLabel}{data.length !== 1 ? 'es' : ''} · média ponderada pela exposição: <b style={{ color: C.navy }}>{avgRound} dias</b>
       </div>
     </div>
   )
