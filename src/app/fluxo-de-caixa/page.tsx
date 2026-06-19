@@ -500,8 +500,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
         </div>
         <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
           Diferença mensal (ponderada pelos valores) entre o prazo médio que você <b>tem</b> para
-          pagar fornecedores (PMP) e o prazo que você <b>concede</b> aos clientes (PMR). Gap
-          positivo = você financia menos sua operação (saudável). Gap negativo = você está
+          pagar fornecedores (PMP) e o prazo que você <b>concede</b> aos clientes (PMR). Agrupado
+          pelo <b>mês de emissão</b> do título — mede o comportamento de negociação naquele mês.
+          Gap positivo = você financia menos sua operação (saudável). Gap negativo = você está
           financiando os clientes.
         </p>
         <ResponsiveContainer width="100%" height={320}>

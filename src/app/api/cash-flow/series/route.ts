@@ -109,15 +109,17 @@ export async function GET() {
     .slice(0, 10)
 
   // ── 5. Dispersão dos prazos ────────────────────────────
-  // PMR scatter: para cada Receivable com issueDate, plot (dueDate, daysToReceive)
+  // Eixo X = mês de EMISSÃO / ENTRADA (não vencimento). Isso reflete o
+  // comportamento de negociação naquele mês — quando o título nasceu — em
+  // vez de empilhar prazos antigos no mês em que vencem.
   const pmrScatter: { date: string; days: number; amount: number; label: string }[] = []
   for (const r of receivables) {
     if (!r.issueDate) continue
     const days = daysBetween(r.dueDate, r.issueDate)
     if (days < 0 || days > 365) continue   // outliers (data invertida ou prazo absurdo)
     pmrScatter.push({
-      date: r.dueDate.toISOString().slice(0, 10),
-      label: ymLabel(r.dueDate),
+      date: r.issueDate.toISOString().slice(0, 10),
+      label: ymLabel(r.issueDate),
       days,
       amount: r.netAmount,
     })
@@ -128,21 +130,23 @@ export async function GET() {
     const days = daysBetween(p.dueDate, p.entryDate)
     if (days < 0 || days > 365) continue
     pmpScatter.push({
-      date: p.dueDate.toISOString().slice(0, 10),
-      label: ymLabel(p.dueDate),
+      date: p.entryDate.toISOString().slice(0, 10),
+      label: ymLabel(p.entryDate),
       days,
       amount: p.netAmount,
     })
   }
 
   // ── 6. Série temporal PMP/PMR (ponderada pelo valor) ───
+  // Agrupa pelo mês de EMISSÃO/ENTRADA (não vencimento) — mede negociação
+  // do mês, não o impacto futuro no caixa.
   const recvWeighted: Record<string, { sumDaysXAmount: number; sumAmount: number }> = {}
   const payWeighted:  Record<string, { sumDaysXAmount: number; sumAmount: number }> = {}
   for (const r of receivables) {
     if (!r.issueDate) continue
     const days = daysBetween(r.dueDate, r.issueDate)
     if (days < 0 || days > 365) continue
-    const k = ymKey(r.dueDate)
+    const k = ymKey(r.issueDate)   // bucket pelo mês de emissão
     const e = recvWeighted[k] || (recvWeighted[k] = { sumDaysXAmount: 0, sumAmount: 0 })
     e.sumDaysXAmount += days * r.netAmount
     e.sumAmount      += r.netAmount
@@ -151,7 +155,7 @@ export async function GET() {
     if (!p.entryDate) continue
     const days = daysBetween(p.dueDate, p.entryDate)
     if (days < 0 || days > 365) continue
-    const k = ymKey(p.dueDate)
+    const k = ymKey(p.entryDate)   // bucket pelo mês de entrada da nota
     const e = payWeighted[k] || (payWeighted[k] = { sumDaysXAmount: 0, sumAmount: 0 })
     e.sumDaysXAmount += days * p.netAmount
     e.sumAmount      += p.netAmount
