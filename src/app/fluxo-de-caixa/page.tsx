@@ -536,7 +536,7 @@ function ScatterDaysByDate({
   // Média ponderada pelo valor — coerente com a do gráfico 6
   const sumAmt   = data.reduce((s, p) => s + p.amount, 0)
   const avgDays  = sumAmt > 0
-    ? data.reduce((s, p) => s + p.days * p.amount, 0) / sumAmt
+    ? data.reduce((s, p) => s + p.y * p.amount, 0) / sumAmt
     : 0
   const avgRound = Math.round(avgDays)
   const minX = data[0].x
