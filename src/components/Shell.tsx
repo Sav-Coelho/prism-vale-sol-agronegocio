@@ -47,6 +47,19 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
         <main className="page">
           {children}
+          <footer style={{
+            marginTop: 64,
+            paddingTop: 24,
+            borderTop: '1px solid var(--arken-line)',
+            textAlign: 'center',
+            fontSize: 11,
+            color: 'var(--arken-text-muted)',
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            fontWeight: 500,
+          }}>
+            Desenvolvido por Delfos Research LTDA
+          </footer>
         </main>
       </div>
     </>

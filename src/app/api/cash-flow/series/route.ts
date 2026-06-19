@@ -28,14 +28,20 @@ function daysBetween(later: Date, earlier: Date) {
 }
 
 export async function GET() {
+  // Filtra apenas títulos futuros (dueDate > hoje) — vencidos não entram em análise
+  const cutoff = new Date()
+  cutoff.setHours(0, 0, 0, 0)
+
   const [receivables, payables] = await Promise.all([
     prisma.receivable.findMany({
+      where: { dueDate: { gt: cutoff } },
       select: {
         dueDate: true, issueDate: true, amount: true, netAmount: true,
         customerName: true, status: true,
       },
     }),
     prisma.payable.findMany({
+      where: { dueDate: { gt: cutoff } },
       select: {
         dueDate: true, entryDate: true, amount: true, netAmount: true,
         supplierName: true, status: true,

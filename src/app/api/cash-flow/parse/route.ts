@@ -1,9 +1,14 @@
-import { prisma } from '@/lib/prisma'
 import { parseCashFlow } from '@/lib/cash-flow-parser'
 import { NextResponse } from 'next/server'
 
-// Recebe um XLSX e devolve preview com cada linha marcada como
-// "alreadyImported" se o fitid já existir no DB.
+export const dynamic = 'force-dynamic'
+
+// Recebe um XLSX e devolve preview. Marca como `isStale` todos os
+// títulos vencidos ou do próprio dia (vencimento <= hoje), que não entram
+// na análise futura de fluxo.
+//
+// Não há mais checagem de duplicata aqui porque a importação substitui
+// completamente o conteúdo da tabela (ver /api/cash-flow/save).
 export async function POST(req: Request) {
   const fd = await req.formData()
   const file = fd.get('file') as File | null
@@ -19,41 +24,30 @@ export async function POST(req: Request) {
     }, { status: 400 })
   }
 
-  if (result.kind === 'receivable') {
-    const items = result.receivables ?? []
-    const fitids = items.map(i => i.fitid)
-    const existing = fitids.length
-      ? await prisma.receivable.findMany({ where: { fitid: { in: fitids } }, select: { fitid: true } })
-      : []
-    const existingSet = new Set(existing.map(e => e.fitid))
-    const previewed = items.map(i => ({ ...i, alreadyImported: existingSet.has(i.fitid) }))
-    const news = previewed.filter(i => !i.alreadyImported).length
-    return NextResponse.json({
-      kind: 'receivable',
-      total: items.length,
-      totalAmount: result.totalAmount,
-      newCount: news,
-      duplicateCount: items.length - news,
-      items: previewed,
-      errors: result.errors,
-    })
-  }
+  // Corte: vencimento estritamente FUTURO em relação ao dia atual.
+  // Tudo com vencimento <= hoje (vencidos ou do próprio dia) fica fora.
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const isStale = (isoDueDate: string) => new Date(isoDueDate) <= today
 
-  // payable
-  const items = result.payables ?? []
-  const fitids = items.map(i => i.fitid)
-  const existing = fitids.length
-    ? await prisma.payable.findMany({ where: { fitid: { in: fitids } }, select: { fitid: true } })
-    : []
-  const existingSet = new Set(existing.map(e => e.fitid))
-  const previewed = items.map(i => ({ ...i, alreadyImported: existingSet.has(i.fitid) }))
-  const news = previewed.filter(i => !i.alreadyImported).length
+  const rawItems = result.kind === 'receivable'
+    ? (result.receivables ?? [])
+    : (result.payables ?? [])
+
+  const previewed = rawItems.map(i => ({ ...i, isStale: isStale(i.dueDate) }))
+  const validCount = previewed.filter(i => !i.isStale).length
+  const staleCount = previewed.length - validCount
+  const validAmount = previewed
+    .filter(i => !i.isStale)
+    .reduce((s, i) => s + i.netAmount, 0)
+
   return NextResponse.json({
-    kind: 'payable',
-    total: items.length,
+    kind: result.kind,
+    total: previewed.length,
     totalAmount: result.totalAmount,
-    newCount: news,
-    duplicateCount: items.length - news,
+    validCount,
+    validAmount,
+    staleCount,
     items: previewed,
     errors: result.errors,
   })

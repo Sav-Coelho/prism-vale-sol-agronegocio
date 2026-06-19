@@ -2,8 +2,15 @@ import { prisma } from '@/lib/prisma'
 import type { ParsedReceivable, ParsedPayable, Kind } from '@/lib/cash-flow-parser'
 import { NextResponse } from 'next/server'
 
-// Recebe os itens já confirmados pelo usuário e insere com skipDuplicates
-// (fitid unique). Não duplica mesmo se o usuário enviar a mesma linha 2x.
+export const dynamic = 'force-dynamic'
+
+// Wipe-and-replace: ao subir uma nova planilha, TODOS os registros do mesmo
+// tipo (receivable ou payable) são apagados e os novos são inseridos. Isso
+// garante que títulos cancelados/excluídos no ERP entre importações
+// desapareçam também aqui — evita inconsistência entre as duas bases.
+//
+// O servidor ignora qualquer item com dueDate <= hoje (vencido ou do mesmo
+// dia) — esses não entram em análise.
 export async function POST(req: Request) {
   const body = await req.json() as
     | { kind: 'receivable'; items: ParsedReceivable[] }
@@ -13,12 +20,17 @@ export async function POST(req: Request) {
   if (kind !== 'receivable' && kind !== 'payable') {
     return NextResponse.json({ error: 'kind inválido' }, { status: 400 })
   }
-  if (!Array.isArray(body.items) || body.items.length === 0) {
-    return NextResponse.json({ imported: 0, skipped: 0 })
+  if (!Array.isArray(body.items)) {
+    return NextResponse.json({ error: 'items inválido' }, { status: 400 })
   }
 
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const isStale = (isoDueDate: string) => new Date(isoDueDate) <= today
+
   if (kind === 'receivable') {
-    const data = (body.items as ParsedReceivable[]).map(i => ({
+    const valid = (body.items as ParsedReceivable[]).filter(i => !isStale(i.dueDate))
+    const data = valid.map(i => ({
       fitid: i.fitid,
       dueDate: new Date(i.dueDate),
       issueDate: i.issueDate ? new Date(i.issueDate) : null,
@@ -41,11 +53,21 @@ export async function POST(req: Request) {
       filial: i.filial,
       observation: i.observation,
     }))
-    const res = await prisma.receivable.createMany({ data, skipDuplicates: true })
-    return NextResponse.json({ imported: res.count, skipped: data.length - res.count })
+    // Atomic wipe + insert. Se o insert falhar, rollback do delete.
+    const result = await prisma.$transaction(async tx => {
+      const del = await tx.receivable.deleteMany({})
+      const ins = await tx.receivable.createMany({ data, skipDuplicates: true })
+      return { deleted: del.count, inserted: ins.count }
+    })
+    return NextResponse.json({
+      deleted: result.deleted,
+      imported: result.inserted,
+      staleIgnored: body.items.length - valid.length,
+    })
   }
 
-  const data = (body.items as ParsedPayable[]).map(i => ({
+  const valid = (body.items as ParsedPayable[]).filter(i => !isStale(i.dueDate))
+  const data = valid.map(i => ({
     fitid: i.fitid,
     dueDate: new Date(i.dueDate),
     entryDate: i.entryDate ? new Date(i.entryDate) : null,
@@ -66,6 +88,14 @@ export async function POST(req: Request) {
     operacao: i.operacao,
     observation: i.observation,
   }))
-  const res = await prisma.payable.createMany({ data, skipDuplicates: true })
-  return NextResponse.json({ imported: res.count, skipped: data.length - res.count })
+  const result = await prisma.$transaction(async tx => {
+    const del = await tx.payable.deleteMany({})
+    const ins = await tx.payable.createMany({ data, skipDuplicates: true })
+    return { deleted: del.count, inserted: ins.count }
+  })
+  return NextResponse.json({
+    deleted: result.deleted,
+    imported: result.inserted,
+    staleIgnored: body.items.length - valid.length,
+  })
 }

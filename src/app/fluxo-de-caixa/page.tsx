@@ -15,7 +15,7 @@ interface ItemRow {
   dueDate: string
   amount: number
   netAmount: number
-  alreadyImported: boolean
+  isStale: boolean      // vencimento <= hoje → não entra em análise
   // Receivable
   customerName?: string
   customerDoc?: string | null
@@ -34,8 +34,9 @@ interface PreviewResponse {
   kind: Kind
   total: number
   totalAmount: number
-  newCount: number
-  duplicateCount: number
+  validCount: number
+  validAmount: number
+  staleCount: number
   items: ItemRow[]
   errors: string[]
 }
@@ -148,18 +149,22 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
 
   const save = async () => {
     if (!preview) return
-    const onlyNew = preview.items.filter(i => !i.alreadyImported)
-    if (onlyNew.length === 0) { showToast('Nada novo pra salvar'); return }
+    const valid = preview.items.filter(i => !i.isStale)
+    if (valid.length === 0) { showToast('Nenhum título com vencimento futuro pra salvar'); return }
+    const confirmMsg = preview.kind === 'receivable'
+      ? `Isso vai APAGAR todos os títulos a receber atuais e substituir pelos ${valid.length} desta planilha. Confirma?`
+      : `Isso vai APAGAR todos os pagamentos a efetuar atuais e substituir pelos ${valid.length} desta planilha. Confirma?`
+    if (!confirm(confirmMsg)) return
     setSaving(true)
     const r = await fetch('/api/cash-flow/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: preview.kind, items: onlyNew }),
+      body: JSON.stringify({ kind: preview.kind, items: valid }),
     })
     const d = await r.json()
     setSaving(false)
     if (!r.ok) { showToast(`Erro: ${d.error}`); return }
-    showToast(`✓ ${d.imported} lançamentos importados (${d.skipped} ignorados)`)
+    showToast(`✓ ${d.deleted} antigos removidos · ${d.imported} novos importados · ${d.staleIgnored} vencidos ignorados`)
     setPreview(null)
     onSaved()
   }
@@ -224,15 +229,22 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn" onClick={() => setPreview(null)}>Descartar</button>
-            <button className="btn btn-primary" onClick={save} disabled={saving || preview.newCount === 0}>
-              {saving ? 'Salvando…' : `Autorizar e salvar ${preview.newCount}`}
+            <button className="btn btn-primary" onClick={save} disabled={saving || preview.validCount === 0}>
+              {saving ? 'Salvando…' : `Autorizar e substituir base (${preview.validCount})`}
             </button>
           </div>
         </div>
 
+        <div style={{ marginBottom: 14, padding: '10px 14px', background: '#fff8e1', border: `1px solid ${C.gold}`, borderRadius: 4, fontSize: 12, color: '#7a5c00', lineHeight: 1.5 }}>
+          ⚠ <b>Substituição completa.</b> Ao salvar, todos os {isRecv ? 'títulos a receber' : 'pagamentos a efetuar'} atualmente
+          no banco serão <b>apagados</b> e substituídos pelos {preview.validCount} desta planilha. Isso garante
+          que títulos cancelados no ERP entre importações também sumam aqui. Títulos com vencimento <b>vencido ou do dia atual</b>
+          ({preview.staleCount}) são ignorados automaticamente — não entram em análise de fluxo futuro.
+        </div>
+
         <div style={{ display: 'flex', gap: 24, marginBottom: 18 }}>
-          <KpiInline label="Novos" value={String(preview.newCount)} color={C.green} />
-          <KpiInline label="Duplicados (serão ignorados)" value={String(preview.duplicateCount)} color={C.textMuted} />
+          <KpiInline label="Válidos (vencimento futuro)" value={String(preview.validCount)} color={C.green} />
+          <KpiInline label="Vencidos / do dia (ignorados)" value={String(preview.staleCount)} color={C.amber} />
           <KpiInline label="Total no arquivo" value={String(preview.total)} color={C.navy} />
         </div>
 
@@ -251,11 +263,11 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
             </thead>
             <tbody>
               {preview.items.slice(0, 500).map(i => (
-                <tr key={i.fitid} style={{ opacity: i.alreadyImported ? 0.5 : 1 }}>
+                <tr key={i.fitid} style={{ opacity: i.isStale ? 0.45 : 1 }}>
                   <td>
-                    {i.alreadyImported
-                      ? <span title="Já importado" style={{ color: C.textMuted, fontSize: 14 }}>≡</span>
-                      : <span title="Novo" style={{ color: C.green, fontSize: 14, fontWeight: 700 }}>+</span>}
+                    {i.isStale
+                      ? <span title="Vencido ou do dia — não entra em análise" style={{ color: C.amber, fontSize: 14 }}>⊘</span>
+                      : <span title="Vencimento futuro — válido" style={{ color: C.green, fontSize: 14, fontWeight: 700 }}>+</span>}
                   </td>
                   <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(i.dueDate)}</td>
                   <td style={{ maxWidth: 280, fontSize: 13 }}>
