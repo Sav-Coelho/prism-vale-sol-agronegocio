@@ -349,7 +349,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
             <YAxis tick={{ fontSize: 11, fill: C.textSoft }}
                    tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} stroke={C.line} />
             <Tooltip formatter={(v: number) => fmt(v)}
-                     contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+                     contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                     itemStyle={{ color: '#fff', padding: 0 }} />
             <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
             <Bar dataKey="receber" name="A Receber" fill={C.green} radius={[3, 3, 0, 0]} />
             <Bar dataKey="pagar"   name="A Pagar"   fill={C.red}   radius={[3, 3, 0, 0]} />
@@ -377,8 +379,14 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
                    interval={Math.max(1, Math.floor(series.cumulativeBalance.length / 12))} />
             <YAxis tick={{ fontSize: 11, fill: C.textSoft }}
                    tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} stroke={C.line} />
-            <Tooltip formatter={(v: number) => fmt(v)}
-                     contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+            <Tooltip
+              cursor={{ stroke: C.yellow, strokeWidth: 1 }}
+              formatter={(v: number) => [fmt(v), 'Saldo']}
+              labelFormatter={(l: string) => `Data: ${l}`}
+              contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+              labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+              itemStyle={{ color: '#fff', padding: 0 }}
+            />
             <Line type="monotone" dataKey="balance" name="Saldo projetado"
                   stroke={C.navy} strokeWidth={2}
                   dot={{ r: 2, fill: C.yellow, stroke: C.navy, strokeWidth: 1 }} />
@@ -404,7 +412,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
                      width={180} stroke={C.line}
                      tickFormatter={v => v.length > 24 ? v.slice(0, 22) + '…' : v} />
               <Tooltip formatter={(v: number) => fmt(v)}
-                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                     itemStyle={{ color: '#fff', padding: 0 }} />
               <Bar dataKey="total" fill={C.green} radius={[0, 3, 3, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -426,7 +436,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
                      width={180} stroke={C.line}
                      tickFormatter={v => v.length > 24 ? v.slice(0, 22) + '…' : v} />
               <Tooltip formatter={(v: number) => fmt(v)}
-                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                     itemStyle={{ color: '#fff', padding: 0 }} />
               <Bar dataKey="total" fill={C.red} radius={[0, 3, 3, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -456,7 +468,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
               <ZAxis dataKey="amount" range={[20, 400]} name="Valor" />
               <Tooltip cursor={{ strokeDasharray: '3 3' }}
                        formatter={(v: number, n: string) => n === 'Valor' ? fmt(v) : `${v} dias`}
-                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                     itemStyle={{ color: '#fff', padding: 0 }} />
               <Scatter data={series.pmrScatter} fill={C.green} fillOpacity={0.5} />
             </ScatterChart>
           </ResponsiveContainer>
@@ -483,7 +497,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
               <ZAxis dataKey="amount" range={[20, 400]} name="Valor" />
               <Tooltip cursor={{ strokeDasharray: '3 3' }}
                        formatter={(v: number, n: string) => n === 'Valor' ? fmt(v) : `${v} dias`}
-                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+                       contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                     itemStyle={{ color: '#fff', padding: 0 }} />
               <Scatter data={series.pmpScatter} fill={C.red} fillOpacity={0.5} />
             </ScatterChart>
           </ResponsiveContainer>
@@ -512,7 +528,9 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
             <YAxis tick={{ fontSize: 11, fill: C.textSoft }}
                    tickFormatter={v => `${v}d`} stroke={C.line} />
             <Tooltip formatter={(v: number) => `${v} dias`}
-                     contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, color: '#fff', fontSize: 12 }} />
+                     contentStyle={{ background: C.navy, border: 'none', borderRadius: 4, fontSize: 12, padding: '10px 14px' }}
+                     labelStyle={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}
+                     itemStyle={{ color: '#fff', padding: 0 }} />
             <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
             <Line type="monotone" dataKey="pmp" name="PMP" stroke={C.red}    strokeWidth={1.5} dot={{ r: 3 }} />
             <Line type="monotone" dataKey="pmr" name="PMR" stroke={C.green}  strokeWidth={1.5} dot={{ r: 3 }} />
