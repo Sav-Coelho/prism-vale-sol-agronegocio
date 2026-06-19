@@ -570,7 +570,6 @@ function ScatterDaysByDate({
             tick={{ fontSize: 10, fill: C.textSoft }}
             stroke={C.line}
             tickCount={8}
-            scale="time"
           />
           <YAxis
             type="number"
@@ -582,11 +581,10 @@ function ScatterDaysByDate({
           <ZAxis dataKey="z" range={[30, 600]} />
           <Tooltip
             cursor={{ strokeDasharray: '3 3', stroke: C.textMuted }}
-            // 'y' = dias, 'x' = epoch, mas o Recharts passa todos os fields no payload
-            // Vamos personalizar pra mostrar dias + valor.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            content={({ active, payload }: any) => {
-              if (!active || !payload || !payload[0]) return null
+            content={(props) => {
+              const payload = (props as { active?: boolean; payload?: { payload?: { x: number; y: number; amount: number } }[] }).payload
+              const active = (props as { active?: boolean }).active
+              if (!active || !payload || !payload[0]?.payload) return null
               const p = payload[0].payload
               const d = new Date(p.x)
               return (
