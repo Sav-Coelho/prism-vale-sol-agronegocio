@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
 import {
   BarChart, Bar, LineChart, Line, ScatterChart, Scatter,
-  XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
 
@@ -447,17 +447,17 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
 
       {/* 5. Dispersão valor × data ─ separados */}
       <div className="grid-2 mb-6">
-        <ScatterDaysByDate
+        <ScatterDaysVsValue
           title="Dispersão dos Recebíveis — PMR"
           eyebrow="Gráfico 5a · Títulos a Receber"
-          description="Cada ponto é um título a receber, posicionado pela data de emissão (X) e prazo concedido em dias (Y). O tamanho representa o valor. A linha tracejada é a média de dias."
+          description="Cada ponto é um título a receber individual, posicionado pelo prazo concedido em dias (X) e valor (Y). A linha tracejada vertical é a média de dias ponderada pelo valor."
           points={series.pmrScatter}
           color={C.green}
         />
-        <ScatterDaysByDate
+        <ScatterDaysVsValue
           title="Dispersão dos Pagáveis — PMP"
           eyebrow="Gráfico 5b · Pagamentos a Efetuar"
-          description="Cada ponto é um pagamento a efetuar, posicionado pela data de entrada da nota (X) e prazo recebido em dias (Y). O tamanho representa o valor. A linha tracejada é a média de dias."
+          description="Cada ponto é um pagamento a efetuar individual, posicionado pelo prazo recebido em dias (X) e valor (Y). A linha tracejada vertical é a média de dias ponderada pelo valor."
           points={series.pmpScatter}
           color={C.red}
         />
@@ -501,20 +501,20 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
 }
 
 // ─────────────────────────────────────────────────────────
-//  Scatter — dias por data, ponderado pelo valor, com média horizontal
+//  Scatter — dias (X) × valor (Y), com linha vertical na média de dias
 // ─────────────────────────────────────────────────────────
-function ScatterDaysByDate({
+function ScatterDaysVsValue({
   title, eyebrow, description, points, color,
 }: {
   title: string; eyebrow: string; description: string
   points: { date: string; days: number; amount: number }[]
   color: string
 }) {
-  // X = data de emissão/entrada (epoch ms), Y = dias de prazo, Z = valor (tamanho)
+  // X = dias para pagamento/recebimento, Y = valor
+  // Cada bolinha = 1 título individual (sem agregação por fornecedor/cliente)
   const data = points
-    .filter(p => p.date && Number.isFinite(p.days) && p.days >= 0)
-    .map(p => ({ x: new Date(p.date).getTime(), y: p.days, z: Math.max(1, p.amount), date: p.date, amount: p.amount }))
-    .sort((a, b) => a.x - b.x)
+    .filter(p => Number.isFinite(p.days) && p.days >= 0 && Number.isFinite(p.amount) && p.amount > 0)
+    .map(p => ({ x: p.days, y: p.amount, date: p.date }))
 
   if (data.length === 0) {
     return (
@@ -533,20 +533,16 @@ function ScatterDaysByDate({
     )
   }
 
-  // Média ponderada pelo valor — coerente com a do gráfico 6
-  const sumAmt   = data.reduce((s, p) => s + p.amount, 0)
-  const avgDays  = sumAmt > 0
-    ? data.reduce((s, p) => s + p.y * p.amount, 0) / sumAmt
+  // Média de dias ponderada pelo valor
+  const sumAmt = data.reduce((s, p) => s + p.y, 0)
+  const avgDays = sumAmt > 0
+    ? data.reduce((s, p) => s + p.x * p.y, 0) / sumAmt
     : 0
   const avgRound = Math.round(avgDays)
-  const minX = data[0].x
-  const maxX = data[data.length - 1].x
 
-  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-  const fmtTickX = (t: number) => {
-    const d = new Date(t)
-    return `${months[d.getUTCMonth()]}/${String(d.getUTCFullYear()).slice(-2)}`
-  }
+  // Domínios pra deixar a linha vertical bem visível
+  const maxDays = Math.max(...data.map(p => p.x))
+  const maxValue = Math.max(...data.map(p => p.y))
 
   return (
     <div className="card">
@@ -559,59 +555,60 @@ function ScatterDaysByDate({
       <p style={{ fontSize: 11, color: C.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
         {description}
       </p>
-      <ResponsiveContainer width="100%" height={320}>
-        <ScatterChart margin={{ top: 12, right: 32, bottom: 8, left: 16 }}>
+      <ResponsiveContainer width="100%" height={340}>
+        <ScatterChart margin={{ top: 12, right: 32, bottom: 12, left: 16 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
           <XAxis
             type="number"
             dataKey="x"
-            domain={[minX, maxX]}
-            tickFormatter={fmtTickX}
-            tick={{ fontSize: 10, fill: C.textSoft }}
+            name="Dias"
+            domain={[0, Math.ceil(maxDays / 30) * 30]}
+            tickFormatter={v => `${v}d`}
+            tick={{ fontSize: 11, fill: C.textSoft }}
             stroke={C.line}
-            tickCount={8}
+            label={{ value: 'Dias para vencimento', position: 'insideBottom', offset: -2, fontSize: 11, fill: C.textMuted }}
           />
           <YAxis
             type="number"
             dataKey="y"
-            tickFormatter={v => `${v}d`}
+            name="Valor"
+            domain={[0, maxValue]}
+            tickFormatter={v => v >= 1000 ? `R$${(v/1000).toFixed(0)}k` : `R$${v.toFixed(0)}`}
             tick={{ fontSize: 11, fill: C.textSoft }}
             stroke={C.line}
           />
-          <ZAxis dataKey="z" range={[30, 600]} />
           <Tooltip
             cursor={{ strokeDasharray: '3 3', stroke: C.textMuted }}
             content={(props) => {
-              const payload = (props as { active?: boolean; payload?: { payload?: { x: number; y: number; amount: number } }[] }).payload
+              const payload = (props as { active?: boolean; payload?: { payload?: { x: number; y: number; date: string } }[] }).payload
               const active = (props as { active?: boolean }).active
               if (!active || !payload || !payload[0]?.payload) return null
               const p = payload[0].payload
-              const d = new Date(p.x)
               return (
                 <div style={{ background: C.navy, padding: '10px 14px', borderRadius: 4, fontSize: 12 }}>
                   <div style={{ color: C.yellow, fontWeight: 600, marginBottom: 6, fontSize: 11, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                    {d.toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                    {new Date(p.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
                   </div>
-                  <div style={{ color: '#fff' }}>Prazo: <b>{p.y} dias</b></div>
-                  <div style={{ color: '#fff' }}>Valor: <b>{fmt(p.amount)}</b></div>
+                  <div style={{ color: '#fff' }}>Prazo: <b>{p.x} dias</b></div>
+                  <div style={{ color: '#fff' }}>Valor: <b>{fmt(p.y)}</b></div>
                 </div>
               )
             }}
           />
           <ReferenceLine
-            y={avgRound}
+            x={avgRound}
             stroke={C.navy}
             strokeDasharray="6 4"
-            strokeWidth={1.5}
+            strokeWidth={2}
             label={{
               value: `Média ${avgRound} dias`,
-              position: 'insideTopRight',
+              position: 'insideTopLeft',
               fill: C.navy,
               fontSize: 11,
               fontWeight: 600,
             }}
           />
-          <Scatter data={data} fill={color} fillOpacity={0.45} />
+          <Scatter data={data} fill={color} fillOpacity={0.4} shape="circle" />
         </ScatterChart>
       </ResponsiveContainer>
       <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, textAlign: 'right' }}>
