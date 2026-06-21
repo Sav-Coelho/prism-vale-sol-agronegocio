@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -27,27 +27,45 @@ function daysBetween(later: Date, earlier: Date) {
   return Math.round((later.getTime() - earlier.getTime()) / (1000 * 60 * 60 * 24))
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   // Filtra apenas títulos futuros (dueDate > hoje) — vencidos não entram em análise
   const cutoff = new Date()
   cutoff.setHours(0, 0, 0, 0)
 
-  const [receivables, payables] = await Promise.all([
+  const { searchParams } = new URL(req.url)
+  const unit = searchParams.get('unit')?.trim()
+  const unitFilter = unit ? { filial: unit } : {}
+
+  // Lista de filiais distintas — pra alimentar o dropdown do dashboard
+  const [recFiliais, payFiliais, receivables, payables] = await Promise.all([
     prisma.receivable.findMany({
-      where: { dueDate: { gt: cutoff } },
+      where: { filial: { not: null } },
+      distinct: ['filial'],
+      select: { filial: true },
+    }),
+    prisma.payable.findMany({
+      where: { filial: { not: null } },
+      distinct: ['filial'],
+      select: { filial: true },
+    }),
+    prisma.receivable.findMany({
+      where: { dueDate: { gt: cutoff }, ...unitFilter },
       select: {
         dueDate: true, issueDate: true, amount: true, netAmount: true,
         customerName: true, status: true,
       },
     }),
     prisma.payable.findMany({
-      where: { dueDate: { gt: cutoff } },
+      where: { dueDate: { gt: cutoff }, ...unitFilter },
       select: {
         dueDate: true, entryDate: true, amount: true, netAmount: true,
         supplierName: true, status: true,
       },
     }),
   ])
+  const filiaisSet = new Set<string>()
+  ;[...recFiliais, ...payFiliais].forEach(r => { if (r.filial) filiaisSet.add(r.filial) })
+  const filiais = Array.from(filiaisSet).sort()
 
   // ── 1. Monthly flow (próximos 12 meses) ─────────────────
   const today = new Date()
@@ -198,6 +216,8 @@ export async function GET() {
   const totalPagarPending   = payables.filter(p => p.status === 'PENDING').reduce((s, p) => s + p.netAmount, 0)
 
   return NextResponse.json({
+    filiais,
+    selectedUnit: unit ?? null,
     summary: {
       countReceivables: receivables.length,
       countPayables: payables.length,

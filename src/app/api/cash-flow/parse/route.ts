@@ -12,12 +12,14 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: Request) {
   const fd = await req.formData()
   const file = fd.get('file') as File | null
+  const filial = (fd.get('filial') as string | null)?.trim() || undefined
   if (!file) return NextResponse.json({ error: 'Arquivo não enviado' }, { status: 400 })
+  if (!filial) return NextResponse.json({ error: 'Filial obrigatória' }, { status: 400 })
 
   const buf = await file.arrayBuffer()
   let result
   try {
-    result = parseCashFlow(buf)
+    result = parseCashFlow(buf, filial)
   } catch (e) {
     return NextResponse.json({
       error: 'Falha ao ler XLSX: ' + (e instanceof Error ? e.message : String(e)),

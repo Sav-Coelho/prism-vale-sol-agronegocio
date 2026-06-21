@@ -146,7 +146,12 @@ function indexHeaders(headers: string[]): Record<string, number> {
 }
 
 // ── Parser principal ─────────────────────────────────────
-export function parseCashFlow(buffer: ArrayBuffer): ParseResult {
+/**
+ * Quando o XLSX vem com a coluna FILIAL vazia (relatório por filial),
+ * a UI passa `filialOverride` pra preencher e o fitid já fica único por filial,
+ * permitindo coexistência de várias filiais no mesmo banco.
+ */
+export function parseCashFlow(buffer: ArrayBuffer, filialOverride?: string): ParseResult {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: false })
   const sheetName = wb.SheetNames[0]
   const sheet = wb.Sheets[sheetName]
@@ -179,9 +184,9 @@ export function parseCashFlow(buffer: ArrayBuffer): ParseResult {
       const parcela = str(row[idx['PARCELA']])
       const customerDoc = str(row[idx['CNPJ/CPF']])
       const amount = num(row[idx['VLR TITULO']])
-      const filial = str(row[idx['FILIAL']])
+      const filial = filialOverride ?? str(row[idx['FILIAL']])
 
-      const seed = `R|${titulo}|${parcela}|${customerDoc}|${dueDate}|${amount.toFixed(2)}|${filial}`
+      const seed = `R|${filial ?? ''}|${titulo}|${parcela}|${customerDoc}|${dueDate}|${amount.toFixed(2)}`
       const fitid = `r-${hash(seed)}`
 
       items.push({
@@ -225,9 +230,9 @@ export function parseCashFlow(buffer: ArrayBuffer): ParseResult {
     const parcela = str(row[idx['PARCELA']])
     const supplierDoc = str(row[idx['CNPJ']])
     const amount = num(row[idx['VLR TITULO']])
-    const filial = str(row[idx['FILIAL']])
+    const filial = filialOverride ?? str(row[idx['FILIAL']])
 
-    const seed = `P|${titulo}|${parcela}|${supplierDoc}|${dueDate}|${amount.toFixed(2)}|${filial}`
+    const seed = `P|${filial ?? ''}|${titulo}|${parcela}|${supplierDoc}|${dueDate}|${amount.toFixed(2)}`
     const fitid = `p-${hash(seed)}`
 
     items.push({

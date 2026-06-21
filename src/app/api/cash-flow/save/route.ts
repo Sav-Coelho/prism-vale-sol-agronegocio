@@ -13,16 +13,20 @@ export const dynamic = 'force-dynamic'
 // dia) — esses não entram em análise.
 export async function POST(req: Request) {
   const body = await req.json() as
-    | { kind: 'receivable'; items: ParsedReceivable[] }
-    | { kind: 'payable';    items: ParsedPayable[] }
+    | { kind: 'receivable'; filial: string; items: ParsedReceivable[] }
+    | { kind: 'payable';    filial: string; items: ParsedPayable[] }
 
   const kind: Kind = body.kind
   if (kind !== 'receivable' && kind !== 'payable') {
     return NextResponse.json({ error: 'kind inválido' }, { status: 400 })
   }
+  if (!body.filial?.trim()) {
+    return NextResponse.json({ error: 'Filial obrigatória' }, { status: 400 })
+  }
   if (!Array.isArray(body.items)) {
     return NextResponse.json({ error: 'items inválido' }, { status: 400 })
   }
+  const filial = body.filial.trim()
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -53,13 +57,14 @@ export async function POST(req: Request) {
       filial: i.filial,
       observation: i.observation,
     }))
-    // Atomic wipe + insert. Se o insert falhar, rollback do delete.
+    // Wipe-and-replace POR FILIAL — não apaga dados de outras unidades.
     const result = await prisma.$transaction(async tx => {
-      const del = await tx.receivable.deleteMany({})
+      const del = await tx.receivable.deleteMany({ where: { filial } })
       const ins = await tx.receivable.createMany({ data, skipDuplicates: true })
       return { deleted: del.count, inserted: ins.count }
     })
     return NextResponse.json({
+      filial,
       deleted: result.deleted,
       imported: result.inserted,
       staleIgnored: body.items.length - valid.length,
@@ -89,11 +94,12 @@ export async function POST(req: Request) {
     observation: i.observation,
   }))
   const result = await prisma.$transaction(async tx => {
-    const del = await tx.payable.deleteMany({})
+    const del = await tx.payable.deleteMany({ where: { filial } })
     const ins = await tx.payable.createMany({ data, skipDuplicates: true })
     return { deleted: del.count, inserted: ins.count }
   })
   return NextResponse.json({
+    filial,
     deleted: result.deleted,
     imported: result.inserted,
     staleIgnored: body.items.length - valid.length,

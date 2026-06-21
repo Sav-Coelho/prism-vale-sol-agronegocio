@@ -32,6 +32,7 @@ interface ItemRow {
 
 interface PreviewResponse {
   kind: Kind
+  filial: string
   total: number
   totalAmount: number
   validCount: number
@@ -42,6 +43,8 @@ interface PreviewResponse {
 }
 
 interface SeriesResponse {
+  filiais: string[]
+  selectedUnit: string | null
   summary: {
     countReceivables: number
     countPayables: number
@@ -71,18 +74,41 @@ const C = {
   blue: '#2f5a96',
 }
 
+// Filiais canônicas conhecidas + auto-detect pelo nome do arquivo
+const KNOWN_FILIAIS = [
+  'VS - APERIBÉ',
+  'VS - TRÊS RIOS',
+  'VS - QUATIS',
+  'VS - RIO BONITO',
+  'MM - RIO BONITO',
+  'MM - SETE LAGOAS',
+]
+
+function detectFilialFromFilename(name: string): string | null {
+  const up = name.toUpperCase()
+  if (up.includes('APERIBE'))                              return 'VS - APERIBÉ'
+  if (up.includes('TRES RIOS') || up.includes('TRÊS RIOS')) return 'VS - TRÊS RIOS'
+  if (up.includes('QUATIS'))                                return 'VS - QUATIS'
+  if (up.includes('MULTMUNDE') && up.includes('RIO BONITO'))return 'MM - RIO BONITO'
+  if (up.includes('MULTMUNDE') && (up.includes('7 LAGOAS') || up.includes('SETE LAGOAS'))) return 'MM - SETE LAGOAS'
+  if (up.includes('RIO BONITO'))                            return 'VS - RIO BONITO'
+  return null
+}
+
 export default function FluxoDeCaixa() {
   const [tab, setTab] = useState<Tab>('view')
   const [series, setSeries] = useState<SeriesResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [selectedUnit, setSelectedUnit] = useState<string>('') // '' = Consolidado
   const [toast, setToast] = useState('')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500) }
 
-  const loadSeries = () => {
+  const loadSeries = (unit: string = selectedUnit) => {
     setLoading(true)
-    fetch('/api/cash-flow/series').then(r => r.json()).then(d => { setSeries(d); setLoading(false) })
+    const qs = unit ? `?unit=${encodeURIComponent(unit)}` : ''
+    fetch('/api/cash-flow/series' + qs).then(r => r.json()).then(d => { setSeries(d); setLoading(false) })
   }
-  useEffect(() => { loadSeries() }, [])
+  useEffect(() => { loadSeries(selectedUnit) }, [selectedUnit])
 
   return (
     <Shell>
@@ -96,18 +122,36 @@ export default function FluxoDeCaixa() {
             uma chave única gerada a partir de NF, parcela, CNPJ, vencimento e valor.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {([['view', 'Visão Geral'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
-            <button key={k}
-              className={tab === k ? 'btn btn-primary' : 'btn'}
-              onClick={() => setTab(k)}>
-              {label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {tab === 'view' && series && series.filiais.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ fontSize: 10, color: 'var(--arken-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600 }}>
+                Filial
+              </label>
+              <select
+                className="form-select"
+                style={{ width: 220 }}
+                value={selectedUnit}
+                onChange={e => setSelectedUnit(e.target.value)}
+              >
+                <option value="">Consolidado (todas)</option>
+                {series.filiais.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {([['view', 'Visão Geral'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
+              <button key={k}
+                className={tab === k ? 'btn btn-primary' : 'btn'}
+                onClick={() => setTab(k)}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {tab === 'import' && <ImportPanel showToast={showToast} onSaved={loadSeries} />}
+      {tab === 'import' && <ImportPanel showToast={showToast} onSaved={() => loadSeries(selectedUnit)} />}
       {tab === 'view'   && (loading ? <Loading /> : series ? <ViewPanel series={series} /> : <Loading />)}
 
       {toast && <div className="toast">{toast}</div>}
@@ -131,41 +175,57 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState<PreviewResponse | null>(null)
+  const [filial, setFilial] = useState<string>('')
+  const [filialCustom, setFilialCustom] = useState<string>('')
   const [drag, setDrag] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const effectiveFilial = () => (filial === '__custom__' ? filialCustom.trim() : filial)
+
   const upload = async (file: File) => {
+    const f = effectiveFilial()
+    if (!f) { showToast('Selecione a filial antes de enviar'); return }
     setParsing(true)
     const fd = new FormData()
     fd.append('file', file)
+    fd.append('filial', f)
     const r = await fetch('/api/cash-flow/parse', { method: 'POST', body: fd })
     const d = await r.json()
     setParsing(false)
     if (!r.ok) { showToast(`Erro: ${d.error}`); return }
-    setPreview(d)
+    setPreview({ ...d, filial: f })
   }
 
-  const handleFile = (f?: File | null) => { if (f) upload(f) }
+  const handleFile = (f?: File | null) => {
+    if (!f) return
+    // Auto-detect pelo nome do arquivo (só se ainda não escolheu)
+    if (!filial) {
+      const detected = detectFilialFromFilename(f.name)
+      if (detected) setFilial(detected)
+    }
+    upload(f)
+  }
 
   const save = async () => {
     if (!preview) return
     const valid = preview.items.filter(i => !i.isStale)
     if (valid.length === 0) { showToast('Nenhum título com vencimento futuro pra salvar'); return }
-    const confirmMsg = preview.kind === 'receivable'
-      ? `Isso vai APAGAR todos os títulos a receber atuais e substituir pelos ${valid.length} desta planilha. Confirma?`
-      : `Isso vai APAGAR todos os pagamentos a efetuar atuais e substituir pelos ${valid.length} desta planilha. Confirma?`
+    const kindLabel = preview.kind === 'receivable' ? 'títulos a receber' : 'pagamentos a efetuar'
+    const confirmMsg = `Isso vai APAGAR todos os ${kindLabel} da filial "${preview.filial}" e substituir pelos ${valid.length} desta planilha. Demais filiais não são afetadas. Confirma?`
     if (!confirm(confirmMsg)) return
     setSaving(true)
     const r = await fetch('/api/cash-flow/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: preview.kind, items: valid }),
+      body: JSON.stringify({ kind: preview.kind, filial: preview.filial, items: valid }),
     })
     const d = await r.json()
     setSaving(false)
     if (!r.ok) { showToast(`Erro: ${d.error}`); return }
-    showToast(`✓ ${d.deleted} antigos removidos · ${d.imported} novos importados · ${d.staleIgnored} vencidos ignorados`)
+    showToast(`✓ [${d.filial}] ${d.deleted} antigos removidos · ${d.imported} novos · ${d.staleIgnored} vencidos ignorados`)
     setPreview(null)
+    setFilial('')
+    setFilialCustom('')
     onSaved()
   }
 
@@ -180,11 +240,39 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
             </div>
           </div>
           <p style={{ fontSize: 13, color: C.textSoft, lineHeight: 1.6, marginBottom: 18 }}>
-            O sistema identifica automaticamente se o arquivo é de <b>títulos a receber</b>
-            (coluna VECTO/EMISSÃO) ou de <b>pagamentos a efetuar</b> (VENCTO/ENTRADA). Após
-            o upload, você verá uma prévia com cada linha marcada como nova ou já importada
-            — somente as novas serão gravadas ao autorizar.
+            Selecione a <b>filial</b> e suba o arquivo. O sistema identifica se é de
+            <b> títulos a receber</b> (VECTO/EMISSÃO) ou <b>pagamentos a efetuar</b>
+            (VENCTO/ENTRADA). Após o upload, você verá uma prévia. Ao autorizar, apenas a
+            base daquela filial é substituída — outras filiais não são afetadas.
           </p>
+
+          <div style={{ marginBottom: 16 }}>
+            <label className="form-label">Filial *</label>
+            <select
+              className="form-select"
+              value={filial}
+              onChange={e => setFilial(e.target.value)}
+              style={{ maxWidth: 380 }}
+            >
+              <option value="">— Selecione a unidade —</option>
+              {KNOWN_FILIAIS.map(f => <option key={f} value={f}>{f}</option>)}
+              <option value="__custom__">+ Outra filial (digitar)</option>
+            </select>
+            {filial === '__custom__' && (
+              <input
+                className="form-input"
+                style={{ maxWidth: 380, marginTop: 8 }}
+                placeholder="Digite o nome da filial"
+                value={filialCustom}
+                onChange={e => setFilialCustom(e.target.value)}
+              />
+            )}
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
+              💡 Ao arrastar o arquivo, a filial é detectada automaticamente pelo nome
+              (ex: <i>QUATIS VS.xlsx</i> → VS - QUATIS).
+            </div>
+          </div>
+
           <div
             onClick={() => fileRef.current?.click()}
             onDragOver={e => { e.preventDefault(); setDrag(true) }}
@@ -223,7 +311,7 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
         <div className="card-header">
           <div>
             <div className="card-eyebrow">
-              Prévia · {isRecv ? 'Títulos a Receber' : 'Pagamentos a Efetuar'}
+              Prévia · {isRecv ? 'Títulos a Receber' : 'Pagamentos a Efetuar'} · <b style={{ color: C.gold }}>{preview.filial}</b>
             </div>
             <div className="card-title">{preview.total} lançamentos · {fmt(preview.totalAmount)}</div>
           </div>
