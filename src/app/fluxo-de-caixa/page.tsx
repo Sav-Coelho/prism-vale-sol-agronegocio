@@ -80,18 +80,21 @@ const KNOWN_FILIAIS = [
   'VS - TRÊS RIOS',
   'VS - QUATIS',
   'VS - RIO BONITO',
+  'MM - APERIBÉ',
   'MM - RIO BONITO',
   'MM - SETE LAGOAS',
 ]
 
 function detectFilialFromFilename(name: string): string | null {
   const up = name.toUpperCase()
-  if (up.includes('APERIBE'))                              return 'VS - APERIBÉ'
-  if (up.includes('TRES RIOS') || up.includes('TRÊS RIOS')) return 'VS - TRÊS RIOS'
-  if (up.includes('QUATIS'))                                return 'VS - QUATIS'
-  if (up.includes('MULTMUNDE') && up.includes('RIO BONITO'))return 'MM - RIO BONITO'
-  if (up.includes('MULTMUNDE') && (up.includes('7 LAGOAS') || up.includes('SETE LAGOAS'))) return 'MM - SETE LAGOAS'
-  if (up.includes('RIO BONITO'))                            return 'VS - RIO BONITO'
+  // MULTMUNDE primeiro — senão "MULTMUNDE APERIBE" cai em "APERIBE" genérico
+  if (up.includes('MULTMUNDE') && up.includes('APERIBE'))                                    return 'MM - APERIBÉ'
+  if (up.includes('MULTMUNDE') && up.includes('RIO BONITO'))                                  return 'MM - RIO BONITO'
+  if (up.includes('MULTMUNDE') && (up.includes('7 LAGOAS') || up.includes('SETE LAGOAS')))    return 'MM - SETE LAGOAS'
+  if (up.includes('TRES RIOS') || up.includes('TRÊS RIOS'))                                   return 'VS - TRÊS RIOS'
+  if (up.includes('QUATIS'))                                                                   return 'VS - QUATIS'
+  if (up.includes('APERIBE'))                                                                  return 'VS - APERIBÉ'
+  if (up.includes('RIO BONITO'))                                                               return 'VS - RIO BONITO'
   return null
 }
 
