@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       interest: i.interest,
       fine: i.fine,
       netAmount: i.netAmount,
-      filial: i.filial,
+      filial,                              // força a filial do payload (não do item)
       observation: i.observation,
     }))
     // Wipe-and-replace POR FILIAL — não apaga dados de outras unidades.
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
     portador: i.portador,
     chequeNumber: i.chequeNumber,
     tipoDocto: i.tipoDocto,
-    filial: i.filial,
+    filial,                              // força a filial do payload (não do item)
     operacao: i.operacao,
     observation: i.observation,
   }))
