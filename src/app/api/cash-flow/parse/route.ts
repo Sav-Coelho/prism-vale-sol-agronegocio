@@ -45,6 +45,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     kind: result.kind,
+    filial,
     total: previewed.length,
     totalAmount: result.totalAmount,
     validCount,
