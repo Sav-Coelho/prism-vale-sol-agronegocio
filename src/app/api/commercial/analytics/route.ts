@@ -1,7 +1,7 @@
 /**
  * Cruza as 3 bases (preço × estoque × vendas) e devolve em uma chamada:
  *
- *   1. marginRows[] — por SKU: preço, custo, MC bruta, MC com custo fixo (30% da receita rateado por unidade)
+ *   1. marginRows[] — por SKU: preço, custo, margem bruta = (preço-custo)/preço
  *   2. abcRows[]    — por SKU classificado pelo ERP, com cumulativo da receita
  *   3. turnoverRows[] — por SKU: estoque, venda, giro, meses de cobertura
  */
@@ -10,8 +10,6 @@ import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
-
-const FIXED_COST_PCT = 0.30  // custo fixo operacional = 30% da receita
 
 export async function GET() {
   const [prices, stock, sales] = await Promise.all([
@@ -23,15 +21,6 @@ export async function GET() {
   const priceMap = new Map(prices.map(p => [p.code, p]))
   const stockMap = new Map(stock.map(s => [s.code, s]))
   const salesMap = new Map(sales.map(v => [v.code, v]))
-
-  // ── Cálculo do custo fixo unitário (rateio por unidade vendida) ─────
-  const totalRevenue = sales.reduce((acc, s) => {
-    const p = priceMap.get(s.code)?.retailPrice ?? s.avgUnit
-    return acc + p * s.qtySold
-  }, 0)
-  const totalUnits = sales.reduce((acc, s) => acc + s.qtySold, 0)
-  const fixedCostTotal = totalRevenue * FIXED_COST_PCT
-  const fixedCostPerUnit = totalUnits > 0 ? fixedCostTotal / totalUnits : 0
 
   // ── 1. MARGEM por produto ──────────────────────────────────────────
   // Une todos os códigos que apareçam em PRICE ou STOCK
@@ -46,28 +35,22 @@ export async function GET() {
     const cost = s?.unitCost ?? 0
     const description = p?.description || s?.description || v?.description || code
 
-    const grossMargin = price > 0 ? (price - cost) / price : 0  // % bruta
-    // Com custo fixo: ajusta unitário (não dá pra ratear pra quem não vendeu)
-    const contributionMargin = price > 0
-      ? (price - cost - fixedCostPerUnit) / price
-      : 0
+    const margin = price > 0 ? (price - cost) / price : 0
 
     return {
       code,
       description,
       retailPrice: price,
       unitCost: cost,
-      grossMarginPct: grossMargin * 100,
-      grossMarginAbs: price - cost,
-      contributionMarginPct: contributionMargin * 100,
-      contributionMarginAbs: price - cost - fixedCostPerUnit,
+      marginPct: margin * 100,
+      marginAbs: price - cost,
       qtySold: v?.qtySold ?? 0,
       qtyStock: s?.qty ?? 0,
       hasPrice: !!p,
       hasCost: !!s,
     }
   })
-  .filter(r => r.hasPrice && r.hasCost) // só os com dados completos
+  .filter(r => r.hasPrice && r.hasCost)
   .sort((a, b) => b.retailPrice - a.retailPrice)
 
   // ── 2. ABC ──────────────────────────────────────────────────────────
@@ -90,7 +73,6 @@ export async function GET() {
   })
 
   // ── 3. GIRO de estoque ──────────────────────────────────────────────
-  // Considera o período do ABC vendas (~6 meses, jan-jun 2026)
   const PERIOD_MONTHS = 6
   const turnoverCodes = new Set<string>()
   stock.forEach(s => turnoverCodes.add(s.code))
@@ -104,21 +86,18 @@ export async function GET() {
     const stockValue = s?.totalValue ?? 0
     const salesValue = v?.totalValue ?? 0
 
-    // Giro = vendas / estoque médio (assumindo estoque atual como aproximação)
     const turnover = qtyStock > 0 ? qtySold / qtyStock : 0
-    // Meses de cobertura: quanto tempo o estoque atual dura no ritmo de venda
     const monthsCoverage = qtySold > 0
       ? (qtyStock / qtySold) * PERIOD_MONTHS
       : (qtyStock > 0 ? Infinity : 0)
 
-    // Classificação
     let status: 'rupture' | 'low' | 'healthy' | 'excess' | 'dead'
-    if (qtySold === 0 && qtyStock > 0)       status = 'dead'        // sem venda no período
-    else if (qtySold === 0 && qtyStock === 0) status = 'dead'        // sem dados
-    else if (monthsCoverage < 1)             status = 'rupture'     // <1 mês
-    else if (monthsCoverage < 2)             status = 'low'         // 1-2 meses
-    else if (monthsCoverage > 6)             status = 'excess'      // >6 meses
-    else                                      status = 'healthy'    // 2-6 meses
+    if (qtySold === 0 && qtyStock > 0)       status = 'dead'
+    else if (qtySold === 0 && qtyStock === 0) status = 'dead'
+    else if (monthsCoverage < 1)             status = 'rupture'
+    else if (monthsCoverage < 2)             status = 'low'
+    else if (monthsCoverage > 6)             status = 'excess'
+    else                                      status = 'healthy'
 
     return {
       code,
@@ -135,8 +114,8 @@ export async function GET() {
   .sort((a, b) => b.stockValue - a.stockValue)
 
   // ── KPIs agregados ──────────────────────────────────────────────────
-  const excellent = marginRows.filter(r => r.contributionMarginPct >= 30).length
-  const detractors = marginRows.filter(r => r.contributionMarginPct < 20).length
+  const excellent = marginRows.filter(r => r.marginPct >= 30).length
+  const detractors = marginRows.filter(r => r.marginPct < 20).length
   const ruptures = turnoverRows.filter(r => r.status === 'rupture').length
   const excess = turnoverRows.filter(r => r.status === 'excess').length
   const dead = turnoverRows.filter(r => r.status === 'dead').length
@@ -148,13 +127,6 @@ export async function GET() {
       sales: sales.length,
       marginItems: marginRows.length,
       turnoverItems: turnoverRows.length,
-    },
-    fixedCost: {
-      pct: FIXED_COST_PCT,
-      totalRevenue,
-      totalUnits,
-      fixedCostTotal,
-      fixedCostPerUnit,
     },
     summary: {
       excellent, detractors, ruptures, excess, dead,

@@ -12,23 +12,14 @@ interface MarginRow {
   description: string
   retailPrice: number
   unitCost: number
-  grossMarginPct: number
-  grossMarginAbs: number
-  contributionMarginPct: number
-  contributionMarginAbs: number
+  marginPct: number
+  marginAbs: number
   qtySold: number
   qtyStock: number
 }
 
 interface Analytics {
   counts: { prices: number; stock: number; sales: number; marginItems: number }
-  fixedCost: {
-    pct: number
-    totalRevenue: number
-    totalUnits: number
-    fixedCostTotal: number
-    fixedCostPerUnit: number
-  }
   summary: { excellent: number; detractors: number }
   marginRows: MarginRow[]
 }
@@ -59,8 +50,8 @@ export default function MargemContribuicao() {
   const rows = useMemo(() => {
     if (!data) return []
     let list = data.marginRows
-    if (filter === 'excellent') list = list.filter(r => r.contributionMarginPct >= 30)
-    else if (filter === 'detractor') list = list.filter(r => r.contributionMarginPct < 20)
+    if (filter === 'excellent') list = list.filter(r => r.marginPct >= 30)
+    else if (filter === 'detractor') list = list.filter(r => r.marginPct < 20)
     if (search.trim()) {
       const s = search.toLowerCase()
       list = list.filter(r => r.description.toLowerCase().includes(s) || r.code.includes(s))
@@ -82,7 +73,7 @@ export default function MargemContribuicao() {
     ]
     return bins.map(b => ({
       label: b.label,
-      itens: data.marginRows.filter(r => r.contributionMarginPct >= b.min && r.contributionMarginPct < b.max).length,
+      itens: data.marginRows.filter(r => r.marginPct >= b.min && r.marginPct < b.max).length,
       color: b.color,
     }))
   }, [data])
@@ -95,8 +86,8 @@ export default function MargemContribuicao() {
           <h1 className="page-title">Margem de Contribuição</h1>
           <p className="page-subtitle">
             Cruzamento de <b>Preço de Venda</b> × <b>Custo Unitário</b> (do ABC de Estoque).
-            A margem de contribuição incorpora um custo fixo operacional de <b>30% da receita</b>,
-            rateado igualmente por unidade vendida no período.
+            Margem = <b>(Preço − Custo) ÷ Preço</b>. SKUs ≥ 30% são <b>margens excelentes</b>;
+            abaixo de 20% são <b>detratores de lucro bruto</b>.
           </p>
         </div>
       </div>
@@ -151,9 +142,14 @@ export default function MargemContribuicao() {
               <Kpi label="Detratores (< 20%)"
                    value={data.summary.detractors.toLocaleString('pt-BR')}
                    sub={fmtPct(data.summary.detractors / data.counts.marginItems * 100) + ' do total'} color={C.red} />
-              <Kpi label="Custo fixo /un"
-                   value={fmt(data.fixedCost.fixedCostPerUnit)}
-                   sub={`30% × ${fmt(data.fixedCost.totalRevenue)} ÷ ${data.fixedCost.totalUnits.toLocaleString('pt-BR')} un`} color={C.gold} />
+              <Kpi label="Margem média"
+                   value={fmtPct(data.marginRows.reduce((s, r) => s + r.marginPct, 0) / Math.max(1, data.marginRows.length))}
+                   sub={`mediana ${fmtPct(
+                     (() => {
+                       const arr = data.marginRows.map(r => r.marginPct).sort((a, b) => a - b)
+                       return arr.length ? arr[Math.floor(arr.length / 2)] : 0
+                     })()
+                   )}`} color={C.gold} />
             </div>
           </div>
 
@@ -215,25 +211,25 @@ export default function MargemContribuicao() {
                     <th>Produto</th>
                     <th style={{ textAlign: 'right' }}>Preço</th>
                     <th style={{ textAlign: 'right' }}>Custo</th>
-                    <th style={{ textAlign: 'right' }}>MC bruta</th>
-                    <th style={{ textAlign: 'right' }}>MC c/ custo fixo</th>
+                    <th style={{ textAlign: 'right' }}>Margem R$</th>
+                    <th style={{ textAlign: 'right' }}>Margem %</th>
                     <th>Faixa</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.slice(0, 1000).map(r => {
-                    const cm = r.contributionMarginPct
-                    const color = cm >= 30 ? C.green : cm >= 20 ? C.gold : cm >= 0 ? C.amber : C.red
-                    const tag = cm >= 30 ? 'EXCELENTE' : cm >= 20 ? 'OK' : cm >= 0 ? 'BAIXA' : 'NEGATIVA'
+                    const m = r.marginPct
+                    const color = m >= 30 ? C.green : m >= 20 ? C.gold : m >= 0 ? C.amber : C.red
+                    const tag = m >= 30 ? 'EXCELENTE' : m >= 20 ? 'OK' : m >= 0 ? 'BAIXA' : 'NEGATIVA'
                     return (
                       <tr key={r.code}>
                         <td style={{ fontSize: 11, color: C.textMuted, whiteSpace: 'nowrap' }}>{r.code}</td>
                         <td style={{ fontSize: 12, maxWidth: 360 }}>{r.description}</td>
                         <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(r.retailPrice)}</td>
                         <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{fmt(r.unitCost)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 12 }}>{fmtPct(r.grossMarginPct)}</td>
+                        <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(r.marginAbs)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600, fontSize: 13, color }}>
-                          {fmtPct(cm)}
+                          {fmtPct(m)}
                         </td>
                         <td>
                           <span className="badge" style={{ color, background: color + '15', borderColor: color, fontSize: 9 }}>
