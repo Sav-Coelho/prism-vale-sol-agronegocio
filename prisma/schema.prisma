@@ -80,6 +80,35 @@ model Receivable {
   @@index([status])
 }
 
+// Preço de venda (tabela mestre, sem filial) — do XLSX PREÇO DE VENDA
+model ProductPrice {
+  code        String   @id
+  description String
+  retailPrice Float
+  updatedAt   DateTime @default(now()) @updatedAt
+}
+
+// Estoque consolidado (sem filial por ora) — do XLSX ABC DE ESTOQUE (sheet CONSOLIDADO)
+model StockItem {
+  code        String   @id
+  description String
+  qty         Float
+  unitCost    Float
+  totalValue  Float
+  updatedAt   DateTime @default(now()) @updatedAt
+}
+
+// Curva ABC de vendas consolidada — do XLSX RELATORIO ABC DE VENDAS (sheet CONSOLIDADO)
+model SalesAbcItem {
+  code        String   @id
+  description String
+  qtySold     Float
+  totalValue  Float
+  avgUnit     Float
+  abcClass    String   // A / B / C
+  updatedAt   DateTime @default(now()) @updatedAt
+}
+
 // Pagamentos a efetuar importados do ERP do cliente
 model Payable {
   id              Int       @id @default(autoincrement())
