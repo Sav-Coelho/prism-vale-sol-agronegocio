@@ -35,7 +35,9 @@ export async function GET() {
 
   // ── 1. MARGEM por produto ──────────────────────────────────────────
   // Une todos os códigos que apareçam em PRICE ou STOCK
-  const codes = new Set<string>([...priceMap.keys(), ...stockMap.keys()])
+  const codes = new Set<string>()
+  prices.forEach(p => codes.add(p.code))
+  stock.forEach(s => codes.add(s.code))
   const marginRows = Array.from(codes).map(code => {
     const p = priceMap.get(code)
     const s = stockMap.get(code)
@@ -90,7 +92,9 @@ export async function GET() {
   // ── 3. GIRO de estoque ──────────────────────────────────────────────
   // Considera o período do ABC vendas (~6 meses, jan-jun 2026)
   const PERIOD_MONTHS = 6
-  const turnoverCodes = new Set<string>([...stockMap.keys(), ...salesMap.keys()])
+  const turnoverCodes = new Set<string>()
+  stock.forEach(s => turnoverCodes.add(s.code))
+  sales.forEach(v => turnoverCodes.add(v.code))
   const turnoverRows = Array.from(turnoverCodes).map(code => {
     const s = stockMap.get(code)
     const v = salesMap.get(code)
