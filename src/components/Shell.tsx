@@ -4,11 +4,9 @@ import { usePathname, useRouter } from 'next/navigation'
 const COMPANY_NAME = 'Vale Sol Agronegócio'
 
 const NAV = [
-  { href: '/fluxo-de-caixa',       icon: '◈', label: 'Fluxo de Caixa' },
-  { href: '/risco-cliente',        icon: '◆', label: 'Risco de Cliente' },
-  { href: '/margem-contribuicao',  icon: '⌬', label: 'Margem de Contribuição' },
-  { href: '/curva-abc',            icon: '◭', label: 'Curva ABC' },
-  { href: '/giro-estoque',         icon: '◉', label: 'Giro de Estoque' },
+  { href: '/fluxo-de-caixa',     icon: '◈', label: 'Fluxo de Caixa' },
+  { href: '/risco-cliente',      icon: '◆', label: 'Risco de Cliente' },
+  { href: '/analise-comercial',  icon: '⌬', label: 'Análise Comercial' },
 ]
 
 export default function Shell({ children }: { children: React.ReactNode }) {

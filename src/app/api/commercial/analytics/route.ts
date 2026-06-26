@@ -119,6 +119,86 @@ export async function GET() {
   const ruptures = turnoverRows.filter(r => r.status === 'rupture').length
   const excess = turnoverRows.filter(r => r.status === 'excess').length
 
+  // ── 4. MASTER (uma linha por SKU presente em qq base) ───────────────
+  // Permite análise cruzada Margem × ABC × Giro numa só tabela.
+  const abcRankMap = new Map(abcRows.map(r => [r.code, r]))
+
+  const allCodes = new Set<string>()
+  prices.forEach(p => allCodes.add(p.code))
+  stock.forEach(s => allCodes.add(s.code))
+  sales.forEach(v => allCodes.add(v.code))
+
+  const masterRows = Array.from(allCodes).map(code => {
+    const p = priceMap.get(code)
+    const s = stockMap.get(code)
+    const v = salesMap.get(code)
+    const abc = abcRankMap.get(code)
+
+    const price = p?.retailPrice ?? null
+    const cost = s?.unitCost ?? null
+    const qtyStock = s?.qty ?? 0
+    const qtySold = v?.qtySold ?? 0
+    const salesValue = v?.totalValue ?? 0
+    const stockValue = s?.totalValue ?? 0
+    const description = p?.description || s?.description || v?.description || code
+
+    // Margem (só se houver preço e custo > 0)
+    let marginPct: number | null = null
+    let marginAbs: number | null = null
+    let marginTag: 'excellent' | 'ok' | 'low' | 'negative' | null = null
+    if (price != null && cost != null && price > 0 && cost > 0) {
+      marginAbs = price - cost
+      marginPct = (marginAbs / price) * 100
+      marginTag =
+        marginPct >= 30 ? 'excellent' :
+        marginPct >= 20 ? 'ok' :
+        marginPct >= 0  ? 'low' : 'negative'
+    }
+
+    // Giro (só se houver venda no período)
+    const PERIOD_MONTHS = 6
+    let turnover: number | null = null
+    let monthsCoverage: number | null = null
+    let turnoverStatus: 'rupture' | 'low' | 'healthy' | 'excess' | null = null
+    if (qtySold > 0) {
+      turnover = qtyStock > 0 ? qtySold / qtyStock : 0
+      monthsCoverage = (qtyStock / qtySold) * PERIOD_MONTHS
+      turnoverStatus =
+        monthsCoverage < 1 ? 'rupture' :
+        monthsCoverage < 2 ? 'low' :
+        monthsCoverage > 6 ? 'excess' : 'healthy'
+    }
+
+    return {
+      code,
+      description,
+      // origem dos dados
+      hasPrice: !!p,
+      hasCost: !!s,
+      hasSale: !!v,
+      // preço/custo/margem
+      retailPrice: price,
+      unitCost: cost,
+      marginPct,
+      marginAbs,
+      marginTag,
+      // ABC vendas
+      qtySold,
+      salesValue,
+      avgUnit: v?.avgUnit ?? null,
+      abcClass: v?.abcClass ?? null,
+      abcRank: abc?.rank ?? null,
+      sharePct: abc?.sharePct ?? null,
+      cumulativePct: abc?.cumulativePct ?? null,
+      // giro
+      qtyStock,
+      stockValue,
+      turnover,
+      monthsCoverage,
+      turnoverStatus,
+    }
+  })
+
   return NextResponse.json({
     counts: {
       prices: prices.length,
@@ -126,6 +206,7 @@ export async function GET() {
       sales: sales.length,
       marginItems: marginRows.length,
       turnoverItems: turnoverRows.length,
+      masterItems: masterRows.length,
     },
     summary: {
       excellent, detractors, ruptures, excess,
@@ -135,5 +216,6 @@ export async function GET() {
     marginRows,
     abcRows,
     turnoverRows,
+    masterRows,
   })
 }
