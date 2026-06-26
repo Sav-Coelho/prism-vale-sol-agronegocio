@@ -17,13 +17,13 @@ interface TurnoverRow {
   salesValue: number
   turnover: number
   monthsCoverage: number | null
-  status: 'rupture' | 'low' | 'healthy' | 'excess' | 'dead'
+  status: 'rupture' | 'low' | 'healthy' | 'excess'
   abcClass: 'A' | 'B' | 'C' | null
 }
 
 interface Analytics {
   counts: { stock: number; sales: number; turnoverItems: number }
-  summary: { ruptures: number; excess: number; dead: number; totalStockValue: number }
+  summary: { ruptures: number; excess: number; totalStockValue: number }
   turnoverRows: TurnoverRow[]
 }
 
@@ -38,7 +38,6 @@ const C = {
   low: '#c98a14',
   healthy: '#197a4a',
   excess: '#5a6c8a',
-  dead: '#3a3f55',
 }
 
 const STATUS_LABEL: Record<TurnoverRow['status'], string> = {
@@ -46,7 +45,6 @@ const STATUS_LABEL: Record<TurnoverRow['status'], string> = {
   low:     'Baixa cobertura (1–2 meses)',
   healthy: 'Saudável (2–6 meses)',
   excess:  'Excesso (>6 meses)',
-  dead:    'Sem giro no período',
 }
 
 export default function GiroEstoque() {
@@ -68,17 +66,17 @@ export default function GiroEstoque() {
   useEffect(() => { load() }, [])
 
   const counts = useMemo(() => {
-    if (!data) return { rupture: 0, low: 0, healthy: 0, excess: 0, dead: 0 }
-    const r = { rupture: 0, low: 0, healthy: 0, excess: 0, dead: 0 }
+    if (!data) return { rupture: 0, low: 0, healthy: 0, excess: 0 }
+    const r = { rupture: 0, low: 0, healthy: 0, excess: 0 }
     data.turnoverRows.forEach(x => { r[x.status] += 1 })
     return r
   }, [data])
 
   const valueByStatus = useMemo(() => {
     if (!data) return []
-    const groups: Record<TurnoverRow['status'], number> = { rupture: 0, low: 0, healthy: 0, excess: 0, dead: 0 }
+    const groups: Record<TurnoverRow['status'], number> = { rupture: 0, low: 0, healthy: 0, excess: 0 }
     data.turnoverRows.forEach(x => { groups[x.status] += x.stockValue })
-    return (['rupture','low','healthy','excess','dead'] as const).map(s => ({
+    return (['rupture','low','healthy','excess'] as const).map(s => ({
       label: STATUS_LABEL[s].split(' (')[0],
       status: s,
       value: groups[s],
@@ -125,7 +123,7 @@ export default function GiroEstoque() {
   const totalValueAtRisk = useMemo(() => {
     if (!data) return 0
     return data.turnoverRows
-      .filter(r => r.status === 'excess' || r.status === 'dead')
+      .filter(r => r.status === 'excess')
       .reduce((s, r) => s + r.stockValue, 0)
   }, [data])
 
@@ -137,7 +135,7 @@ export default function GiroEstoque() {
           <h1 className="page-title">Giro de Estoque</h1>
           <p className="page-subtitle">
             Cruza <b>ABC de Estoque</b> (quanto há em prateleira) com <b>ABC de Vendas</b> (quanto saiu no período de 6 meses).
-            Identifica rupturas iminentes, capital parado e itens sem giro.
+            Itens <b>sem giro no período</b> (qtd vendida = 0) ficam fora da análise — só entram SKUs com fluxo.
           </p>
         </div>
       </div>
@@ -181,12 +179,12 @@ export default function GiroEstoque() {
                 <div className="card-title">Status do estoque</div>
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'right' }}>
-                Capital parado (excesso + sem giro):<br/>
+                Capital parado (excesso):<br/>
                 <b style={{ color: C.rupture, fontSize: 14 }}>{fmt(totalValueAtRisk)}</b>
               </div>
             </div>
-            <div className="grid-5" style={{ gap: 20 }}>
-              {(['rupture','low','healthy','excess','dead'] as const).map(s => (
+            <div className="grid-4" style={{ gap: 20 }}>
+              {(['rupture','low','healthy','excess'] as const).map(s => (
                 <div key={s} style={{ borderLeft: `3px solid ${C[s]}`, paddingLeft: 14 }}>
                   <div style={{ fontSize: 9, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>
                     {STATUS_LABEL[s]}
@@ -298,7 +296,7 @@ export default function GiroEstoque() {
               </ScatterChart>
             </ResponsiveContainer>
             <div style={{ display: 'flex', gap: 14, justifyContent: 'center', fontSize: 10, color: C.textMuted, marginTop: 8, flexWrap: 'wrap' }}>
-              {(['rupture','low','healthy','excess','dead'] as const).map(s => (
+              {(['rupture','low','healthy','excess'] as const).map(s => (
                 <span key={s}><span style={{ display: 'inline-block', width: 10, height: 10, background: C[s], opacity: 0.65, marginRight: 6, borderRadius: '50%' }} />{STATUS_LABEL[s].split(' (')[0]}</span>
               ))}
             </div>
@@ -320,7 +318,7 @@ export default function GiroEstoque() {
                   style={{ width: 220 }}
                 />
                 <button className={filter === 'all' ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => setFilter('all')}>Todos</button>
-                {(['rupture','low','healthy','excess','dead'] as const).map(s => (
+                {(['rupture','low','healthy','excess'] as const).map(s => (
                   <button key={s}
                     className={filter === s ? 'btn btn-primary btn-sm' : 'btn btn-sm'}
                     onClick={() => setFilter(s)}

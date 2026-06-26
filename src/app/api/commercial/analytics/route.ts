@@ -91,13 +91,11 @@ export async function GET() {
       ? (qtyStock / qtySold) * PERIOD_MONTHS
       : (qtyStock > 0 ? Infinity : 0)
 
-    let status: 'rupture' | 'low' | 'healthy' | 'excess' | 'dead'
-    if (qtySold === 0 && qtyStock > 0)       status = 'dead'
-    else if (qtySold === 0 && qtyStock === 0) status = 'dead'
-    else if (monthsCoverage < 1)             status = 'rupture'
-    else if (monthsCoverage < 2)             status = 'low'
-    else if (monthsCoverage > 6)             status = 'excess'
-    else                                      status = 'healthy'
+    let status: 'rupture' | 'low' | 'healthy' | 'excess'
+    if (monthsCoverage < 1)      status = 'rupture'
+    else if (monthsCoverage < 2) status = 'low'
+    else if (monthsCoverage > 6) status = 'excess'
+    else                          status = 'healthy'
 
     return {
       code,
@@ -110,7 +108,8 @@ export async function GET() {
       abcClass: v?.abcClass ?? null,
     }
   })
-  .filter(r => r.qtyStock > 0 || r.qtySold > 0)
+  // Itens sem giro no período (qtySold = 0) saem da análise
+  .filter(r => r.qtySold > 0)
   .sort((a, b) => b.stockValue - a.stockValue)
 
   // ── KPIs agregados ──────────────────────────────────────────────────
@@ -118,7 +117,6 @@ export async function GET() {
   const detractors = marginRows.filter(r => r.marginPct < 20).length
   const ruptures = turnoverRows.filter(r => r.status === 'rupture').length
   const excess = turnoverRows.filter(r => r.status === 'excess').length
-  const dead = turnoverRows.filter(r => r.status === 'dead').length
 
   return NextResponse.json({
     counts: {
@@ -129,7 +127,7 @@ export async function GET() {
       turnoverItems: turnoverRows.length,
     },
     summary: {
-      excellent, detractors, ruptures, excess, dead,
+      excellent, detractors, ruptures, excess,
       totalSalesValue,
       totalStockValue: stock.reduce((s, x) => s + x.totalValue, 0),
     },
