@@ -332,58 +332,55 @@ export default function AnaliseComercial() {
           </div>
 
           {/* Tabela unificada */}
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ padding: '16px 24px', borderBottom: `1px solid ${C.line}` }}>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 12 }}>
-                <div>
-                  <div className="card-eyebrow">Detalhamento</div>
-                  <div className="card-title">Tabela unificada — {rows.length.toLocaleString('pt-BR')} SKUs</div>
-                </div>
-                <input
-                  className="form-input"
-                  placeholder="Buscar código ou produto…"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  style={{ width: 240, marginLeft: 'auto' }}
-                />
+          <div className="card">
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 14 }}>
+              <div>
+                <div className="card-eyebrow">Detalhamento</div>
+                <div className="card-title">Tabela unificada — {rows.length.toLocaleString('pt-BR')} SKUs</div>
               </div>
-
-              {/* Filtros em 3 linhas: margem · ABC · giro */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
-                <FilterRow
-                  label="Margem"
-                  value={marginFilter}
-                  onChange={setMarginFilter}
-                  options={[
-                    { v: 'all', label: 'Todas' },
-                    ...(['excellent','ok','low','negative'] as MarginTag[]).map(t => ({ v: t, label: MARGIN_LABEL[t], color: MARGIN_COLOR[t] })),
-                  ]}
-                />
-                <FilterRow
-                  label="ABC"
-                  value={abcFilter}
-                  onChange={setAbcFilter}
-                  options={[
-                    { v: 'all', label: 'Todas' },
-                    { v: 'A', label: 'Sessão A', color: C.A },
-                    { v: 'B', label: 'Sessão B', color: C.B },
-                    { v: 'C', label: 'Sessão C', color: C.Cc },
-                  ]}
-                />
-                <FilterRow
-                  label="Giro"
-                  value={turnoverFilter}
-                  onChange={setTurnoverFilter}
-                  options={[
-                    { v: 'all', label: 'Todos' },
-                    ...(['rupture','low','healthy','excess'] as TurnoverStatus[]).map(t => ({ v: t, label: TURNOVER_LABEL[t].split(' (')[0], color: TURNOVER_COLOR[t] })),
-                  ]}
-                />
-              </div>
+              <input
+                className="form-input"
+                placeholder="Buscar código ou produto…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{ width: 240, marginLeft: 'auto' }}
+              />
             </div>
 
-            <div className="table-wrap" style={{ maxHeight: '70vh' }}>
-              <table>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+              <FilterRow
+                label="Margem"
+                value={marginFilter}
+                onChange={setMarginFilter}
+                options={[
+                  { v: 'all', label: 'Todas' },
+                  ...(['excellent','ok','low','negative'] as MarginTag[]).map(t => ({ v: t, label: MARGIN_LABEL[t], color: MARGIN_COLOR[t] })),
+                ]}
+              />
+              <FilterRow
+                label="ABC"
+                value={abcFilter}
+                onChange={setAbcFilter}
+                options={[
+                  { v: 'all', label: 'Todas' },
+                  { v: 'A', label: 'Sessão A', color: C.A },
+                  { v: 'B', label: 'Sessão B', color: C.B },
+                  { v: 'C', label: 'Sessão C', color: C.Cc },
+                ]}
+              />
+              <FilterRow
+                label="Giro"
+                value={turnoverFilter}
+                onChange={setTurnoverFilter}
+                options={[
+                  { v: 'all', label: 'Todos' },
+                  ...(['rupture','low','healthy','excess'] as TurnoverStatus[]).map(t => ({ v: t, label: TURNOVER_LABEL[t].split(' (')[0], color: TURNOVER_COLOR[t] })),
+                ]}
+              />
+            </div>
+
+            <div className="table-wrap sticky-first" style={{ maxHeight: '70vh', margin: '0 -28px -24px -28px' }}>
+              <table style={{ minWidth: '100%' }}>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr>
                     <SortableTh field="code"           sort={sort} onSort={toggleSort}>Código</SortableTh>

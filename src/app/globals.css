@@ -408,6 +408,20 @@ th.sortable::after {
 th.sortable.sort-asc::after  { border-bottom: 5px solid var(--arken-yellow); margin-top: -2px; opacity: 1; }
 th.sortable.sort-desc::after { border-top:    5px solid var(--arken-yellow); margin-top: -2px; opacity: 1; }
 th.sortable:not(.sort-asc):not(.sort-desc)::after { border-bottom: 5px solid currentColor; margin-top: -2px; }
+
+/* Coluna fixa à esquerda em tabelas que rolam horizontalmente */
+.table-wrap.sticky-first thead th:first-child,
+.table-wrap.sticky-first tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+.table-wrap.sticky-first thead th:first-child { z-index: 3; }
+.table-wrap.sticky-first tbody td:first-child {
+  background: #fff;
+  box-shadow: 1px 0 0 var(--arken-line);
+}
+.table-wrap.sticky-first tbody tr:hover td:first-child { background: #fafbfd; }
 @media (max-width: 1280px) { .grid-5 { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 720px)  { .grid-5 { grid-template-columns: repeat(2, 1fr); } }
 
