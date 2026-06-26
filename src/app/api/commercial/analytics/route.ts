@@ -50,7 +50,8 @@ export async function GET() {
       hasCost: !!s,
     }
   })
-  .filter(r => r.hasPrice && r.hasCost)
+  // Exige preço E custo válidos (> 0). Item sem custo não tem margem que faça sentido.
+  .filter(r => r.hasPrice && r.hasCost && r.retailPrice > 0 && r.unitCost > 0)
   .sort((a, b) => b.retailPrice - a.retailPrice)
 
   // ── 2. ABC ──────────────────────────────────────────────────────────
