@@ -42,6 +42,10 @@ export default function CurvaAbc() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'A' | 'B' | 'C'>('all')
   const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<{ key: keyof AbcRow; dir: 'asc' | 'desc' }>({ key: 'rank', dir: 'asc' })
+
+  const toggleSort = (key: keyof AbcRow) =>
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' })
 
   const load = async () => {
     setLoading(true)
@@ -98,8 +102,14 @@ export default function CurvaAbc() {
       const s = search.toLowerCase()
       list = list.filter(r => r.description.toLowerCase().includes(s) || r.code.includes(s))
     }
-    return list
-  }, [data, filter, search])
+    const dir = sort.dir === 'asc' ? 1 : -1
+    return [...list].sort((a, b) => {
+      const va = a[sort.key] as string | number
+      const vb = b[sort.key] as string | number
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
+      return String(va).localeCompare(String(vb), 'pt-BR') * dir
+    })
+  }, [data, filter, search, sort])
 
   return (
     <Shell>
@@ -267,14 +277,14 @@ export default function CurvaAbc() {
               <table>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr>
-                    <th>#</th>
-                    <th>Código</th>
-                    <th>Produto</th>
-                    <th style={{ textAlign: 'right' }}>Qtde vendida</th>
-                    <th style={{ textAlign: 'right' }}>Receita</th>
-                    <th style={{ textAlign: 'right' }}>Share</th>
-                    <th style={{ textAlign: 'right' }}>Acumulado</th>
-                    <th>Classe</th>
+                    <SortableTh field="rank"          sort={sort} onSort={toggleSort}>#</SortableTh>
+                    <SortableTh field="code"          sort={sort} onSort={toggleSort}>Código</SortableTh>
+                    <SortableTh field="description"   sort={sort} onSort={toggleSort}>Produto</SortableTh>
+                    <SortableTh field="qtySold"       sort={sort} onSort={toggleSort} align="right">Qtde vendida</SortableTh>
+                    <SortableTh field="totalValue"    sort={sort} onSort={toggleSort} align="right">Receita</SortableTh>
+                    <SortableTh field="sharePct"      sort={sort} onSort={toggleSort} align="right">Share</SortableTh>
+                    <SortableTh field="cumulativePct" sort={sort} onSort={toggleSort} align="right">Acumulado</SortableTh>
+                    <SortableTh field="abcClass"      sort={sort} onSort={toggleSort}>Classe</SortableTh>
                   </tr>
                 </thead>
                 <tbody>
@@ -309,5 +319,22 @@ export default function CurvaAbc() {
         </>
       )}
     </Shell>
+  )
+}
+
+function SortableTh<K extends string>({
+  field, sort, onSort, align, children,
+}: {
+  field: K
+  sort: { key: string; dir: 'asc' | 'desc' }
+  onSort: (k: K) => void
+  align?: 'left' | 'right'
+  children: React.ReactNode
+}) {
+  const cls = `sortable${sort.key === field ? ` sort-${sort.dir}` : ''}`
+  return (
+    <th className={cls} style={{ textAlign: align ?? 'left' }} onClick={() => onSort(field)}>
+      {children}
+    </th>
   )
 }
