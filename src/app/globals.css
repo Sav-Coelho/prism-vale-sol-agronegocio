@@ -136,7 +136,7 @@ a:hover { color: var(--arken-navy-light); text-decoration: underline; }
 /* ─── Side nav ─────────────────────────────────────────── */
 .layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   min-height: calc(100vh - 64px);
 }
 
@@ -188,8 +188,11 @@ a:hover { color: var(--arken-navy-light); text-decoration: underline; }
   padding: 40px 48px;
   max-width: 1440px;
   margin: 0 auto;
+  min-width: 0;
   animation: fadeUp var(--t-slow) var(--ease-out);
 }
+
+.card { min-width: 0; }
 
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(10px); }
