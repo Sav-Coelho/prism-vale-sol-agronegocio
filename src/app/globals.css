@@ -138,12 +138,16 @@ a:hover { color: var(--arken-navy-light); text-decoration: underline; }
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   min-height: calc(100vh - 64px);
+  transition: grid-template-columns var(--t-mid, 220ms) var(--ease, ease);
 }
+.layout-collapsed { grid-template-columns: 56px minmax(0, 1fr); }
 
 .sidenav {
   background: #fff;
   border-right: 1px solid var(--arken-line);
   padding: 24px 0;
+  position: relative;
+  overflow: hidden;
 }
 
 .sidenav-section {
@@ -181,7 +185,44 @@ a:hover { color: var(--arken-navy-light); text-decoration: underline; }
   font-weight: 600;
 }
 
-.sidenav-icon { font-size: 14px; opacity: 0.85; }
+.sidenav-icon { font-size: 14px; opacity: 0.85; flex-shrink: 0; }
+
+/* Estado colapsado: largura reduzida, esconde labels mas mantém ícones */
+.layout-collapsed .sidenav-link {
+  padding: 11px 0;
+  justify-content: center;
+  gap: 0;
+}
+.layout-collapsed .sidenav-label { display: none; }
+.layout-collapsed .sidenav-icon { font-size: 16px; opacity: 1; }
+
+/* Botão de toggle no rodapé da sidenav */
+.sidenav-toggle {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--arken-line);
+  color: var(--arken-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.sidenav-toggle:hover { color: var(--arken-navy); background: #f4f7fb; }
+.sidenav-toggle-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--arken-paper);
+  border: 1px solid var(--arken-line);
+  font-size: 13px; line-height: 1;
+  color: var(--arken-navy);
+}
+.layout-collapsed .sidenav-toggle { padding: 14px 0; }
 
 /* ─── Page content ──────────────────────────────────────── */
 .page {
