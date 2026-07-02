@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -78,6 +78,9 @@ export default function RiscoCliente() {
   const [name, setName] = useState('')
   const [cpf, setCpf] = useState('')
   const [phone, setPhone] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     setLoading(true)
@@ -125,6 +128,24 @@ export default function RiscoCliente() {
 
   const sortedRows = [...rows].sort((a, b) => b.risk - a.risk)
 
+  const uploadReceber = async (file: File) => {
+    if (!confirm(`Isso vai APAGAR todos os clientes e títulos atuais e substituir pelo conteúdo de "${file.name}". Continuar?`)) return
+    setImporting(true); setImportMsg('Lendo planilha…')
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res = await fetch('/api/credit/import', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) { setImportMsg('Erro: ' + (data.error || 'falha')); return }
+      setImportMsg(`✓ ${data.createdClients} clientes · ${data.createdSales} títulos importados (${data.deletedSales} apagados)`)
+      await load()
+    } catch (e) {
+      setImportMsg('Erro: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const openNew  = () => { setEditing(null); setName(''); setCpf(''); setPhone(''); setModal(true) }
   const openEdit = (r: CreditRow) => { setEditing(r); setName(r.name); setCpf(r.cpf || ''); setPhone(''); setModal(true) }
 
@@ -161,8 +182,31 @@ export default function RiscoCliente() {
             atualizada conforme suas vendas são quitadas ou caem em inadimplência (≥ 90 dias).
           </p>
         </div>
-        <button className="btn btn-primary" onClick={openNew}>+ Novo Cliente</button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadReceber(f); e.target.value = '' }}
+          />
+          <button
+            className="btn"
+            onClick={() => fileRef.current?.click()}
+            disabled={importing}
+            title="Substitui a base atual pelos títulos do XLSX. Chave por CÓDIGO do ERP."
+          >
+            {importing ? '◌ Importando…' : '⬆ Importar contas a receber (XLSX)'}
+          </button>
+          <button className="btn btn-primary" onClick={openNew}>+ Novo Cliente</button>
+        </div>
       </div>
+
+      {importMsg && (
+        <div className="card mb-6" style={{ borderTopColor: importMsg.startsWith('✓') ? C.green : importMsg.startsWith('Erro') ? C.red : C.gold }}>
+          <div style={{ fontSize: 13, color: C.textSoft }}>{importMsg}</div>
+        </div>
+      )}
 
       {loading ? (
         <div className="empty-state">

@@ -19,6 +19,7 @@ model Unit {
 
 model Client {
   id        Int      @id @default(autoincrement())
+  code      String?  @unique  // Código do ERP — chave estável de deduplicação
   name      String
   email     String?
   phone     String?
