@@ -22,8 +22,12 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 export const maxDuration = 60  // Vercel Hobby permite até 60s por função
 
-const extIdOf = (r: Pick<ParsedReceivable, 'titulo' | 'parcela'>) =>
-  `${r.titulo}::${r.parcela ?? ''}`
+// Inclui dueDate e filial na chave: o mesmo número de título pode existir em
+// filiais diferentes do mesmo cliente (colisão real observada nos relatórios).
+// Caveat: se o ERP renegociar o VECTO de um título, a chave muda e o título
+// antigo será marcado PAID — aceitável, pois renegociação quita o título original.
+const extIdOf = (r: Pick<ParsedReceivable, 'titulo' | 'parcela' | 'dueDate' | 'filial'>) =>
+  `${r.titulo}::${r.parcela ?? ''}::${r.dueDate}::${r.filial ?? ''}`
 
 const clientKeyOf = (r: ParsedReceivable) =>
   r.customerCode || r.customerDoc || `NAME:${r.customerName.toUpperCase().trim()}`
@@ -117,12 +121,12 @@ export async function POST(req: Request) {
   // ── Passo 3: carrega Sales atuais e detecta ordem cronológica ──
   const currentSales = await prisma.sale.findMany({
     where: { paymentStatus: { in: ['OVERDUE', 'PAID'] } },
-    select: { id: true, clientId: true, externalId: true, paymentStatus: true, dueDate: true },
+    select: { id: true, clientId: true, externalId: true, paymentStatus: true, dueDate: true, amount: true },
   })
 
-  const currentByClientExt = new Map<string, { id: number; status: string }>()
+  const currentByClientExt = new Map<string, { id: number; status: string; amount: number }>()
   currentSales.forEach(s => {
-    currentByClientExt.set(`${s.clientId}::${s.externalId ?? ''}`, { id: s.id, status: s.paymentStatus })
+    currentByClientExt.set(`${s.clientId}::${s.externalId ?? ''}`, { id: s.id, status: s.paymentStatus, amount: s.amount })
   })
 
   // Detecção de ordem cronológica: max(VECTO) do XLSX vs max(dueDate) do DB
@@ -151,19 +155,30 @@ export async function POST(req: Request) {
     }
   })
 
-  // Sales novos: no XLSX mas ainda não no DB
+  // Sales novos (não existem no DB) + refresh de amount pra interseção
   type NewSaleData = {
     clientId: number; externalId: string; description: string;
     amount: number; date: Date; dueDate: Date; paymentStatus: string;
     month: number; year: number;
   }
   const newSales: NewSaleData[] = []
+  const amountUpdates: Array<{ id: number; amount: number }> = []
+  let keptCount = 0
+
   Array.from(buckets.entries()).forEach(([bKey, b]) => {
     const clientId = resolveClientId(bKey, b)
     if (!clientId) return
     b.items.forEach(r => {
       const extId = extIdOf(r)
-      if (currentByClientExt.has(`${clientId}::${extId}`)) return  // já existe
+      const existing = currentByClientExt.get(`${clientId}::${extId}`)
+      if (existing) {
+        keptCount += 1
+        // Refresh do valor caso o ERP tenha corrigido o título entre snapshots
+        if (Math.abs(existing.amount - r.amount) > 0.005) {
+          amountUpdates.push({ id: existing.id, amount: r.amount })
+        }
+        return
+      }
       const issueDate = r.issueDate ? new Date(r.issueDate) : new Date(r.dueDate)
       newSales.push({
         clientId,
@@ -201,6 +216,10 @@ export async function POST(req: Request) {
     const r = await prisma.sale.createMany({ data: newSales, skipDuplicates: true })
     created = r.count
   }
+  // Correções pontuais de valor (raro — só quando o ERP altera o título)
+  for (const u of amountUpdates) {
+    await prisma.sale.update({ where: { id: u.id }, data: { amount: u.amount } })
+  }
 
   const clientCountAfter = await prisma.client.count()
 
@@ -208,8 +227,9 @@ export async function POST(req: Request) {
     totalNoXlsx:        parsed.receivables.length,
     titulosPagos:       markedPaid,       // sumiram do XLSX → PAID (só se snapshot recente)
     titulosNovos:       created,          // não existiam no DB
-    titulosMantidos:    parsed.receivables.length - created - reverted,  // interseção que continua devendo
+    titulosMantidos:    keptCount,        // interseção que continua devendo (chaves únicas)
     titulosRevertidos:  reverted,         // PAID e voltaram → OVERDUE
+    valoresCorrigidos:  amountUpdates.length,
     clientesCriados:    Math.max(0, clientCountAfter - clientCountBefore),
     clientesTotal:      clientCountAfter,
     missingClientCount,

@@ -1,8 +1,10 @@
 // Bayesian credit scoring with a Beta(2,2) prior.
 //
 // Each Sale is treated as a Bernoulli trial:
-//   success = paid on time (PAID with paidDate <= dueDate, or PAID without dueDate)
-//   failure = defaulted (DEFAULTED, or OVERDUE > 90 days)
+//   success = PAID — qualquer pagamento conta como sucesso, mesmo atrasado.
+//             (Regra de negócio: cliente que quita título vencido melhora a nota;
+//             o dado vem de relatórios de inadimplência, então todo PAID foi tardio.)
+//   failure = DEFAULTED explícito, ou OVERDUE há >= 90 dias.
 // PENDING / unresolved sales are excluded from the likelihood.
 //
 // Posterior:  Beta(alpha_0 + paid,  beta_0 + defaulted)
