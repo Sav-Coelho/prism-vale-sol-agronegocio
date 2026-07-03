@@ -2,14 +2,17 @@
  * Import INCREMENTAL de "RELATORIO DE TITULOS A RECEBER" pro modelo de crédito.
  *
  * Semântica cross-snapshot (a cada upload):
- *   • No XLSX + no DB  → mantém OVERDUE (o classifier promove pra DEFAULTED
- *                        conforme o dueDate envelhece contra a data de hoje)
- *   • No DB, ausente   → foi pago no ERP: marca PAID com paidDate = hoje
- *                        (melhora o score)
- *   • Só no XLSX       → novo título em atraso: cria OVERDUE (piora o score)
- *   • PAID e voltou    → reverte pra OVERDUE (reconcilia com o ERP)
+ *   • No XLSX + no DB (interseção) → mantém OVERDUE (o classifier promove
+ *                                    pra DEFAULTED conforme o dueDate envelhece)
+ *   • No DB, ausente no XLSX       → foi pago no ERP: marca PAID com paidDate = hoje
+ *   • Só no XLSX                   → cria como OVERDUE (título novo em atraso)
+ *   • PAID e voltou no XLSX        → reverte pra OVERDUE (reconcilia com o ERP)
  *
  * Chave estável de título: (clientId, externalId="titulo::parcela").
+ * Chave estável de cliente: code = CÓDIGO do ERP.
+ *
+ * Implementado como sequência de operações em BATCH (sem transação longa,
+ * pra caber no limite de 10s da função serverless do Vercel).
  */
 import { prisma } from '@/lib/prisma'
 import { parseCashFlow, type ParsedReceivable } from '@/lib/cash-flow-parser'
@@ -17,12 +20,11 @@ import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
+export const maxDuration = 60  // Vercel Hobby permite até 60s por função
 
-// Chave estável por título no ERP
 const extIdOf = (r: Pick<ParsedReceivable, 'titulo' | 'parcela'>) =>
   `${r.titulo}::${r.parcela ?? ''}`
 
-// Chave de agrupamento por cliente
 const clientKeyOf = (r: ParsedReceivable) =>
   r.customerCode || r.customerDoc || `NAME:${r.customerName.toUpperCase().trim()}`
 
@@ -42,15 +44,10 @@ export async function POST(req: Request) {
   }
 
   const importDate = new Date()
+  const clientCountBefore = await prisma.client.count()
 
-  // Agrupa por cliente
-  type Bucket = {
-    code: string | null
-    doc: string | null
-    name: string
-    phone: string | null
-    items: ParsedReceivable[]
-  }
+  // ── Agrupa por cliente ─────────────────────────────────────
+  type Bucket = { code: string | null; doc: string | null; name: string; phone: string | null; items: ParsedReceivable[] }
   const buckets = new Map<string, Bucket>()
   parsed.receivables.forEach(r => {
     const key = clientKeyOf(r)
@@ -60,126 +57,148 @@ export async function POST(req: Request) {
     buckets.get(key)!.items.push(r)
   })
 
-  // Set de chaves globais do XLSX (customerCode/customerDoc/nome + extId)
-  const xlsxKeyGlobal = new Set<string>()
-  Array.from(buckets.entries()).forEach(([clientKey, b]) => {
-    b.items.forEach(r => xlsxKeyGlobal.add(`${clientKey}||${extIdOf(r)}`))
+  // ── Passo 1: cria/atualiza Clients em batch ─────────────────
+  // Estratégia: createMany para inserir só os novos (skipDuplicates via Client.code @unique),
+  // depois busca todos e monta o map (clientKey → id).
+  const clientsWithCode = Array.from(buckets.values()).filter(b => b.code)
+  const clientsNoCode   = Array.from(buckets.values()).filter(b => !b.code)
+
+  // 1a. cria clients com code (skipDuplicates ignora os que já existem)
+  await prisma.client.createMany({
+    data: clientsWithCode.map(b => ({
+      code: b.code!,
+      name: b.name,
+      cpf: b.doc,
+      phone: b.phone,
+      active: true,
+    })),
+    skipDuplicates: true,
   })
 
-  const result = await prisma.$transaction(async tx => {
-    // Passo 1 · Detecta títulos OVERDUE atuais que sumiram → PAID
-    const currentOverdue = await tx.sale.findMany({
-      where: { paymentStatus: 'OVERDUE' },
-      select: {
-        id: true, externalId: true,
-        client: { select: { code: true, cpf: true, name: true } },
-      },
-    })
-
-    const idsToMarkPaid: number[] = []
-    currentOverdue.forEach(s => {
-      const c = s.client
-      const clientKey = c.code || c.cpf || `NAME:${c.name.toUpperCase().trim()}`
-      const globalKey = `${clientKey}||${s.externalId ?? ''}`
-      if (!xlsxKeyGlobal.has(globalKey)) idsToMarkPaid.push(s.id)
-    })
-
-    const markedPaid = idsToMarkPaid.length > 0
-      ? (await tx.sale.updateMany({
-          where: { id: { in: idsToMarkPaid } },
-          data: { paymentStatus: 'PAID', paidDate: importDate },
-        })).count
-      : 0
-
-    // Passo 2 · Upsert Clients + Sales por bucket
-    let createdClients = 0, updatedClients = 0, createdSales = 0, updatedSales = 0, revertedFromPaid = 0
-
-    for (const b of Array.from(buckets.values())) {
-      let clientId: number
-
-      // Upsert Client (chave: code, fallback cpf, fallback create sem chave)
-      if (b.code) {
-        const before = await tx.client.findUnique({ where: { code: b.code } })
-        const c = await tx.client.upsert({
-          where: { code: b.code },
-          create: { code: b.code, name: b.name, cpf: b.doc, phone: b.phone },
-          update: { name: b.name, cpf: b.doc, phone: b.phone },
-        })
-        clientId = c.id
-        if (before) updatedClients += 1
-        else createdClients += 1
-      } else {
-        const existing = b.doc
-          ? await tx.client.findFirst({ where: { cpf: b.doc } })
-          : null
-        if (existing) {
-          const c = await tx.client.update({
-            where: { id: existing.id },
-            data: { name: b.name, phone: b.phone },
-          })
-          clientId = c.id; updatedClients += 1
-        } else {
-          const c = await tx.client.create({
-            data: { name: b.name, cpf: b.doc, phone: b.phone },
-          })
-          clientId = c.id; createdClients += 1
-        }
-      }
-
-      // Upsert Sales
-      for (const r of b.items) {
-        const extId = extIdOf(r)
-        const issueDate = r.issueDate ? new Date(r.issueDate) : new Date(r.dueDate)
-        const existing = await tx.sale.findUnique({
-          where: { clientId_externalId: { clientId, externalId: extId } },
-        })
-
-        if (existing) {
-          const wasPaid = existing.paymentStatus === 'PAID'
-          await tx.sale.update({
-            where: { id: existing.id },
-            data: {
-              amount: r.amount,
-              dueDate: new Date(r.dueDate),
-              date: issueDate,
-              paymentStatus: 'OVERDUE',
-              paidDate: null,
-              month: issueDate.getMonth() + 1,
-              year: issueDate.getFullYear(),
-            },
-          })
-          if (wasPaid) revertedFromPaid += 1
-          else updatedSales += 1
-        } else {
-          await tx.sale.create({
-            data: {
-              clientId,
-              externalId: extId,
-              description: `Título ${r.titulo}${r.parcela ? ' · ' + r.parcela : ''}`,
-              amount: r.amount,
-              date: issueDate,
-              dueDate: new Date(r.dueDate),
-              paidDate: null,
-              paymentStatus: 'OVERDUE',
-              month: issueDate.getMonth() + 1,
-              year: issueDate.getFullYear(),
-            },
-          })
-          createdSales += 1
-        }
-      }
+  // 1b. clients sem code — vai um por um (raro)
+  for (const b of clientsNoCode) {
+    const existing = b.doc ? await prisma.client.findFirst({ where: { cpf: b.doc } }) : null
+    if (!existing) {
+      await prisma.client.create({ data: { name: b.name, cpf: b.doc, phone: b.phone } })
     }
+  }
 
-    return {
-      totalNoXlsx: parsed.receivables!.length,
-      titulosPagos: markedPaid,             // sumiram do XLSX → PAID
-      titulosNovos: createdSales,           // não existiam no DB
-      titulosMantidos: updatedSales,        // interseção
-      titulosRevertidos: revertedFromPaid,  // PAID e voltaram
-      clientesCriados: createdClients,
-      clientesAtualizados: updatedClients,
+  // ── Passo 2: monta o map clientKey → clientId ─────────────
+  const allClients = await prisma.client.findMany({
+    select: { id: true, code: true, cpf: true, name: true },
+  })
+  const clientIdByCode = new Map<string, number>()
+  const clientIdByDoc  = new Map<string, number>()
+  const clientIdByName = new Map<string, number>()
+  allClients.forEach(c => {
+    if (c.code) clientIdByCode.set(c.code, c.id)
+    if (c.cpf)  clientIdByDoc.set(c.cpf, c.id)
+    clientIdByName.set(`NAME:${c.name.toUpperCase().trim()}`, c.id)
+  })
+
+  const resolveClientId = (bKey: string, b: Bucket): number | null => {
+    if (b.code && clientIdByCode.has(b.code)) return clientIdByCode.get(b.code)!
+    if (b.doc  && clientIdByDoc.has(b.doc))   return clientIdByDoc.get(b.doc)!
+    if (clientIdByName.has(bKey))              return clientIdByName.get(bKey)!
+    return null
+  }
+
+  // Set global de chaves (clientId, extId) do XLSX
+  const xlsxKeysByClient = new Map<number, Set<string>>()  // clientId → set of extIds
+  let missingClientCount = 0
+  Array.from(buckets.entries()).forEach(([bKey, b]) => {
+    const clientId = resolveClientId(bKey, b)
+    if (!clientId) { missingClientCount += b.items.length; return }
+    let set = xlsxKeysByClient.get(clientId)
+    if (!set) { set = new Set(); xlsxKeysByClient.set(clientId, set) }
+    b.items.forEach(r => set!.add(extIdOf(r)))
+  })
+
+  // ── Passo 3: carrega Sales OVERDUE atuais e computa diffs ──
+  const currentSales = await prisma.sale.findMany({
+    where: { paymentStatus: { in: ['OVERDUE', 'PAID'] } },
+    select: { id: true, clientId: true, externalId: true, paymentStatus: true },
+  })
+
+  const currentByClientExt = new Map<string, { id: number; status: string }>()
+  currentSales.forEach(s => {
+    currentByClientExt.set(`${s.clientId}::${s.externalId ?? ''}`, { id: s.id, status: s.paymentStatus })
+  })
+
+  const idsToMarkPaid: number[] = []
+  const idsToRevertToOverdue: number[] = []
+
+  currentSales.forEach(s => {
+    const inXlsx = xlsxKeysByClient.get(s.clientId)?.has(s.externalId ?? '')
+    if (s.paymentStatus === 'OVERDUE' && !inXlsx) {
+      idsToMarkPaid.push(s.id)                // sumiu do XLSX → pago
+    } else if (s.paymentStatus === 'PAID' && inXlsx) {
+      idsToRevertToOverdue.push(s.id)         // reabriu no ERP → volta pra OVERDUE
     }
-  }, { timeout: 240_000 })
+  })
 
-  return NextResponse.json({ ...result, importDate: importDate.toISOString() })
+  // Sales novos: no XLSX mas ainda não no DB
+  type NewSaleData = {
+    clientId: number; externalId: string; description: string;
+    amount: number; date: Date; dueDate: Date; paymentStatus: string;
+    month: number; year: number;
+  }
+  const newSales: NewSaleData[] = []
+  Array.from(buckets.entries()).forEach(([bKey, b]) => {
+    const clientId = resolveClientId(bKey, b)
+    if (!clientId) return
+    b.items.forEach(r => {
+      const extId = extIdOf(r)
+      if (currentByClientExt.has(`${clientId}::${extId}`)) return  // já existe
+      const issueDate = r.issueDate ? new Date(r.issueDate) : new Date(r.dueDate)
+      newSales.push({
+        clientId,
+        externalId: extId,
+        description: `Título ${r.titulo}${r.parcela ? ' · ' + r.parcela : ''}`,
+        amount: r.amount,
+        date: issueDate,
+        dueDate: new Date(r.dueDate),
+        paymentStatus: 'OVERDUE',
+        month: issueDate.getMonth() + 1,
+        year: issueDate.getFullYear(),
+      })
+    })
+  })
+
+  // ── Passo 4: executa em batches ────────────────────────────
+  let markedPaid = 0
+  let reverted = 0
+  if (idsToMarkPaid.length > 0) {
+    const r = await prisma.sale.updateMany({
+      where: { id: { in: idsToMarkPaid } },
+      data: { paymentStatus: 'PAID', paidDate: importDate },
+    })
+    markedPaid = r.count
+  }
+  if (idsToRevertToOverdue.length > 0) {
+    const r = await prisma.sale.updateMany({
+      where: { id: { in: idsToRevertToOverdue } },
+      data: { paymentStatus: 'OVERDUE', paidDate: null },
+    })
+    reverted = r.count
+  }
+  let created = 0
+  if (newSales.length > 0) {
+    const r = await prisma.sale.createMany({ data: newSales, skipDuplicates: true })
+    created = r.count
+  }
+
+  const clientCountAfter = await prisma.client.count()
+
+  return NextResponse.json({
+    totalNoXlsx:        parsed.receivables.length,
+    titulosPagos:       markedPaid,       // sumiram do XLSX → PAID
+    titulosNovos:       created,          // não existiam no DB
+    titulosMantidos:    parsed.receivables.length - created - reverted,  // interseção que continua devendo
+    titulosRevertidos:  reverted,         // PAID e voltaram → OVERDUE
+    clientesCriados:    Math.max(0, clientCountAfter - clientCountBefore),
+    clientesTotal:      clientCountAfter,
+    missingClientCount,
+    importDate:         importDate.toISOString(),
+  })
 }
