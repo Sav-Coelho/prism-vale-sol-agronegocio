@@ -141,10 +141,11 @@ export default function RiscoCliente() {
       if (data.titulosNovos)       parts.push(`${data.titulosNovos} novos em atraso`)
       if (data.titulosMantidos)    parts.push(`${data.titulosMantidos} continuam devendo`)
       if (data.titulosRevertidos)  parts.push(`${data.titulosRevertidos} reabertos (voltaram do PAID)`)
-      const clientMsg = data.clientesCriados
-        ? ` · ${data.clientesCriados} clientes novos, ${data.clientesAtualizados} atualizados`
+      const clientMsg = data.clientesCriados ? ` · ${data.clientesCriados} clientes novos` : ''
+      const antigoAvi = data.snapshotAntigo
+        ? ` ⚠ Detectado snapshot ANTERIOR ao estado atual (max VECTO ${data.maxDueDateXlsx} < ${data.maxDueDateDb}) — nenhum título foi marcado como pago; só foram adicionados os novos.`
         : ''
-      setImportMsg(`✓ ${parts.join(' · ') || 'sem mudanças'}${clientMsg}`)
+      setImportMsg(`✓ ${parts.join(' · ') || 'sem mudanças'}${clientMsg}${antigoAvi}`)
       await load()
     } catch (e) {
       setImportMsg('Erro: ' + (e instanceof Error ? e.message : String(e)))

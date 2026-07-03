@@ -114,10 +114,10 @@ export async function POST(req: Request) {
     b.items.forEach(r => set!.add(extIdOf(r)))
   })
 
-  // ── Passo 3: carrega Sales OVERDUE atuais e computa diffs ──
+  // ── Passo 3: carrega Sales atuais e detecta ordem cronológica ──
   const currentSales = await prisma.sale.findMany({
     where: { paymentStatus: { in: ['OVERDUE', 'PAID'] } },
-    select: { id: true, clientId: true, externalId: true, paymentStatus: true },
+    select: { id: true, clientId: true, externalId: true, paymentStatus: true, dueDate: true },
   })
 
   const currentByClientExt = new Map<string, { id: number; status: string }>()
@@ -125,13 +125,27 @@ export async function POST(req: Request) {
     currentByClientExt.set(`${s.clientId}::${s.externalId ?? ''}`, { id: s.id, status: s.paymentStatus })
   })
 
+  // Detecção de ordem cronológica: max(VECTO) do XLSX vs max(dueDate) do DB
+  // Um relatório mais recente tem títulos com dueDates mais avançados.
+  const maxDueXlsx = parsed.receivables.reduce((m, r) => {
+    const t = new Date(r.dueDate).getTime()
+    return t > m ? t : m
+  }, 0)
+  const maxDueDb = currentSales.reduce((m, s) => {
+    const t = s.dueDate?.getTime() ?? 0
+    return t > m ? t : m
+  }, 0)
+  const isOlderSnapshot = maxDueDb > 0 && maxDueXlsx < maxDueDb
+
   const idsToMarkPaid: number[] = []
   const idsToRevertToOverdue: number[] = []
 
   currentSales.forEach(s => {
     const inXlsx = xlsxKeysByClient.get(s.clientId)?.has(s.externalId ?? '')
     if (s.paymentStatus === 'OVERDUE' && !inXlsx) {
-      idsToMarkPaid.push(s.id)                // sumiu do XLSX → pago
+      // Só marca PAID se o novo snapshot é mais RECENTE que o estado atual.
+      // Se for mais antigo, o título "ausente" pode simplesmente não existir ainda naquela foto.
+      if (!isOlderSnapshot) idsToMarkPaid.push(s.id)
     } else if (s.paymentStatus === 'PAID' && inXlsx) {
       idsToRevertToOverdue.push(s.id)         // reabriu no ERP → volta pra OVERDUE
     }
@@ -192,13 +206,16 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     totalNoXlsx:        parsed.receivables.length,
-    titulosPagos:       markedPaid,       // sumiram do XLSX → PAID
+    titulosPagos:       markedPaid,       // sumiram do XLSX → PAID (só se snapshot recente)
     titulosNovos:       created,          // não existiam no DB
     titulosMantidos:    parsed.receivables.length - created - reverted,  // interseção que continua devendo
     titulosRevertidos:  reverted,         // PAID e voltaram → OVERDUE
     clientesCriados:    Math.max(0, clientCountAfter - clientCountBefore),
     clientesTotal:      clientCountAfter,
     missingClientCount,
+    snapshotAntigo:     isOlderSnapshot,  // avisa a UI que este XLSX é anterior ao estado atual
+    maxDueDateXlsx:     maxDueXlsx ? new Date(maxDueXlsx).toISOString().slice(0, 10) : null,
+    maxDueDateDb:       maxDueDb  ? new Date(maxDueDb).toISOString().slice(0, 10) : null,
     importDate:         importDate.toISOString(),
   })
 }
