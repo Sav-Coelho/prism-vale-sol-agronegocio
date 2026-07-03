@@ -35,6 +35,7 @@ model Sale {
   id            Int       @id @default(autoincrement())
   clientId      Int
   client        Client    @relation(fields: [clientId], references: [id])
+  externalId    String?   // Chave estável do ERP: TITULO::PARCELA (deduplica entre imports)
   description   String
   amount        Float
   date          DateTime
@@ -46,6 +47,10 @@ model Sale {
   month         Int
   year          Int
   createdAt     DateTime  @default(now())
+
+  @@unique([clientId, externalId])
+  @@index([externalId])
+  @@index([paymentStatus])
 }
 
 // Títulos a receber importados do ERP do cliente

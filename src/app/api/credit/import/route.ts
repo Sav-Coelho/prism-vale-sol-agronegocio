@@ -1,15 +1,15 @@
 /**
- * Import de "RELATORIO DE TITULOS A RECEBER" (XLSX) para alimentar
- * o modelo Bayesiano de risco de cliente.
+ * Import INCREMENTAL de "RELATORIO DE TITULOS A RECEBER" pro modelo de crédito.
  *
- * Estratégia: WIPE-AND-REPLACE. A cada upload:
- *   1. Apaga TODAS as Sales
- *   2. Apaga TODOS os Clients
- *   3. Re-cria Clients agrupados por CÓDIGO do ERP
- *   4. Cria uma Sale por título (OVERDUE — todos os do relatório estão vencidos)
+ * Semântica cross-snapshot (a cada upload):
+ *   • No XLSX + no DB  → mantém OVERDUE (o classifier promove pra DEFAULTED
+ *                        conforme o dueDate envelhece contra a data de hoje)
+ *   • No DB, ausente   → foi pago no ERP: marca PAID com paidDate = hoje
+ *                        (melhora o score)
+ *   • Só no XLSX       → novo título em atraso: cria OVERDUE (piora o score)
+ *   • PAID e voltou    → reverte pra OVERDUE (reconcilia com o ERP)
  *
- * O classifier em lib/credit.ts converte automaticamente
- *   OVERDUE + (hoje − dueDate) ≥ 90 dias → DEFAULTED.
+ * Chave estável de título: (clientId, externalId="titulo::parcela").
  */
 import { prisma } from '@/lib/prisma'
 import { parseCashFlow, type ParsedReceivable } from '@/lib/cash-flow-parser'
@@ -17,6 +17,14 @@ import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
+
+// Chave estável por título no ERP
+const extIdOf = (r: Pick<ParsedReceivable, 'titulo' | 'parcela'>) =>
+  `${r.titulo}::${r.parcela ?? ''}`
+
+// Chave de agrupamento por cliente
+const clientKeyOf = (r: ParsedReceivable) =>
+  r.customerCode || r.customerDoc || `NAME:${r.customerName.toUpperCase().trim()}`
 
 export async function POST(req: Request) {
   const fd = await req.formData()
@@ -27,13 +35,15 @@ export async function POST(req: Request) {
   const parsed = parseCashFlow(buf)
 
   if (parsed.kind !== 'receivable') {
-    return NextResponse.json({ error: 'O arquivo não é um "RELATORIO DE TITULOS A RECEBER" (falta coluna VECTO)' }, { status: 400 })
+    return NextResponse.json({ error: 'Arquivo não é "RELATORIO DE TITULOS A RECEBER" (falta coluna VECTO)' }, { status: 400 })
   }
   if (!parsed.receivables || parsed.receivables.length === 0) {
-    return NextResponse.json({ error: 'Nenhum título válido encontrado no arquivo' }, { status: 400 })
+    return NextResponse.json({ error: 'Nenhum título encontrado' }, { status: 400 })
   }
 
-  // Agrupa títulos por CÓDIGO do ERP (fallback: customerDoc, depois customerName)
+  const importDate = new Date()
+
+  // Agrupa por cliente
   type Bucket = {
     code: string | null
     doc: string | null
@@ -42,77 +52,134 @@ export async function POST(req: Request) {
     items: ParsedReceivable[]
   }
   const buckets = new Map<string, Bucket>()
-  const skipped: string[] = []
-
-  for (const r of parsed.receivables) {
-    // Chave: customerCode se existir, senão customerDoc, senão nome normalizado
-    const key = r.customerCode || r.customerDoc || `NAME:${r.customerName.toUpperCase().trim()}`
+  parsed.receivables.forEach(r => {
+    const key = clientKeyOf(r)
     if (!buckets.has(key)) {
-      buckets.set(key, {
-        code: r.customerCode,
-        doc: r.customerDoc,
-        name: r.customerName,
-        phone: r.phone,
-        items: [],
-      })
+      buckets.set(key, { code: r.customerCode, doc: r.customerDoc, name: r.customerName, phone: r.phone, items: [] })
     }
     buckets.get(key)!.items.push(r)
-  }
+  })
 
-  // Executa wipe-and-replace atomicamente
+  // Set de chaves globais do XLSX (customerCode/customerDoc/nome + extId)
+  const xlsxKeyGlobal = new Set<string>()
+  Array.from(buckets.entries()).forEach(([clientKey, b]) => {
+    b.items.forEach(r => xlsxKeyGlobal.add(`${clientKey}||${extIdOf(r)}`))
+  })
+
   const result = await prisma.$transaction(async tx => {
-    const deletedSales = await tx.sale.deleteMany({})
-    const deletedClients = await tx.client.deleteMany({})
+    // Passo 1 · Detecta títulos OVERDUE atuais que sumiram → PAID
+    const currentOverdue = await tx.sale.findMany({
+      where: { paymentStatus: 'OVERDUE' },
+      select: {
+        id: true, externalId: true,
+        client: { select: { code: true, cpf: true, name: true } },
+      },
+    })
 
-    let createdClients = 0
-    let createdSales = 0
+    const idsToMarkPaid: number[] = []
+    currentOverdue.forEach(s => {
+      const c = s.client
+      const clientKey = c.code || c.cpf || `NAME:${c.name.toUpperCase().trim()}`
+      const globalKey = `${clientKey}||${s.externalId ?? ''}`
+      if (!xlsxKeyGlobal.has(globalKey)) idsToMarkPaid.push(s.id)
+    })
+
+    const markedPaid = idsToMarkPaid.length > 0
+      ? (await tx.sale.updateMany({
+          where: { id: { in: idsToMarkPaid } },
+          data: { paymentStatus: 'PAID', paidDate: importDate },
+        })).count
+      : 0
+
+    // Passo 2 · Upsert Clients + Sales por bucket
+    let createdClients = 0, updatedClients = 0, createdSales = 0, updatedSales = 0, revertedFromPaid = 0
 
     for (const b of Array.from(buckets.values())) {
-      const client = await tx.client.create({
-        data: {
-          code: b.code,
-          name: b.name,
-          cpf: b.doc,
-          phone: b.phone,
-          active: true,
-        },
-      })
-      createdClients += 1
+      let clientId: number
 
-      const salesData = b.items.map(r => {
-        const issueDate = r.issueDate ? new Date(r.issueDate) : new Date(r.dueDate)
-        return {
-          clientId: client.id,
-          description: `Título ${r.titulo}${r.parcela ? ' · ' + r.parcela : ''}`,
-          amount: r.amount,   // valor original (não usar netAmount pra não inflar receita com juros/multa)
-          date: issueDate,
-          dueDate: new Date(r.dueDate),
-          paidDate: null,
-          paymentStatus: 'OVERDUE',
-          unitId: null,
-          month: issueDate.getMonth() + 1,
-          year: issueDate.getFullYear(),
+      // Upsert Client (chave: code, fallback cpf, fallback create sem chave)
+      if (b.code) {
+        const before = await tx.client.findUnique({ where: { code: b.code } })
+        const c = await tx.client.upsert({
+          where: { code: b.code },
+          create: { code: b.code, name: b.name, cpf: b.doc, phone: b.phone },
+          update: { name: b.name, cpf: b.doc, phone: b.phone },
+        })
+        clientId = c.id
+        if (before) updatedClients += 1
+        else createdClients += 1
+      } else {
+        const existing = b.doc
+          ? await tx.client.findFirst({ where: { cpf: b.doc } })
+          : null
+        if (existing) {
+          const c = await tx.client.update({
+            where: { id: existing.id },
+            data: { name: b.name, phone: b.phone },
+          })
+          clientId = c.id; updatedClients += 1
+        } else {
+          const c = await tx.client.create({
+            data: { name: b.name, cpf: b.doc, phone: b.phone },
+          })
+          clientId = c.id; createdClients += 1
         }
-      })
+      }
 
-      if (salesData.length > 0) {
-        const ins = await tx.sale.createMany({ data: salesData })
-        createdSales += ins.count
+      // Upsert Sales
+      for (const r of b.items) {
+        const extId = extIdOf(r)
+        const issueDate = r.issueDate ? new Date(r.issueDate) : new Date(r.dueDate)
+        const existing = await tx.sale.findUnique({
+          where: { clientId_externalId: { clientId, externalId: extId } },
+        })
+
+        if (existing) {
+          const wasPaid = existing.paymentStatus === 'PAID'
+          await tx.sale.update({
+            where: { id: existing.id },
+            data: {
+              amount: r.amount,
+              dueDate: new Date(r.dueDate),
+              date: issueDate,
+              paymentStatus: 'OVERDUE',
+              paidDate: null,
+              month: issueDate.getMonth() + 1,
+              year: issueDate.getFullYear(),
+            },
+          })
+          if (wasPaid) revertedFromPaid += 1
+          else updatedSales += 1
+        } else {
+          await tx.sale.create({
+            data: {
+              clientId,
+              externalId: extId,
+              description: `Título ${r.titulo}${r.parcela ? ' · ' + r.parcela : ''}`,
+              amount: r.amount,
+              date: issueDate,
+              dueDate: new Date(r.dueDate),
+              paidDate: null,
+              paymentStatus: 'OVERDUE',
+              month: issueDate.getMonth() + 1,
+              year: issueDate.getFullYear(),
+            },
+          })
+          createdSales += 1
+        }
       }
     }
 
     return {
-      deletedSales: deletedSales.count,
-      deletedClients: deletedClients.count,
-      createdClients,
-      createdSales,
+      totalNoXlsx: parsed.receivables!.length,
+      titulosPagos: markedPaid,             // sumiram do XLSX → PAID
+      titulosNovos: createdSales,           // não existiam no DB
+      titulosMantidos: updatedSales,        // interseção
+      titulosRevertidos: revertedFromPaid,  // PAID e voltaram
+      clientesCriados: createdClients,
+      clientesAtualizados: updatedClients,
     }
-  }, { timeout: 120_000 })
+  }, { timeout: 240_000 })
 
-  return NextResponse.json({
-    ...result,
-    totalTitulos: parsed.receivables.length,
-    skipped: skipped.length,
-    parsedErrors: parsed.errors,
-  })
+  return NextResponse.json({ ...result, importDate: importDate.toISOString() })
 }

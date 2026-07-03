@@ -129,15 +129,22 @@ export default function RiscoCliente() {
   const sortedRows = [...rows].sort((a, b) => b.risk - a.risk)
 
   const uploadReceber = async (file: File) => {
-    if (!confirm(`Isso vai APAGAR todos os clientes e títulos atuais e substituir pelo conteúdo de "${file.name}". Continuar?`)) return
-    setImporting(true); setImportMsg('Lendo planilha…')
+    setImporting(true); setImportMsg('Lendo planilha e reconciliando…')
     const fd = new FormData()
     fd.append('file', file)
     try {
       const res = await fetch('/api/credit/import', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) { setImportMsg('Erro: ' + (data.error || 'falha')); return }
-      setImportMsg(`✓ ${data.createdClients} clientes · ${data.createdSales} títulos importados (${data.deletedSales} apagados)`)
+      const parts: string[] = []
+      if (data.titulosPagos)       parts.push(`${data.titulosPagos} pagos (sumiram do relatório)`)
+      if (data.titulosNovos)       parts.push(`${data.titulosNovos} novos em atraso`)
+      if (data.titulosMantidos)    parts.push(`${data.titulosMantidos} continuam devendo`)
+      if (data.titulosRevertidos)  parts.push(`${data.titulosRevertidos} reabertos (voltaram do PAID)`)
+      const clientMsg = data.clientesCriados
+        ? ` · ${data.clientesCriados} clientes novos, ${data.clientesAtualizados} atualizados`
+        : ''
+      setImportMsg(`✓ ${parts.join(' · ') || 'sem mudanças'}${clientMsg}`)
       await load()
     } catch (e) {
       setImportMsg('Erro: ' + (e instanceof Error ? e.message : String(e)))
