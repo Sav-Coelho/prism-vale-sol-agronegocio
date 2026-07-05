@@ -104,7 +104,9 @@ export function parseStockAbc(buffer: ArrayBuffer): ParsedStock[] {
   const codeIdx = idx['CODIGO']
   const descIdx = idx['DESCRICAO'] ?? idx['DESCRIÇÃO']
   const qtyIdx  = idx['QTDE'] ?? idx['QUANTIDADE']
-  const costIdx = idx['CUSTO']
+  // indexHeaders normaliza (uppercase + sem acento), então busca só a forma normalizada.
+  // O ERP passou a exportar "CUSTO UNITÁRIO" → "CUSTO UNITARIO"; versões antigas usavam só "CUSTO"
+  const costIdx = idx['CUSTO UNITARIO'] ?? idx['CUSTO']
   const totalIdx = idx['VALOR TOTAL'] ?? idx['VALOR']
 
   const items: ParsedStock[] = []
