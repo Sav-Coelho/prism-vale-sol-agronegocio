@@ -137,10 +137,11 @@ export default function RiscoCliente() {
       const data = await res.json()
       if (!res.ok) { setImportMsg('Erro: ' + (data.error || 'falha')); return }
       const parts: string[] = []
-      if (data.titulosPagos)       parts.push(`${data.titulosPagos} pagos (sumiram do relatório)`)
-      if (data.titulosNovos)       parts.push(`${data.titulosNovos} novos em atraso`)
-      if (data.titulosMantidos)    parts.push(`${data.titulosMantidos} continuam devendo`)
-      if (data.titulosRevertidos)  parts.push(`${data.titulosRevertidos} reabertos (voltaram do PAID)`)
+      if (data.titulosPagos)            parts.push(`${data.titulosPagos} pagos em dia`)
+      if (data.titulosCaloteResolvido)  parts.push(`${data.titulosCaloteResolvido} resolvidos tardiamente (contam como calote)`)
+      if (data.titulosNovos)            parts.push(`${data.titulosNovos} novos em atraso`)
+      if (data.titulosMantidos)         parts.push(`${data.titulosMantidos} continuam devendo`)
+      if (data.titulosRevertidos)       parts.push(`${data.titulosRevertidos} reabertos`)
       const clientMsg = data.clientesCriados ? ` · ${data.clientesCriados} clientes novos` : ''
       const antigoAvi = data.snapshotAntigo
         ? ` ⚠ Detectado snapshot ANTERIOR ao estado atual (max VECTO ${data.maxDueDateXlsx} < ${data.maxDueDateDb}) — nenhum título foi marcado como pago; só foram adicionados os novos.`

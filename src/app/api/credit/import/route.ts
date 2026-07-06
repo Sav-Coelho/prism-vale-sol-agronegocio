@@ -120,7 +120,7 @@ export async function POST(req: Request) {
 
   // ── Passo 3: carrega Sales atuais e detecta ordem cronológica ──
   const currentSales = await prisma.sale.findMany({
-    where: { paymentStatus: { in: ['OVERDUE', 'PAID'] } },
+    where: { paymentStatus: { in: ['OVERDUE', 'PAID', 'DEFAULTED'] } },
     select: { id: true, clientId: true, externalId: true, paymentStatus: true, dueDate: true, amount: true },
   })
 
@@ -141,16 +141,26 @@ export async function POST(req: Request) {
   }, 0)
   const isOlderSnapshot = maxDueDb > 0 && maxDueXlsx < maxDueDb
 
-  const idsToMarkPaid: number[] = []
+  // Um título que some do relatório foi resolvido (pago/baixado/renegociado).
+  // MAS o efeito no score depende de COMO estava quando sumiu:
+  //   • ainda dentro do prazo ou < 90 dias de atraso → pagou em dia: PAID (sucesso)
+  //   • já em calote (>= 90 dias vencido)            → resolveu tarde: DEFAULTED (falha)
+  // Marcar um calote velho como "pago limpo" apagaria o histórico ruim do cliente.
+  const DEFAULT_DAYS = 90
+  const idsToMarkPaid: number[] = []       // sucesso — curou antes do calote
+  const idsToMarkDefaulted: number[] = []  // falha — já estava em calote quando sumiu
   const idsToRevertToOverdue: number[] = []
 
   currentSales.forEach(s => {
     const inXlsx = xlsxKeysByClient.get(s.clientId)?.has(s.externalId ?? '')
-    if (s.paymentStatus === 'OVERDUE' && !inXlsx) {
-      // Só marca PAID se o novo snapshot é mais RECENTE que o estado atual.
-      // Se for mais antigo, o título "ausente" pode simplesmente não existir ainda naquela foto.
-      if (!isOlderSnapshot) idsToMarkPaid.push(s.id)
-    } else if (s.paymentStatus === 'PAID' && inXlsx) {
+    if ((s.paymentStatus === 'OVERDUE' || s.paymentStatus === 'DEFAULTED') && !inXlsx) {
+      // Só resolve se o novo snapshot é mais RECENTE (senão o título pode nem existir ainda).
+      if (isOlderSnapshot) return
+      const due = s.dueDate?.getTime() ?? importDate.getTime()
+      const daysLate = (importDate.getTime() - due) / (1000 * 60 * 60 * 24)
+      if (daysLate >= DEFAULT_DAYS) idsToMarkDefaulted.push(s.id)
+      else                          idsToMarkPaid.push(s.id)
+    } else if ((s.paymentStatus === 'PAID' || s.paymentStatus === 'DEFAULTED') && inXlsx) {
       idsToRevertToOverdue.push(s.id)         // reabriu no ERP → volta pra OVERDUE
     }
   })
@@ -196,6 +206,7 @@ export async function POST(req: Request) {
 
   // ── Passo 4: executa em batches ────────────────────────────
   let markedPaid = 0
+  let markedDefaulted = 0
   let reverted = 0
   if (idsToMarkPaid.length > 0) {
     const r = await prisma.sale.updateMany({
@@ -203,6 +214,15 @@ export async function POST(req: Request) {
       data: { paymentStatus: 'PAID', paidDate: importDate },
     })
     markedPaid = r.count
+  }
+  if (idsToMarkDefaulted.length > 0) {
+    // Resolvido tarde (já era calote): fica DEFAULTED (falha) mas com paidDate,
+    // pra sair do saldo em aberto sem virar sucesso no score.
+    const r = await prisma.sale.updateMany({
+      where: { id: { in: idsToMarkDefaulted } },
+      data: { paymentStatus: 'DEFAULTED', paidDate: importDate },
+    })
+    markedDefaulted = r.count
   }
   if (idsToRevertToOverdue.length > 0) {
     const r = await prisma.sale.updateMany({
@@ -225,10 +245,11 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     totalNoXlsx:        parsed.receivables.length,
-    titulosPagos:       markedPaid,       // sumiram do XLSX → PAID (só se snapshot recente)
+    titulosPagos:       markedPaid,       // sumiram em dia → PAID (sucesso)
+    titulosCaloteResolvido: markedDefaulted, // sumiram já em calote → DEFAULTED (falha)
     titulosNovos:       created,          // não existiam no DB
     titulosMantidos:    keptCount,        // interseção que continua devendo (chaves únicas)
-    titulosRevertidos:  reverted,         // PAID e voltaram → OVERDUE
+    titulosRevertidos:  reverted,         // PAID/DEFAULTED e voltaram → OVERDUE
     valoresCorrigidos:  amountUpdates.length,
     clientesCriados:    Math.max(0, clientCountAfter - clientCountBefore),
     clientesTotal:      clientCountAfter,
