@@ -92,8 +92,11 @@ export async function GET() {
       ? (qtyStock / qtySold) * PERIOD_MONTHS
       : (qtyStock > 0 ? Infinity : 0)
 
-    let status: 'rupture' | 'low' | 'healthy' | 'excess'
-    if (monthsCoverage < 1)      status = 'rupture'
+    // stockout = vendeu no período mas está zerado hoje (ruptura total, o pior caso).
+    // rupture  = ainda tem algum estoque, mas cobre menos de 1 mês.
+    let status: 'stockout' | 'rupture' | 'low' | 'healthy' | 'excess'
+    if (qtyStock <= 0)           status = 'stockout'
+    else if (monthsCoverage < 1) status = 'rupture'
     else if (monthsCoverage < 2) status = 'low'
     else if (monthsCoverage > 6) status = 'excess'
     else                          status = 'healthy'
@@ -118,6 +121,10 @@ export async function GET() {
   const detractors = marginRows.filter(r => r.marginPct < 20).length
   const ruptures = turnoverRows.filter(r => r.status === 'rupture').length
   const excess = turnoverRows.filter(r => r.status === 'excess').length
+  // Ruptura total (vendeu e zerou) e as quebras mais graves: Curva A sem estoque
+  const stockouts = turnoverRows.filter(r => r.status === 'stockout').length
+  const criticalStockouts = turnoverRows.filter(r => r.status === 'stockout' && r.abcClass === 'A')
+  const criticalStockoutValue = criticalStockouts.reduce((s, r) => s + r.salesValue, 0)
 
   // ── 4. MASTER (uma linha por SKU presente em qq base) ───────────────
   // Permite análise cruzada Margem × ABC × Giro numa só tabela.
@@ -159,14 +166,15 @@ export async function GET() {
     const PERIOD_MONTHS = 6
     let turnover: number | null = null
     let monthsCoverage: number | null = null
-    let turnoverStatus: 'rupture' | 'low' | 'healthy' | 'excess' | null = null
+    let turnoverStatus: 'stockout' | 'rupture' | 'low' | 'healthy' | 'excess' | null = null
     if (qtySold > 0) {
       turnover = qtyStock > 0 ? qtySold / qtyStock : 0
       monthsCoverage = (qtyStock / qtySold) * PERIOD_MONTHS
       turnoverStatus =
-        monthsCoverage < 1 ? 'rupture' :
-        monthsCoverage < 2 ? 'low' :
-        monthsCoverage > 6 ? 'excess' : 'healthy'
+        qtyStock <= 0       ? 'stockout' :
+        monthsCoverage < 1  ? 'rupture' :
+        monthsCoverage < 2  ? 'low' :
+        monthsCoverage > 6  ? 'excess' : 'healthy'
     }
 
     return {
@@ -210,6 +218,9 @@ export async function GET() {
     },
     summary: {
       excellent, detractors, ruptures, excess,
+      stockouts,
+      criticalStockouts: criticalStockouts.length,
+      criticalStockoutValue,
       totalSalesValue,
       totalStockValue: stock.reduce((s, x) => s + x.totalValue, 0),
     },

@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 
 type MarginTag = 'excellent' | 'ok' | 'low' | 'negative'
-type TurnoverStatus = 'rupture' | 'low' | 'healthy' | 'excess'
+type TurnoverStatus = 'stockout' | 'rupture' | 'low' | 'healthy' | 'excess'
 type AbcClass = 'A' | 'B' | 'C'
 
 interface MasterRow {
@@ -38,7 +38,7 @@ interface MasterRow {
 
 interface Analytics {
   counts: { prices: number; stock: number; sales: number; marginItems: number; turnoverItems: number; masterItems: number }
-  summary: { excellent: number; detractors: number; ruptures: number; excess: number; totalSalesValue: number; totalStockValue: number }
+  summary: { excellent: number; detractors: number; ruptures: number; excess: number; stockouts: number; criticalStockouts: number; criticalStockoutValue: number; totalSalesValue: number; totalStockValue: number }
   masterRows: MasterRow[]
   abcRows: Array<{ rank: number; abcClass: string; cumulativePct: number; sharePct: number }>
 }
@@ -52,7 +52,7 @@ const C = {
   line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a',
   green: '#197a4a', red: '#b03022', amber: '#c98a14',
   excellent: '#197a4a', ok: '#d4a017', low: '#c98a14', negative: '#b03022',
-  rupture: '#b03022', healthyTurn: '#197a4a', excess: '#5a6c8a',
+  stockout: '#7a1410', rupture: '#b03022', healthyTurn: '#197a4a', excess: '#5a6c8a',
   lowTurn: '#c98a14',
   A: '#197a4a', B: '#d4a017', Cc: '#b03022',
 }
@@ -64,13 +64,14 @@ const MARGIN_LABEL: Record<MarginTag, string> = {
   negative:  'Negativa',
 }
 const TURNOVER_LABEL: Record<TurnoverStatus, string> = {
+  stockout: 'Ruptura total (estoque 0)',
   rupture: 'Ruptura (<1m)',
   low:     'Baixa (1–2m)',
   healthy: 'Saudável (2–6m)',
   excess:  'Excesso (>6m)',
 }
 const TURNOVER_COLOR: Record<TurnoverStatus, string> = {
-  rupture: C.rupture, low: C.lowTurn, healthy: C.healthyTurn, excess: C.excess,
+  stockout: C.stockout, rupture: C.rupture, low: C.lowTurn, healthy: C.healthyTurn, excess: C.excess,
 }
 const MARGIN_COLOR: Record<MarginTag, string> = {
   excellent: C.excellent, ok: C.ok, low: C.low, negative: C.negative,
@@ -141,10 +142,11 @@ export default function AnaliseComercial() {
   // Valor parado por status de giro
   const stockByStatus = useMemo(() => {
     if (!data) return []
-    const groups: Record<TurnoverStatus, number> = { rupture: 0, low: 0, healthy: 0, excess: 0 }
+    const groups: Record<TurnoverStatus, number> = { stockout: 0, rupture: 0, low: 0, healthy: 0, excess: 0 }
     data.masterRows.forEach(r => {
       if (r.turnoverStatus) groups[r.turnoverStatus] += r.stockValue
     })
+    // stockout tem estoque 0 (capital R$ 0), então fica fora do gráfico de capital parado
     return (['rupture','low','healthy','excess'] as const).map(s => ({
       label: TURNOVER_LABEL[s].split(' (')[0],
       status: s,
@@ -250,14 +252,37 @@ export default function AnaliseComercial() {
                    value={data.summary.detractors.toLocaleString('pt-BR')}
                    sub={`< 20% · ${fmtPct(data.summary.detractors / Math.max(1,data.counts.marginItems) * 100)} dos calculáveis`}
                    color={C.red} />
+              <Kpi label="Ruptura total (estoque 0)"
+                   value={data.summary.stockouts.toLocaleString('pt-BR')}
+                   sub="venderam e zeraram o estoque" color={C.stockout} />
               <Kpi label="Ruptura iminente"
                    value={data.summary.ruptures.toLocaleString('pt-BR')}
-                   sub="cobertura < 1 mês" color={C.rupture} />
-              <Kpi label="Capital em excesso"
-                   value={data.summary.excess.toLocaleString('pt-BR')}
-                   sub="cobertura > 6 meses" color={C.excess} />
+                   sub="ainda tem estoque, cobre < 1 mês" color={C.rupture} />
             </div>
           </div>
+
+          {/* Alerta de quebras críticas — Curva A sem estoque */}
+          {data.summary.criticalStockouts > 0 && (
+            <div className="card mb-6" style={{ borderTop: `3px solid ${C.stockout}`, background: '#fdf3f2' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 34, color: C.stockout, lineHeight: 1 }}>⚠</div>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 19, color: C.stockout }}>
+                    {data.summary.criticalStockouts} {data.summary.criticalStockouts === 1 ? 'produto crítico' : 'produtos críticos'} da Curva A sem estoque
+                  </div>
+                  <div style={{ fontSize: 13, color: C.textSoft, marginTop: 4 }}>
+                    São os itens de maior peso na receita (Curva A) que venderam no período mas estão zerados hoje.
+                    Somam <b style={{ color: C.stockout }}>{fmt(data.summary.criticalStockoutValue)}</b> de receita no período — venda em risco enquanto não repõe.
+                  </div>
+                </div>
+                <button className="btn btn-sm"
+                  style={{ background: C.stockout, borderColor: C.stockout, color: '#fff' }}
+                  onClick={() => { setAbcFilter('A'); setTurnoverFilter('stockout'); setMarginFilter('all'); setSearch('') }}>
+                  Ver os {data.summary.criticalStockouts} itens →
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 3 gráficos lado a lado */}
           <div className="grid-3 mb-6">
@@ -374,7 +399,7 @@ export default function AnaliseComercial() {
                 onChange={setTurnoverFilter}
                 options={[
                   { v: 'all', label: 'Todos' },
-                  ...(['rupture','low','healthy','excess'] as TurnoverStatus[]).map(t => ({ v: t, label: TURNOVER_LABEL[t].split(' (')[0], color: TURNOVER_COLOR[t] })),
+                  ...(['stockout','rupture','low','healthy','excess'] as TurnoverStatus[]).map(t => ({ v: t, label: TURNOVER_LABEL[t].split(' (')[0], color: TURNOVER_COLOR[t] })),
                 ]}
               />
             </div>
