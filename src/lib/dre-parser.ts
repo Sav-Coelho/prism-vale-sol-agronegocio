@@ -33,6 +33,22 @@ const PAY_FILIAL_UNIT: Record<string, string> = {
 
 export const CARD_DOC = '01.425.787/0001-04'
 
+/**
+ * Normaliza qualquer rótulo de unidade (independente de acento/encoding/caixa)
+ * para o nome canônico. Robusto contra corrupção de acento no transporte.
+ */
+export function canonicalizeUnit(raw: string): string {
+  const U = String(raw ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
+  const isMM = /\bMM\b|MULT/.test(U)
+  const prefix = isMM ? 'MM' : 'VS'
+  if (U.includes('QUATIS')) return 'VS - QUATIS'
+  if (U.includes('LAGOA')) return 'MM - 7 LAGOAS'
+  if (U.includes('BONITO')) return `${prefix} - RIO BONITO`
+  if (U.includes('RIOS')) return 'VS - TRÊS RIOS'   // só VS tem Três Rios
+  if (U.includes('APERIB')) return `${prefix} - APERIBÉ`
+  return raw
+}
+
 export interface PaymentRow {
   unit: string
   code: string

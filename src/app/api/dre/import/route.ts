@@ -6,7 +6,7 @@
  *    deduções e juros. Substitui as entradas de receita daquela unidade.
  */
 import { prisma } from '@/lib/prisma'
-import { parseDre } from '@/lib/dre-parser'
+import { parseDre, canonicalizeUnit } from '@/lib/dre-parser'
 import { classifyExpense } from '@/lib/dre-classifier'
 import { NextResponse } from 'next/server'
 
@@ -47,20 +47,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ kind: 'payment', buckets: data.length, ...result, totalValor: parsed.total })
   }
 
-  // Recebidos — precisa da unidade
+  // Recebidos — precisa da unidade (canonizada contra encoding/acento)
   if (!unitField) {
     return NextResponse.json({ error: 'Para recebidos, informe a unidade (campo "unit")' }, { status: 400 })
   }
+  const unit = canonicalizeUnit(unitField)
   parsed.rows.forEach(r => {
-    add({ unit: unitField, kind: 'RECEITA', line: 'RECEITA', sub: r.isCard ? 'Recebimentos via Cartão' : 'Recebimentos Diretos (clientes)', year: r.year, month: r.month }, r.gross)
-    if (r.discount) add({ unit: unitField, kind: 'DEDUCAO', line: 'DEDUCAO', sub: r.isCard ? 'Taxas de Cartão' : 'Descontos Comerciais', year: r.year, month: r.month }, r.discount)
-    if (r.interest) add({ unit: unitField, kind: 'JUROS', line: 'JUROS', sub: 'Juros Recebidos de Clientes', year: r.year, month: r.month }, r.interest)
+    add({ unit, kind: 'RECEITA', line: 'RECEITA', sub: r.isCard ? 'Recebimentos via Cartão' : 'Recebimentos Diretos (clientes)', year: r.year, month: r.month }, r.gross)
+    if (r.discount) add({ unit, kind: 'DEDUCAO', line: 'DEDUCAO', sub: r.isCard ? 'Taxas de Cartão' : 'Descontos Comerciais', year: r.year, month: r.month }, r.discount)
+    if (r.interest) add({ unit, kind: 'JUROS', line: 'JUROS', sub: 'Juros Recebidos de Clientes', year: r.year, month: r.month }, r.interest)
   })
   const data = Array.from(map.values())
   const result = await prisma.$transaction(async tx => {
-    const del = await tx.dreEntry.deleteMany({ where: { unit: unitField, kind: { in: ['RECEITA', 'DEDUCAO', 'JUROS'] } } })
+    const del = await tx.dreEntry.deleteMany({ where: { unit, kind: { in: ['RECEITA', 'DEDUCAO', 'JUROS'] } } })
     const ins = await tx.dreEntry.createMany({ data })
     return { deleted: del.count, inserted: ins.count }
   }, { timeout: 120_000 })
-  return NextResponse.json({ kind: 'receipt', unit: unitField, buckets: data.length, ...result, totalValor: parsed.total })
+  return NextResponse.json({ kind: 'receipt', unit, buckets: data.length, ...result, totalValor: parsed.total })
 }
