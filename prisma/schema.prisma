@@ -145,3 +145,25 @@ model Payable {
   @@index([supplierDoc])
   @@index([status])
 }
+
+// DRE Gerencial (regime de caixa). Cada linha = um evento de caixa classificado,
+// agregável por unidade, linha da DRE, subconta e mês. Importado dos relatórios
+// de "títulos recebidos" (receita) e "pagamentos efetuados" (despesa).
+model DreEntry {
+  id        Int      @id @default(autoincrement())
+  unit      String                       // unidade canônica (VS - TRÊS RIOS, MM - RIO BONITO, …)
+  kind      String                       // RECEITA | DEDUCAO | JUROS | DESPESA
+  line      String                       // chave da linha da DRE (CMV, ADM, PESSOAL, FIN, …)
+  sub       String                       // subconta (detalhamento)
+  supplier  String?                      // razão social (para drill-down)
+  supplierCode String?
+  year      Int
+  month     Int
+  amount    Float
+  importedAt DateTime @default(now())
+
+  @@index([unit])
+  @@index([kind])
+  @@index([line])
+  @@index([year, month])
+}

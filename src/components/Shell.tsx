@@ -6,6 +6,7 @@ const COMPANY_NAME = 'Vale Sol Agronegócio'
 const LS_KEY = 'arken.sidenav.collapsed'
 
 const NAV = [
+  { href: '/dre',                icon: '▤', label: 'DRE Gerencial' },
   { href: '/fluxo-de-caixa',     icon: '◈', label: 'Fluxo de Caixa' },
   { href: '/risco-cliente',      icon: '◆', label: 'Risco de Cliente' },
   { href: '/analise-comercial',  icon: '⌬', label: 'Análise Comercial' },
