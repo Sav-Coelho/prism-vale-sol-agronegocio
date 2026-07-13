@@ -133,7 +133,7 @@ export function parseSalesAbc(buffer: ArrayBuffer): ParsedSalesAbc[] {
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, blankrows: false })
   if (matrix.length === 0) return []
   const idx = indexHeaders(matrix[0] as unknown[])
-  const codeIdx = idx['CODIGO']
+  const codeIdx = idx['CODIGO']  // pode não existir no layout novo
   const descIdx = idx['PRODUTO'] ?? idx['DESCRICAO'] ?? idx['DESCRIÇÃO']
   const qtyIdx  = idx['QUANTIDADE'] ?? idx['QTDE']
   const totalIdx = idx['VLR TOTAL'] ?? idx['VALOR TOTAL']
@@ -143,13 +143,21 @@ export function parseSalesAbc(buffer: ArrayBuffer): ParsedSalesAbc[] {
   const items: ParsedSalesAbc[] = []
   for (let r = 1; r < matrix.length; r++) {
     const row = matrix[r] as unknown[]
-    const code = str(row[codeIdx])
+    const produto = str(row[descIdx])
+    // Layout antigo: coluna CÓDIGO própria. Layout novo: código embutido no fim do
+    // nome entre parênteses, ex. "LACTOTROPIN 500 MG (252)".
+    let code = codeIdx !== undefined ? str(row[codeIdx]) : ''
+    let description = produto
+    if (!code) {
+      const m = produto.match(/\((\d+)\)\s*$/)
+      if (m) { code = m[1]; description = produto.replace(/\s*\(\d+\)\s*$/, '').trim() }
+    }
     if (!code) continue
     const abc = str(row[classIdx]).toUpperCase()
     if (!['A', 'B', 'C'].includes(abc)) continue
     items.push({
       code,
-      description: str(row[descIdx]),
+      description,
       qtySold: num(row[qtyIdx]),
       totalValue: num(row[totalIdx]),
       avgUnit: num(row[avgIdx]),
