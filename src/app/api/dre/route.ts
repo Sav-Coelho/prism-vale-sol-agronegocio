@@ -16,13 +16,25 @@ const CONS = 'CONSOLIDADO'
 interface SupplierRow { name: string; code: string | null; amount: number }
 interface SubRow { sub: string; amount: number; suppliers: SupplierRow[] }
 
-export async function GET() {
-  const entries = await prisma.dreEntry.findMany()
+export async function GET(req: Request) {
+  const url = new URL(req.url)
+  // ?months=2026-01,2026-02  → filtra o período; ausente = todos
+  const monthsParam = url.searchParams.get('months')
+  const monthFilter = monthsParam
+    ? new Set(monthsParam.split(',').map(s => s.trim()).filter(Boolean))
+    : null
+
+  const allEntries = await prisma.dreEntry.findMany()
+  const entries = monthFilter
+    ? allEntries.filter(e => monthFilter.has(`${e.year}-${String(e.month).padStart(2, '0')}`))
+    : allEntries
+
+  // meses disponíveis vêm da base COMPLETA (pra o seletor não sumir ao filtrar)
+  const allMonths = Array.from(new Set(allEntries.map(e => `${e.year}-${String(e.month).padStart(2, '0')}`))).sort()
 
   // scope -> line -> sub -> { amount, suppliers: Map<name, {code, amount}> }
   const scopes = new Map<string, Map<string, Map<string, { amount: number; sup: Map<string, { code: string | null; amount: number }> }>>>()
   const unitsSet = new Set<string>()
-  const monthsSet = new Set<string>()
 
   const bump = (scope: string, line: string, sub: string, supplier: string | null, code: string | null, amount: number) => {
     if (!scopes.has(scope)) scopes.set(scope, new Map())
@@ -39,9 +51,9 @@ export async function GET() {
     }
   }
 
+  // unidades vêm da base completa (o seletor não deve sumir ao filtrar mês)
+  allEntries.forEach(e => unitsSet.add(e.unit))
   entries.forEach(e => {
-    unitsSet.add(e.unit)
-    monthsSet.add(`${e.year}-${String(e.month).padStart(2, '0')}`)
     bump(e.unit, e.line, e.sub, e.supplier, e.supplierCode, e.amount)
     bump(CONS, e.line, e.sub, e.supplier, e.supplierCode, e.amount)
   })
@@ -109,9 +121,9 @@ export async function GET() {
   scopeList.forEach(s => { dre[s] = buildScope(s) })
 
   return NextResponse.json({
-    hasData: entries.length > 0,
+    hasData: allEntries.length > 0,
     units,
-    months: Array.from(monthsSet).sort(),
+    months: allMonths,
     dre,
   })
 }

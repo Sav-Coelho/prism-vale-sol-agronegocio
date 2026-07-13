@@ -27,6 +27,8 @@ interface Analytics {
 const CONS = 'CONSOLIDADO'
 const fmt = (n: number) => (n < 0 ? '−' : '') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtK = (n: number) => Math.abs(n) >= 1e6 ? `${(n/1e6).toFixed(1)}M` : Math.abs(n) >= 1e3 ? `${(n/1e3).toFixed(0)}k` : n.toFixed(0)
+const MONTH_LABEL: Record<string, string> = { '01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez' }
+const mLabel = (m: string) => { const [y, mm] = m.split('-'); return `${MONTH_LABEL[mm] ?? mm}/${y.slice(2)}` }
 
 const C = {
   navy: '#0a2540', yellow: '#f5c518', gold: '#d4a017',
@@ -41,18 +43,30 @@ export default function DrePage() {
   const [scope, setScope] = useState<string>(CONS)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [expandedSub, setExpandedSub] = useState<Record<string, boolean>>({})
+  const [selMonths, setSelMonths] = useState<string[]>([]) // vazio = todos
+  const [showAV, setShowAV] = useState(true)
   const [recUnit, setRecUnit] = useState<string>(UNITS[0])
   const [recMsg, setRecMsg] = useState('')
   const [recBusy, setRecBusy] = useState(false)
   const recRef = useRef<HTMLInputElement>(null)
 
-  const load = async () => {
+  const load = async (months?: string[]) => {
     setLoading(true)
-    const r = await fetch('/api/dre').then(r => r.json())
+    const qs = months && months.length ? `?months=${months.join(',')}` : ''
+    const r = await fetch('/api/dre' + qs).then(r => r.json())
     setData(r)
     setLoading(false)
   }
   useEffect(() => { load() }, [])
+
+  const toggleMonth = (m: string) => {
+    setSelMonths(prev => {
+      const next = prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]
+      load(next)
+      return next
+    })
+  }
+  const clearMonths = () => { setSelMonths([]); load([]) }
 
   const uploadReceita = async (file: File) => {
     setRecBusy(true); setRecMsg(`Lendo recebidos de ${recUnit}…`)
@@ -72,6 +86,7 @@ export default function DrePage() {
     const get = (k: string) => cur.rows.find(r => r.key === k)?.amount ?? 0
     return { recLiq: get('RECLIQ'), mc: get('MC'), lucroOp: get('LUCROOP'), ebitda: get('EBITDA'), ll: get('LL') }
   }, [cur])
+  const avBase = kpi?.recLiq || 0  // base da análise vertical = Receita Líquida
 
   // gráfico: composição de despesas (grupos negativos)
   const chartData = useMemo(() => {
@@ -135,12 +150,27 @@ export default function DrePage() {
       ) : (
         <>
           {/* Seletor de escopo */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
             {[CONS, ...data.units].map(s => (
               <button key={s} className={scope === s ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => setScope(s)}>
                 {s === CONS ? '★ Consolidado' : s}
               </button>
             ))}
+          </div>
+
+          {/* Filtro de meses + análise vertical */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${C.line}` }}>
+            <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600 }}>Período</span>
+            <button className={selMonths.length === 0 ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={clearMonths}>Todos</button>
+            {data.months.map(m => (
+              <button key={m} className={selMonths.includes(m) ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => toggleMonth(m)}>
+                {mLabel(m)}
+              </button>
+            ))}
+            <label style={{ marginLeft: 'auto', fontSize: 12, color: C.textSoft, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={showAV} onChange={e => setShowAV(e.target.checked)} />
+              Análise vertical (% da Receita Líquida)
+            </label>
           </div>
 
           {/* KPIs */}
@@ -180,8 +210,19 @@ export default function DrePage() {
             </div>
             <div className="table-wrap">
               <table>
+                <thead>
+                  <tr style={{ background: '#f4f7fb' }}>
+                    <th style={{ textAlign: 'left', padding: '8px 24px', fontSize: 10, letterSpacing: '0.08em', color: C.textMuted }}>Linha</th>
+                    <th style={{ textAlign: 'right', padding: '8px 24px', fontSize: 10, letterSpacing: '0.08em', color: C.textMuted }}>Valor (R$)</th>
+                    {showAV && <th style={{ textAlign: 'right', padding: '8px 24px', fontSize: 10, letterSpacing: '0.08em', color: C.textMuted, width: 90 }}>AV %</th>}
+                  </tr>
+                </thead>
                 <tbody>
                   {cur?.rows.map(row => {
+                    const av = avBase ? (row.amount / avBase * 100) : null
+                    const avCell = (val: number | null, strong = false) => showAV
+                      ? <td style={{ textAlign: 'right', padding: strong ? '12px 24px' : '10px 24px', fontSize: strong ? 12 : 11, color: strong ? C.navy : C.textMuted, fontWeight: strong ? 700 : 400 }}>{val == null ? '' : `${val.toFixed(1)}%`}</td>
+                      : null
                     if (row.type === 'subtotal') {
                       const pos = row.amount >= 0
                       const big = row.key === 'LL' || row.key === 'EBITDA'
@@ -193,6 +234,7 @@ export default function DrePage() {
                           <td style={{ textAlign: 'right', fontWeight: 700, fontSize: big ? 15 : 13, padding: '12px 24px', color: big ? (pos ? C.yellow : '#ff8a7a') : (pos ? C.green : C.red) }}>
                             {fmt(row.amount)}
                           </td>
+                          {showAV && <td style={{ textAlign: 'right', padding: '12px 24px', fontSize: 12, fontWeight: 700, color: big ? C.yellow : C.navy }}>{av == null ? '' : `${av.toFixed(1)}%`}</td>}
                         </tr>
                       )
                     }
@@ -201,7 +243,7 @@ export default function DrePage() {
                     const isMemo = row.type === 'memo'
                     return (
                       <Fragment key={row.key}>
-                        {isMemo && <tr><td colSpan={2} style={{ padding: '8px 24px 2px', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, borderTop: `2px solid ${C.line}` }}>Memorando — fora do resultado</td></tr>}
+                        {isMemo && <tr><td colSpan={showAV ? 3 : 2} style={{ padding: '8px 24px 2px', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, borderTop: `2px solid ${C.line}` }}>Memorando — fora do resultado</td></tr>}
                         <tr onClick={() => row.subs && row.subs.length > 0 && setExpanded(e => ({ ...e, [row.key]: !e[row.key] }))}
                           style={{ cursor: row.subs && row.subs.length ? 'pointer' : 'default', borderTop: isMemo ? 'none' : `1px solid ${C.line}`, background: isMemo ? '#faf6ec' : undefined }}>
                           <td style={{ padding: '10px 24px', fontSize: 13, color: isMemo ? C.gold : C.textSoft, fontStyle: isMemo ? 'italic' : 'normal' }}>
@@ -211,11 +253,13 @@ export default function DrePage() {
                           <td style={{ textAlign: 'right', padding: '10px 24px', fontSize: 13, color: isMemo ? C.gold : row.sign === -1 ? C.red : C.navy, fontWeight: 500 }}>
                             {fmt(display)}
                           </td>
+                          {avCell(av)}
                         </tr>
                         {open && row.subs?.map((s, i) => {
                           const subKey = row.key + '|' + s.sub
                           const subOpen = expandedSub[subKey]
                           const hasSup = (s.suppliers?.length ?? 0) > 0
+                          const subAv = avBase ? (s.amount / avBase * 100) : null
                           return (
                             <Fragment key={subKey}>
                               <tr onClick={(ev) => { ev.stopPropagation(); if (hasSup) setExpandedSub(e => ({ ...e, [subKey]: !e[subKey] })) }}
@@ -225,6 +269,7 @@ export default function DrePage() {
                                   {s.sub}
                                 </td>
                                 <td style={{ textAlign: 'right', padding: '6px 24px', fontSize: 12, color: C.textSoft }}>{fmt(row.sign === -1 ? -s.amount : s.amount)}</td>
+                                {avCell(subAv)}
                               </tr>
                               {subOpen && s.suppliers?.map((sup, j) => (
                                 <tr key={subKey + j} style={{ background: '#fff' }}>
@@ -232,6 +277,7 @@ export default function DrePage() {
                                     {sup.code ? <span style={{ color: '#aab3c0' }}>{sup.code} · </span> : null}{sup.name}
                                   </td>
                                   <td style={{ textAlign: 'right', padding: '4px 24px', fontSize: 11, color: C.textMuted }}>{fmt(row.sign === -1 ? -sup.amount : sup.amount)}</td>
+                                  {showAV && <td />}
                                 </tr>
                               ))}
                             </Fragment>
