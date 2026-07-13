@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 export const maxDuration = 60
 
-type Bucket = { unit: string; kind: string; line: string; sub: string; year: number; month: number; amount: number }
+type Bucket = { unit: string; kind: string; line: string; sub: string; supplier: string | null; supplierCode: string | null; year: number; month: number; amount: number }
 
 export async function POST(req: Request) {
   const fd = await req.formData()
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
 
   const map = new Map<string, Bucket>()
   const add = (b: Omit<Bucket, 'amount'>, amount: number) => {
-    const k = `${b.unit}|${b.kind}|${b.line}|${b.sub}|${b.year}|${b.month}`
+    const k = `${b.unit}|${b.kind}|${b.line}|${b.sub}|${b.supplier ?? ''}|${b.year}|${b.month}`
     const cur = map.get(k)
     if (cur) cur.amount += amount
     else map.set(k, { ...b, amount })
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   if (parsed.kind === 'payment') {
     parsed.rows.forEach(r => {
       const [line, sub] = classifyExpense(r.code, r.name, r.doc, r.obs)
-      add({ unit: r.unit, kind: 'DESPESA', line, sub, year: r.year, month: r.month }, r.amount)
+      add({ unit: r.unit, kind: 'DESPESA', line, sub, supplier: r.name || null, supplierCode: r.code || null, year: r.year, month: r.month }, r.amount)
     })
     const data = Array.from(map.values())
     const result = await prisma.$transaction(async tx => {
@@ -53,9 +53,9 @@ export async function POST(req: Request) {
   }
   const unit = canonicalizeUnit(unitField)
   parsed.rows.forEach(r => {
-    add({ unit, kind: 'RECEITA', line: 'RECEITA', sub: r.isCard ? 'Recebimentos via Cartão' : 'Recebimentos Diretos (clientes)', year: r.year, month: r.month }, r.gross)
-    if (r.discount) add({ unit, kind: 'DEDUCAO', line: 'DEDUCAO', sub: r.isCard ? 'Taxas de Cartão' : 'Descontos Comerciais', year: r.year, month: r.month }, r.discount)
-    if (r.interest) add({ unit, kind: 'JUROS', line: 'JUROS', sub: 'Juros Recebidos de Clientes', year: r.year, month: r.month }, r.interest)
+    add({ unit, kind: 'RECEITA', line: 'RECEITA', sub: r.isCard ? 'Recebimentos via Cartão' : 'Recebimentos Diretos (clientes)', supplier: null, supplierCode: null, year: r.year, month: r.month }, r.gross)
+    if (r.discount) add({ unit, kind: 'DEDUCAO', line: 'DEDUCAO', sub: r.isCard ? 'Taxas de Cartão' : 'Descontos Comerciais', supplier: null, supplierCode: null, year: r.year, month: r.month }, r.discount)
+    if (r.interest) add({ unit, kind: 'JUROS', line: 'JUROS', sub: 'Juros Recebidos de Clientes', supplier: null, supplierCode: null, year: r.year, month: r.month }, r.interest)
   })
   const data = Array.from(map.values())
   const result = await prisma.$transaction(async tx => {

@@ -1,6 +1,8 @@
 /**
  * Monta a DRE Gerencial (caixa) estruturada: consolidado + por unidade.
- * Devolve linhas ordenadas com subcontas e subtotais calculados.
+ * Hierarquia de 3 níveis: linha → subconta → fornecedor.
+ * Movimentações intragrupo (Multmunde) ficam FORA do CMV e dos subtotais,
+ * exibidas como memo abaixo do Lucro Líquido.
  */
 import { prisma } from '@/lib/prisma'
 import { LINE_LABEL } from '@/lib/dre-classifier'
@@ -11,38 +13,49 @@ export const revalidate = 0
 
 const CONS = 'CONSOLIDADO'
 
-type SubRow = { sub: string; amount: number }
-type DreRow =
-  | { type: 'group'; key: string; label: string; sign: 1 | -1; amount: number; subs: SubRow[] }
-  | { type: 'subtotal'; key: string; label: string; amount: number }
+interface SupplierRow { name: string; code: string | null; amount: number }
+interface SubRow { sub: string; amount: number; suppliers: SupplierRow[] }
 
 export async function GET() {
   const entries = await prisma.dreEntry.findMany()
 
-  // scope -> line -> sub -> amount  (+ scope agregado CONSOLIDADO)
-  const scopes = new Map<string, Map<string, Map<string, number>>>()
+  // scope -> line -> sub -> { amount, suppliers: Map<name, {code, amount}> }
+  const scopes = new Map<string, Map<string, Map<string, { amount: number; sup: Map<string, { code: string | null; amount: number }> }>>>()
   const unitsSet = new Set<string>()
   const monthsSet = new Set<string>()
 
-  const bump = (scope: string, line: string, sub: string, amount: number) => {
+  const bump = (scope: string, line: string, sub: string, supplier: string | null, code: string | null, amount: number) => {
     if (!scopes.has(scope)) scopes.set(scope, new Map())
     const ls = scopes.get(scope)!
     if (!ls.has(line)) ls.set(line, new Map())
     const ss = ls.get(line)!
-    ss.set(sub, (ss.get(sub) ?? 0) + amount)
+    if (!ss.has(sub)) ss.set(sub, { amount: 0, sup: new Map() })
+    const rec = ss.get(sub)!
+    rec.amount += amount
+    if (supplier) {
+      const s = rec.sup.get(supplier)
+      if (s) s.amount += amount
+      else rec.sup.set(supplier, { code, amount })
+    }
   }
 
   entries.forEach(e => {
     unitsSet.add(e.unit)
     monthsSet.add(`${e.year}-${String(e.month).padStart(2, '0')}`)
-    bump(e.unit, e.line, e.sub, e.amount)
-    bump(CONS, e.line, e.sub, e.amount)
+    bump(e.unit, e.line, e.sub, e.supplier, e.supplierCode, e.amount)
+    bump(CONS, e.line, e.sub, e.supplier, e.supplierCode, e.amount)
   })
 
   const subsOf = (scope: string, line: string): SubRow[] => {
     const ss = scopes.get(scope)?.get(line)
     if (!ss) return []
-    return Array.from(ss.entries()).map(([sub, amount]) => ({ sub, amount })).sort((a, b) => b.amount - a.amount)
+    return Array.from(ss.entries()).map(([sub, rec]) => ({
+      sub,
+      amount: rec.amount,
+      suppliers: Array.from(rec.sup.entries())
+        .map(([name, v]) => ({ name, code: v.code, amount: v.amount }))
+        .sort((a, b) => b.amount - a.amount),
+    })).sort((a, b) => b.amount - a.amount)
   }
   const totOf = (scope: string, line: string) => subsOf(scope, line).reduce((s, x) => s + x.amount, 0)
 
@@ -61,12 +74,12 @@ export async function GET() {
     const fin = finBruto - juros
     const pro = totOf(scope, 'PROLABORE'), soc = totOf(scope, 'SOCIO')
     const ll = ebitda - fin - pro - soc
+    const intragrupo = totOf(scope, 'INTRAGRUPO')
 
-    // subs de financeiro incluem o crédito de juros
     const finSubs = subsOf(scope, 'FIN').slice()
-    if (juros) finSubs.push({ sub: '(−) Juros Recebidos de Clientes', amount: -juros })
+    if (juros) finSubs.push({ sub: '(−) Juros Recebidos de Clientes', amount: -juros, suppliers: [] })
 
-    const rows: DreRow[] = [
+    const rows = [
       { type: 'group', key: 'RECEITA', label: 'Receita Operacional Bruta', sign: 1, amount: receita, subs: subsOf(scope, 'RECEITA') },
       { type: 'group', key: 'DEDUCAO', label: 'Deduções sobre Venda', sign: -1, amount: deducao, subs: subsOf(scope, 'DEDUCAO') },
       { type: 'subtotal', key: 'RECLIQ', label: 'Receita Líquida', amount: recLiq },
@@ -84,6 +97,9 @@ export async function GET() {
       { type: 'group', key: 'SOCIO', label: LINE_LABEL.SOCIO, sign: -1, amount: soc, subs: subsOf(scope, 'SOCIO') },
       { type: 'subtotal', key: 'LL', label: 'Lucro Líquido Gerencial', amount: ll },
     ]
+    if (intragrupo) {
+      rows.push({ type: 'memo', key: 'INTRAGRUPO', label: LINE_LABEL.INTRAGRUPO, sign: -1, amount: intragrupo, subs: subsOf(scope, 'INTRAGRUPO') } as never)
+    }
     return { recLiq, rows }
   }
 

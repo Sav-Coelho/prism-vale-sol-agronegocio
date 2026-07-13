@@ -10,7 +10,7 @@
  */
 
 export const DRE_LINES = [
-  'CMV','ADM','PESSOAL','LOG','COM','IMPOSTOS','FIN','PROLABORE','SOCIO',
+  'CMV','ADM','PESSOAL','LOG','COM','IMPOSTOS','FIN','PROLABORE','SOCIO','INTRAGRUPO',
 ] as const
 export type DreLine = typeof DRE_LINES[number]
 
@@ -24,7 +24,12 @@ export const LINE_LABEL: Record<DreLine, string> = {
   FIN: 'Despesas Financeiras',
   PROLABORE: 'Pró-Labore',
   SOCIO: 'Despesas de Sócio',
+  INTRAGRUPO: 'Movimentações Intragrupo (Multmunde)',
 }
+
+// CNPJ base da Multmunde (empresa do grupo). Pagamentos a ela são transferência
+// intragrupo — NÃO entram no CMV nem no resultado, ficam como memo.
+const MULTMUNDE_CNPJ_BASE = '08322910'
 
 const norm = (s: unknown) =>
   String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim()
@@ -60,19 +65,22 @@ const CODE_SUB: Record<string, [DreLine, string]> = {
   '101523': ['PROLABORE', 'Família Eccard'],
   '101524': ['PROLABORE', 'Família Eccard'],
   '100555': ['PROLABORE', 'Fabrício (sócio proprietário)'],
-  '309': ['CMV', 'Intragrupo (Multmunde)'],
+  '309': ['INTRAGRUPO', 'Transferências Multmunde'],
+  '310': ['INTRAGRUPO', 'Transferências Multmunde'],
 }
 
 const CMV_KW = ['VET','VETERINAR','FARMAC','AGRONEG','AGROPEC','SAUDE ANIMAL','LABORATORI','NUTRIC','ZOOTEC','PECUAR','PRODUTOS AGRO','QUIMICA','SANIMAL','BIOGENESIS','ZOETIS','OUROFINO','OURO FINO','MERCK','MSD','VIRBAC','DECHRA','BOTUPHARMA','VETNIL','BOEHRINGER','UNIAO QUIMICA','LAVIZOO','CALBOS','HALEX','VANSIL','ABASE','ALFA VET','DSM','SYNTEC','WINNER HORSE','SPEEDVET','EMBRIOLIFE','VETMINAS','PARAGRO','IMV DO BRASIL','LABOVET','MINITUB','NMR VET','INDUBRAS','TNB','SOGAMAX','FAREX','VETOQUINOL','BIMEDA','REPRODUX','CLIVAPEC','SEROPEC','ESPECIFARMA','WEIZUR','MOURAGRO','DIANAGRO','J.A AGRONEG','JA AGRONEG','BELGO','ARAMES','ARAAMES','SEAHORSE','ALISUL','VET SCIENCE','JP INDUSTRIA','LOG VET','WH COMERCIAL','APARELHOS VETERINARIOS','HOPPNER','SISTEMAS DE IDENTIFICACAO','IBIRA','FONSECA PLASTIC','WATANABE','SPECTRUN','PECUARISTA','BASSO','CASA CARDAO','FARMA']
-const IMP_KW = ['DARJ','DARF','RECEITA FEDERAL','SEFAZ','PREFEITURA','MUNICIPIO','IPVA','ISS','SIMPLES NACIONAL','FGTS','GPS','INSS','TRIBUT']
+const IMP_KW = ['DARJ','DARF','RECEITA FEDERAL','SEFAZ','PREFEITURA','MUNICIPIO','IPVA','IPTU','ISS','SIMPLES NACIONAL','FGTS','GPS','INSS','TRIBUT']
 const FIN_KW = ['BANCO','ITAUCARD','INSTITUICAO DE PAGAMENTO','CONSORCIO','CONSÓRCIO','GALAX PAY','FINANCEIRA','CREDITO','TARIFA']
 const LOG_KW = ['ARMAZENAGEM','RENT A CAR','LOCALIZA','TRANSPORT','LOGISTIC','SEM PARAR','FIAT','AUTOMOVEIS','FRETE','PEDAGIO','LOG ']
 const ADM_KW = ['ENEL','LIGHT','ENERGIA','ELETRICIDADE','GESTAO EMPRESARIAL','CONTABEIS','CONTABIL','SEGURO','TELEFON','CLARO','VIVO','AGUA','SANEAMENTO','SOFTWARE','SISTEMA','MONITORAMENTO','VERISURE','ADM. PART','ADMINISTRAD','CONSULTORIA','PRUDENTIAL','SUL AMERICA']
 
 function bySupplier(cod: string, rz: string, doc: string): [DreLine, string] {
+  const digits = String(doc || '').replace(/\D/g, '')
+  // Multmunde (grupo) por CNPJ base — precede tudo, mas NÃO pega "IPTU MULTMUNDE" (sem CNPJ)
+  if (digits.slice(0, 8) === MULTMUNDE_CNPJ_BASE) return ['INTRAGRUPO', 'Transferências Multmunde']
   if (CODE_SUB[cod]) return CODE_SUB[cod]
   const R = norm(rz)
-  const digits = String(doc || '').replace(/\D/g, '')
   const hasCNPJ = digits.length === 14
   if (R.includes('ECCARD')) return ['PROLABORE', 'Família Eccard']
   if (R.includes('FABRICIO')) return ['PROLABORE', 'Fabrício (sócio proprietário)']

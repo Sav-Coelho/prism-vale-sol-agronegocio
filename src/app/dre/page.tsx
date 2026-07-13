@@ -6,9 +6,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 
-interface SubRow { sub: string; amount: number }
+interface SupplierRow { name: string; code: string | null; amount: number }
+interface SubRow { sub: string; amount: number; suppliers?: SupplierRow[] }
 interface DreRow {
-  type: 'group' | 'subtotal'
+  type: 'group' | 'subtotal' | 'memo'
   key: string
   label: string
   sign?: 1 | -1
@@ -39,6 +40,7 @@ export default function DrePage() {
   const [loading, setLoading] = useState(true)
   const [scope, setScope] = useState<string>(CONS)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [expandedSub, setExpandedSub] = useState<Record<string, boolean>>({})
   const [recUnit, setRecUnit] = useState<string>(UNITS[0])
   const [recMsg, setRecMsg] = useState('')
   const [recBusy, setRecBusy] = useState(false)
@@ -196,24 +198,45 @@ export default function DrePage() {
                     }
                     const open = expanded[row.key]
                     const display = row.sign === -1 ? -row.amount : row.amount
+                    const isMemo = row.type === 'memo'
                     return (
                       <Fragment key={row.key}>
+                        {isMemo && <tr><td colSpan={2} style={{ padding: '8px 24px 2px', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, borderTop: `2px solid ${C.line}` }}>Memorando — fora do resultado</td></tr>}
                         <tr onClick={() => row.subs && row.subs.length > 0 && setExpanded(e => ({ ...e, [row.key]: !e[row.key] }))}
-                          style={{ cursor: row.subs && row.subs.length ? 'pointer' : 'default', borderTop: `1px solid ${C.line}` }}>
-                          <td style={{ padding: '10px 24px', fontSize: 13, color: C.textSoft }}>
+                          style={{ cursor: row.subs && row.subs.length ? 'pointer' : 'default', borderTop: isMemo ? 'none' : `1px solid ${C.line}`, background: isMemo ? '#faf6ec' : undefined }}>
+                          <td style={{ padding: '10px 24px', fontSize: 13, color: isMemo ? C.gold : C.textSoft, fontStyle: isMemo ? 'italic' : 'normal' }}>
                             <span style={{ display: 'inline-block', width: 16, color: C.textMuted }}>{row.subs && row.subs.length ? (open ? '▾' : '▸') : ''}</span>
-                            {row.sign === -1 ? '(−) ' : '(+) '}{row.label}
+                            {isMemo ? '(memo) ' : row.sign === -1 ? '(−) ' : '(+) '}{row.label}
                           </td>
-                          <td style={{ textAlign: 'right', padding: '10px 24px', fontSize: 13, color: row.sign === -1 ? C.red : C.navy, fontWeight: 500 }}>
+                          <td style={{ textAlign: 'right', padding: '10px 24px', fontSize: 13, color: isMemo ? C.gold : row.sign === -1 ? C.red : C.navy, fontWeight: 500 }}>
                             {fmt(display)}
                           </td>
                         </tr>
-                        {open && row.subs?.map((s, i) => (
-                          <tr key={row.key + i} style={{ background: '#fbfcfe' }}>
-                            <td style={{ padding: '6px 24px 6px 56px', fontSize: 12, color: C.textMuted }}>{s.sub}</td>
-                            <td style={{ textAlign: 'right', padding: '6px 24px', fontSize: 12, color: C.textMuted }}>{fmt(row.sign === -1 ? -s.amount : s.amount)}</td>
-                          </tr>
-                        ))}
+                        {open && row.subs?.map((s, i) => {
+                          const subKey = row.key + '|' + s.sub
+                          const subOpen = expandedSub[subKey]
+                          const hasSup = (s.suppliers?.length ?? 0) > 0
+                          return (
+                            <Fragment key={subKey}>
+                              <tr onClick={(ev) => { ev.stopPropagation(); if (hasSup) setExpandedSub(e => ({ ...e, [subKey]: !e[subKey] })) }}
+                                style={{ background: '#fbfcfe', cursor: hasSup ? 'pointer' : 'default' }}>
+                                <td style={{ padding: '6px 24px 6px 48px', fontSize: 12, color: C.textSoft }}>
+                                  <span style={{ display: 'inline-block', width: 14, color: C.textMuted }}>{hasSup ? (subOpen ? '▾' : '▸') : ''}</span>
+                                  {s.sub}
+                                </td>
+                                <td style={{ textAlign: 'right', padding: '6px 24px', fontSize: 12, color: C.textSoft }}>{fmt(row.sign === -1 ? -s.amount : s.amount)}</td>
+                              </tr>
+                              {subOpen && s.suppliers?.map((sup, j) => (
+                                <tr key={subKey + j} style={{ background: '#fff' }}>
+                                  <td style={{ padding: '4px 24px 4px 82px', fontSize: 11, color: C.textMuted }}>
+                                    {sup.code ? <span style={{ color: '#aab3c0' }}>{sup.code} · </span> : null}{sup.name}
+                                  </td>
+                                  <td style={{ textAlign: 'right', padding: '4px 24px', fontSize: 11, color: C.textMuted }}>{fmt(row.sign === -1 ? -sup.amount : sup.amount)}</td>
+                                </tr>
+                              ))}
+                            </Fragment>
+                          )
+                        })}
                       </Fragment>
                     )
                   })}
