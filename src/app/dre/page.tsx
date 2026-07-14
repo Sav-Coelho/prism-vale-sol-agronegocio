@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
 import { CommercialUploader } from '@/components/CommercialUploader'
+import { CashflowAnalitico } from '@/components/CashflowAnalitico'
 import {
   BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, Legend,
@@ -47,6 +48,7 @@ export default function DrePage() {
   const [expandedSub, setExpandedSub] = useState<Record<string, boolean>>({})
   const [selMonths, setSelMonths] = useState<string[]>([])
   const [avMode, setAvMode] = useState(false)
+  const [view, setView] = useState<'dre' | 'cashflow'>('dre')
   const [recUnit, setRecUnit] = useState('VS - TRÊS RIOS')
   const [recMsg, setRecMsg] = useState('')
   const [recBusy, setRecBusy] = useState(false)
@@ -128,6 +130,14 @@ export default function DrePage() {
         </div>
       </div>
 
+      {/* Seletor de visão: DRE × CashFlow Analítico */}
+      <div style={{ display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: 6, overflow: 'hidden', marginBottom: 20 }}>
+        <button onClick={() => setView('dre')} className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: view === 'dre' ? C.navy : '#fff', color: view === 'dre' ? '#fff' : C.textSoft, fontWeight: 600 }}>▤ DRE Gerencial</button>
+        <button onClick={() => setView('cashflow')} className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: view === 'cashflow' ? C.navy : '#fff', color: view === 'cashflow' ? '#fff' : C.textSoft, fontWeight: 600 }}>◈ CashFlow Analítico</button>
+      </div>
+
+      {view === 'cashflow' ? <CashflowAnalitico /> : (
+      <>
       <div className="grid-2 mb-6">
         <CommercialUploader
           title="Pagamentos Efetuados (consolidado)"
@@ -327,6 +337,8 @@ export default function DrePage() {
             Valores sem centavos por espaço; abra as subcontas e lançamentos para o detalhe.
           </p>
         </>
+      )}
+      </>
       )}
     </Shell>
   )

@@ -167,3 +167,27 @@ model DreEntry {
   @@index([line])
   @@index([year, month])
 }
+
+// CashFlow Analítico da contabilidade (razão de caixa). Visão à PARTE da DRE —
+// não entra em nenhum cálculo do DreEntry. Agregado por (filial, tipo, classificação
+// contábil 6 níveis, mês). tipo: E = entrada, S = saída. amount assinado (E +, S −).
+model CashflowEntry {
+  id     Int    @id @default(autoincrement())
+  filial String
+  tipo   String  // E | S
+  c1     String
+  c2     String?
+  c3     String?
+  c4     String?
+  c5     String?
+  c6     String?
+  year   Int
+  month  Int
+  amount Float   // assinado: E positivo, S negativo (VALOR original)
+  n      Int     // qtde de lançamentos agregados
+  importedAt DateTime @default(now())
+
+  @@index([tipo])
+  @@index([filial])
+  @@index([year, month])
+}
