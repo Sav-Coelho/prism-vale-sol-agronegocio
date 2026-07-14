@@ -1,8 +1,9 @@
 /**
- * Monta a DRE Gerencial (caixa) estruturada: consolidado + por unidade.
- * Hierarquia de 3 níveis: linha → subconta → fornecedor.
- * Movimentações intragrupo (Multmunde) ficam FORA do CMV e dos subtotais,
- * exibidas como memo abaixo do Lucro Líquido.
+ * DRE Gerencial (caixa) estruturada, com quebra MENSAL por linha/subconta.
+ * Consolidado + por unidade. Hierarquia: linha → subconta → fornecedor.
+ * Cada linha e subtotal traz `total` (todos os meses) e `byMonth` (mapa mês→valor),
+ * pra montar colunas comparativas e análise vertical por período no frontend.
+ * Intragrupo (Multmunde) fica fora do resultado, como memo.
  */
 import { prisma } from '@/lib/prisma'
 import { LINE_LABEL } from '@/lib/dre-classifier'
@@ -13,37 +14,24 @@ export const revalidate = 0
 
 const CONS = 'CONSOLIDADO'
 
-interface SupplierRow { name: string; code: string | null; amount: number }
-interface SubRow { sub: string; amount: number; suppliers: SupplierRow[] }
+export async function GET() {
+  const entries = await prisma.dreEntry.findMany()
 
-export async function GET(req: Request) {
-  const url = new URL(req.url)
-  // ?months=2026-01,2026-02  → filtra o período; ausente = todos
-  const monthsParam = url.searchParams.get('months')
-  const monthFilter = monthsParam
-    ? new Set(monthsParam.split(',').map(s => s.trim()).filter(Boolean))
-    : null
+  const months = Array.from(new Set(entries.map(e => `${e.year}-${String(e.month).padStart(2, '0')}`))).sort()
+  const units = Array.from(new Set(entries.map(e => e.unit))).sort()
 
-  const allEntries = await prisma.dreEntry.findMany()
-  const entries = monthFilter
-    ? allEntries.filter(e => monthFilter.has(`${e.year}-${String(e.month).padStart(2, '0')}`))
-    : allEntries
+  // scope -> line -> sub -> { byMonth, suppliers }
+  type SubAgg = { byMonth: Map<string, number>; sup: Map<string, { code: string | null; amount: number }> }
+  const scopes = new Map<string, Map<string, Map<string, SubAgg>>>()
 
-  // meses disponíveis vêm da base COMPLETA (pra o seletor não sumir ao filtrar)
-  const allMonths = Array.from(new Set(allEntries.map(e => `${e.year}-${String(e.month).padStart(2, '0')}`))).sort()
-
-  // scope -> line -> sub -> { amount, suppliers: Map<name, {code, amount}> }
-  const scopes = new Map<string, Map<string, Map<string, { amount: number; sup: Map<string, { code: string | null; amount: number }> }>>>()
-  const unitsSet = new Set<string>()
-
-  const bump = (scope: string, line: string, sub: string, supplier: string | null, code: string | null, amount: number) => {
+  const bump = (scope: string, line: string, sub: string, m: string, supplier: string | null, code: string | null, amount: number) => {
     if (!scopes.has(scope)) scopes.set(scope, new Map())
     const ls = scopes.get(scope)!
     if (!ls.has(line)) ls.set(line, new Map())
     const ss = ls.get(line)!
-    if (!ss.has(sub)) ss.set(sub, { amount: 0, sup: new Map() })
+    if (!ss.has(sub)) ss.set(sub, { byMonth: new Map(), sup: new Map() })
     const rec = ss.get(sub)!
-    rec.amount += amount
+    rec.byMonth.set(m, (rec.byMonth.get(m) ?? 0) + amount)
     if (supplier) {
       const s = rec.sup.get(supplier)
       if (s) s.amount += amount
@@ -51,79 +39,105 @@ export async function GET(req: Request) {
     }
   }
 
-  // unidades vêm da base completa (o seletor não deve sumir ao filtrar mês)
-  allEntries.forEach(e => unitsSet.add(e.unit))
   entries.forEach(e => {
-    bump(e.unit, e.line, e.sub, e.supplier, e.supplierCode, e.amount)
-    bump(CONS, e.line, e.sub, e.supplier, e.supplierCode, e.amount)
+    const m = `${e.year}-${String(e.month).padStart(2, '0')}`
+    bump(e.unit, e.line, e.sub, m, e.supplier, e.supplierCode, e.amount)
+    bump(CONS, e.line, e.sub, m, e.supplier, e.supplierCode, e.amount)
   })
 
-  const subsOf = (scope: string, line: string): SubRow[] => {
+  const emptyMonths = () => { const o: Record<string, number> = {}; months.forEach(m => o[m] = 0); return o }
+
+  // subcontas de uma linha, com byMonth + total + fornecedores
+  const subsOf = (scope: string, line: string) => {
     const ss = scopes.get(scope)?.get(line)
     if (!ss) return []
-    return Array.from(ss.entries()).map(([sub, rec]) => ({
-      sub,
-      amount: rec.amount,
-      suppliers: Array.from(rec.sup.entries())
-        .map(([name, v]) => ({ name, code: v.code, amount: v.amount }))
-        .sort((a, b) => b.amount - a.amount),
-    })).sort((a, b) => b.amount - a.amount)
+    return Array.from(ss.entries()).map(([sub, rec]) => {
+      const byMonth = emptyMonths()
+      let total = 0
+      rec.byMonth.forEach((v, m) => { byMonth[m] = v; total += v })
+      return {
+        sub, total, byMonth,
+        suppliers: Array.from(rec.sup.entries())
+          .map(([name, v]) => ({ name, code: v.code, amount: v.amount }))
+          .sort((a, b) => b.amount - a.amount),
+      }
+    }).sort((a, b) => b.total - a.total)
   }
-  const totOf = (scope: string, line: string) => subsOf(scope, line).reduce((s, x) => s + x.amount, 0)
+  // agregado da linha por mês
+  const lineByMonth = (scope: string, line: string) => {
+    const o = emptyMonths()
+    const ss = scopes.get(scope)?.get(line)
+    ss?.forEach(rec => rec.byMonth.forEach((v, m) => { o[m] = (o[m] ?? 0) + v }))
+    return o
+  }
+  const totalOf = (bm: Record<string, number>) => Object.values(bm).reduce((s, v) => s + v, 0)
+  // combinação de linhas por mês (soma sinais)
+  const combine = (parts: Array<[Record<string, number>, number]>) => {
+    const o = emptyMonths()
+    parts.forEach(([bm, sign]) => months.forEach(m => { o[m] += (bm[m] ?? 0) * sign }))
+    return o
+  }
 
   function buildScope(scope: string) {
-    const receita = totOf(scope, 'RECEITA')
-    const deducao = totOf(scope, 'DEDUCAO')
-    const recLiq = receita - deducao
-    const cmv = totOf(scope, 'CMV')
-    const mc = recLiq - cmv
-    const adm = totOf(scope, 'ADM'), pes = totOf(scope, 'PESSOAL'), log = totOf(scope, 'LOG'), com = totOf(scope, 'COM')
-    const lucroOp = mc - adm - pes - log - com
-    const imp = totOf(scope, 'IMPOSTOS')
-    const ebitda = lucroOp - imp
-    const juros = totOf(scope, 'JUROS')
-    const finBruto = totOf(scope, 'FIN')
-    const fin = finBruto - juros
-    const pro = totOf(scope, 'PROLABORE'), soc = totOf(scope, 'SOCIO')
-    const ll = ebitda - fin - pro - soc
-    const intragrupo = totOf(scope, 'INTRAGRUPO')
+    const REC = lineByMonth(scope, 'RECEITA')
+    const DED = lineByMonth(scope, 'DEDUCAO')
+    const CMV = lineByMonth(scope, 'CMV')
+    const ADM = lineByMonth(scope, 'ADM')
+    const PES = lineByMonth(scope, 'PESSOAL')
+    const LOG = lineByMonth(scope, 'LOG')
+    const COM = lineByMonth(scope, 'COM')
+    const IMP = lineByMonth(scope, 'IMPOSTOS')
+    const JUR = lineByMonth(scope, 'JUROS')
+    const FINb = lineByMonth(scope, 'FIN')
+    const PRO = lineByMonth(scope, 'PROLABORE')
+    const SOC = lineByMonth(scope, 'SOCIO')
+    const INTRA = lineByMonth(scope, 'INTRAGRUPO')
+
+    const RECLIQ = combine([[REC, 1], [DED, -1]])
+    const MC = combine([[RECLIQ, 1], [CMV, -1]])
+    const LUCROOP = combine([[MC, 1], [ADM, -1], [PES, -1], [LOG, -1], [COM, -1]])
+    const EBITDA = combine([[LUCROOP, 1], [IMP, -1]])
+    const FIN = combine([[FINb, 1], [JUR, -1]])
+    const LL = combine([[EBITDA, 1], [FIN, -1], [PRO, -1], [SOC, -1]])
 
     const finSubs = subsOf(scope, 'FIN').slice()
-    if (juros) finSubs.push({ sub: '(−) Juros Recebidos de Clientes', amount: -juros, suppliers: [] })
+    const jurTotal = totalOf(JUR)
+    if (jurTotal) {
+      const bm = emptyMonths(); months.forEach(m => bm[m] = -(JUR[m] ?? 0))
+      finSubs.push({ sub: '(−) Juros Recebidos de Clientes', total: -jurTotal, byMonth: bm, suppliers: [] })
+    }
+
+    const grp = (key: string, label: string, sign: 1 | -1, bm: Record<string, number>, line: string) =>
+      ({ type: 'group', key, label, sign, total: totalOf(bm), byMonth: bm, subs: subsOf(scope, line) })
+    const sub = (key: string, label: string, bm: Record<string, number>) =>
+      ({ type: 'subtotal', key, label, total: totalOf(bm), byMonth: bm })
 
     const rows = [
-      { type: 'group', key: 'RECEITA', label: 'Receita Operacional Bruta', sign: 1, amount: receita, subs: subsOf(scope, 'RECEITA') },
-      { type: 'group', key: 'DEDUCAO', label: 'Deduções sobre Venda', sign: -1, amount: deducao, subs: subsOf(scope, 'DEDUCAO') },
-      { type: 'subtotal', key: 'RECLIQ', label: 'Receita Líquida', amount: recLiq },
-      { type: 'group', key: 'CMV', label: LINE_LABEL.CMV, sign: -1, amount: cmv, subs: subsOf(scope, 'CMV') },
-      { type: 'subtotal', key: 'MC', label: 'Margem de Contribuição', amount: mc },
-      { type: 'group', key: 'ADM', label: LINE_LABEL.ADM, sign: -1, amount: adm, subs: subsOf(scope, 'ADM') },
-      { type: 'group', key: 'PESSOAL', label: LINE_LABEL.PESSOAL, sign: -1, amount: pes, subs: subsOf(scope, 'PESSOAL') },
-      { type: 'group', key: 'LOG', label: LINE_LABEL.LOG, sign: -1, amount: log, subs: subsOf(scope, 'LOG') },
-      { type: 'group', key: 'COM', label: LINE_LABEL.COM, sign: -1, amount: com, subs: subsOf(scope, 'COM') },
-      { type: 'subtotal', key: 'LUCROOP', label: 'Lucro Operacional', amount: lucroOp },
-      { type: 'group', key: 'IMPOSTOS', label: LINE_LABEL.IMPOSTOS, sign: -1, amount: imp, subs: subsOf(scope, 'IMPOSTOS') },
-      { type: 'subtotal', key: 'EBITDA', label: 'EBITDA', amount: ebitda },
-      { type: 'group', key: 'FIN', label: LINE_LABEL.FIN, sign: -1, amount: fin, subs: finSubs },
-      { type: 'group', key: 'PROLABORE', label: LINE_LABEL.PROLABORE, sign: -1, amount: pro, subs: subsOf(scope, 'PROLABORE') },
-      { type: 'group', key: 'SOCIO', label: LINE_LABEL.SOCIO, sign: -1, amount: soc, subs: subsOf(scope, 'SOCIO') },
-      { type: 'subtotal', key: 'LL', label: 'Lucro Líquido Gerencial', amount: ll },
+      grp('RECEITA', 'Receita Operacional Bruta', 1, REC, 'RECEITA'),
+      grp('DEDUCAO', 'Deduções sobre Venda', -1, DED, 'DEDUCAO'),
+      sub('RECLIQ', 'Receita Líquida', RECLIQ),
+      grp('CMV', LINE_LABEL.CMV, -1, CMV, 'CMV'),
+      sub('MC', 'Margem de Contribuição', MC),
+      grp('ADM', LINE_LABEL.ADM, -1, ADM, 'ADM'),
+      grp('PESSOAL', LINE_LABEL.PESSOAL, -1, PES, 'PESSOAL'),
+      grp('LOG', LINE_LABEL.LOG, -1, LOG, 'LOG'),
+      grp('COM', LINE_LABEL.COM, -1, COM, 'COM'),
+      sub('LUCROOP', 'Lucro Operacional', LUCROOP),
+      grp('IMPOSTOS', LINE_LABEL.IMPOSTOS, -1, IMP, 'IMPOSTOS'),
+      sub('EBITDA', 'EBITDA', EBITDA),
+      { type: 'group', key: 'FIN', label: LINE_LABEL.FIN, sign: -1 as const, total: totalOf(FIN), byMonth: FIN, subs: finSubs },
+      grp('PROLABORE', LINE_LABEL.PROLABORE, -1, PRO, 'PROLABORE'),
+      grp('SOCIO', LINE_LABEL.SOCIO, -1, SOC, 'SOCIO'),
+      sub('LL', 'Lucro Líquido Gerencial', LL),
     ]
-    if (intragrupo) {
-      rows.push({ type: 'memo', key: 'INTRAGRUPO', label: LINE_LABEL.INTRAGRUPO, sign: -1, amount: intragrupo, subs: subsOf(scope, 'INTRAGRUPO') } as never)
+    if (totalOf(INTRA)) {
+      rows.push({ type: 'memo', key: 'INTRAGRUPO', label: LINE_LABEL.INTRAGRUPO, sign: -1, total: totalOf(INTRA), byMonth: INTRA, subs: subsOf(scope, 'INTRAGRUPO') } as never)
     }
-    return { recLiq, rows }
+    return { rows }
   }
 
-  const units = Array.from(unitsSet).sort()
-  const scopeList = [CONS, ...units]
   const dre: Record<string, ReturnType<typeof buildScope>> = {}
-  scopeList.forEach(s => { dre[s] = buildScope(s) })
+  ;[CONS, ...units].forEach(s => { dre[s] = buildScope(s) })
 
-  return NextResponse.json({
-    hasData: allEntries.length > 0,
-    units,
-    months: allMonths,
-    dre,
-  })
+  return NextResponse.json({ hasData: entries.length > 0, units, months, dre })
 }
