@@ -47,7 +47,10 @@ export async function POST(req: Request) {
   // ── Relatório de Despesas classificado (plano de contas do contador) ──
   if (isClassifiedExpense(buf)) {
     const { entries, sheets } = parseExpenseReport(buf)
-    entries.forEach(e => add(
+    // Despesas só até jun/2026 (alinhar com o período da receita; ignora jul+)
+    const inPeriod = entries.filter(e => e.year < 2026 || (e.year === 2026 && e.month >= 1 && e.month <= 6))
+    const dropped = entries.length - inPeriod.length
+    inPeriod.forEach(e => add(
       { unit: e.unit, kind: 'EXP', line: e.line, sub: e.sub, supplier: e.supplier, supplierCode: e.supplierDoc, year: e.year, month: e.month },
       e.amount,
     ))
@@ -58,7 +61,7 @@ export async function POST(req: Request) {
       const ins = await tx.dreEntry.createMany({ data })
       return { deleted: del.count, inserted: ins.count }
     }, { timeout: 240_000 })
-    return NextResponse.json({ kind: 'expense-classified', sheets, buckets: data.length, ...result })
+    return NextResponse.json({ kind: 'expense-classified', sheets, buckets: data.length, lancamentosForaDoPeriodo: dropped, ...result })
   }
 
   const parsed = parseDre(buf)
