@@ -7,7 +7,9 @@
  */
 import { prisma } from '@/lib/prisma'
 import { parseDre, canonicalizeUnit } from '@/lib/dre-parser'
+import { parseExpenseReport } from '@/lib/dre-expense-parser'
 import { classifyExpense } from '@/lib/dre-classifier'
+import * as XLSX from 'xlsx'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -16,6 +18,16 @@ export const maxDuration = 60
 
 type Bucket = { unit: string; kind: string; line: string; sub: string; supplier: string | null; supplierCode: string | null; year: number; month: number; amount: number }
 
+// Detecta o "Relatório de Despesas" classificado (coluna CLASSIFICAÇÃO na 1ª aba)
+function isClassifiedExpense(buf: ArrayBuffer): boolean {
+  try {
+    const wb = XLSX.read(buf, { type: 'array' })
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    const head = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: false })[0] || []
+    return head.some(h => String(h ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim() === 'CLASSIFICACAO')
+  } catch { return false }
+}
+
 export async function POST(req: Request) {
   const fd = await req.formData()
   const file = fd.get('file') as File | null
@@ -23,7 +35,6 @@ export async function POST(req: Request) {
   if (!file) return NextResponse.json({ error: 'Arquivo não enviado' }, { status: 400 })
 
   const buf = await file.arrayBuffer()
-  const parsed = parseDre(buf)
 
   const map = new Map<string, Bucket>()
   const add = (b: Omit<Bucket, 'amount'>, amount: number) => {
@@ -32,6 +43,25 @@ export async function POST(req: Request) {
     if (cur) cur.amount += amount
     else map.set(k, { ...b, amount })
   }
+
+  // ── Relatório de Despesas classificado (plano de contas do contador) ──
+  if (isClassifiedExpense(buf)) {
+    const { entries, sheets } = parseExpenseReport(buf)
+    entries.forEach(e => add(
+      { unit: e.unit, kind: 'EXP', line: e.line, sub: e.sub, supplier: e.supplier, supplierCode: e.supplierDoc, year: e.year, month: e.month },
+      e.amount,
+    ))
+    const data = Array.from(map.values())
+    const result = await prisma.$transaction(async tx => {
+      // limpa despesas antigas (heurística) e as classificadas
+      const del = await tx.dreEntry.deleteMany({ where: { kind: { in: ['EXP', 'DESPESA'] } } })
+      const ins = await tx.dreEntry.createMany({ data })
+      return { deleted: del.count, inserted: ins.count }
+    }, { timeout: 240_000 })
+    return NextResponse.json({ kind: 'expense-classified', sheets, buckets: data.length, ...result })
+  }
+
+  const parsed = parseDre(buf)
 
   if (parsed.kind === 'payment') {
     parsed.rows.forEach(r => {

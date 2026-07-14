@@ -89,16 +89,17 @@ export async function GET() {
     const IMP = lineByMonth(scope, 'IMPOSTOS')
     const JUR = lineByMonth(scope, 'JUROS')
     const FINb = lineByMonth(scope, 'FIN')
-    const PRO = lineByMonth(scope, 'PROLABORE')
     const SOC = lineByMonth(scope, 'SOCIO')
-    const INTRA = lineByMonth(scope, 'INTRAGRUPO')
+    const INV = lineByMonth(scope, 'INVEST')
+    const NAOOP = lineByMonth(scope, 'NAOOP')
+    const DIF = lineByMonth(scope, 'DIFCAIXA')
 
     const RECLIQ = combine([[REC, 1], [DED, -1]])
     const MC = combine([[RECLIQ, 1], [CMV, -1]])
     const LUCROOP = combine([[MC, 1], [ADM, -1], [PES, -1], [LOG, -1], [COM, -1]])
     const EBITDA = combine([[LUCROOP, 1], [IMP, -1]])
-    const FIN = combine([[FINb, 1], [JUR, -1]])
-    const LL = combine([[EBITDA, 1], [FIN, -1], [PRO, -1], [SOC, -1]])
+    const FIN = combine([[FINb, 1], [JUR, -1]])          // financeiras líquidas de juros recebidos
+    const LL = combine([[EBITDA, 1], [FIN, -1], [SOC, -1], [INV, -1], [NAOOP, 1]])
 
     const finSubs = subsOf(scope, 'FIN').slice()
     const jurTotal = totalOf(JUR)
@@ -112,7 +113,7 @@ export async function GET() {
     const sub = (key: string, label: string, bm: Record<string, number>) =>
       ({ type: 'subtotal', key, label, total: totalOf(bm), byMonth: bm })
 
-    const rows = [
+    const rows: Array<Record<string, unknown>> = [
       grp('RECEITA', 'Receita Operacional Bruta', 1, REC, 'RECEITA'),
       grp('DEDUCAO', 'Deduções sobre Venda', -1, DED, 'DEDUCAO'),
       sub('RECLIQ', 'Receita Líquida', RECLIQ),
@@ -126,12 +127,13 @@ export async function GET() {
       grp('IMPOSTOS', LINE_LABEL.IMPOSTOS, -1, IMP, 'IMPOSTOS'),
       sub('EBITDA', 'EBITDA', EBITDA),
       { type: 'group', key: 'FIN', label: LINE_LABEL.FIN, sign: -1 as const, total: totalOf(FIN), byMonth: FIN, subs: finSubs },
-      grp('PROLABORE', LINE_LABEL.PROLABORE, -1, PRO, 'PROLABORE'),
-      grp('SOCIO', LINE_LABEL.SOCIO, -1, SOC, 'SOCIO'),
+      grp('SOCIO', 'Retirada de Sócio', -1, SOC, 'SOCIO'),
+      grp('INVEST', 'Investimentos (CAPEX)', -1, INV, 'INVEST'),
+      grp('NAOOP', 'Resultado Não-Operacional', 1, NAOOP, 'NAOOP'),
       sub('LL', 'Lucro Líquido Gerencial', LL),
     ]
-    if (totalOf(INTRA)) {
-      rows.push({ type: 'memo', key: 'INTRAGRUPO', label: LINE_LABEL.INTRAGRUPO, sign: -1, total: totalOf(INTRA), byMonth: INTRA, subs: subsOf(scope, 'INTRAGRUPO') } as never)
+    if (totalOf(DIF)) {
+      rows.push({ type: 'memo', key: 'DIFCAIXA', label: 'Diferença de Caixa (ajuste)', sign: 1, total: totalOf(DIF), byMonth: DIF, subs: subsOf(scope, 'DIFCAIXA') })
     }
     return { rows }
   }
