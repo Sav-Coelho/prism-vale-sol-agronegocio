@@ -68,6 +68,15 @@ const riskLabel = (r: number) =>
   r < 0.8 ? 'C'  :
             'D'
 
+// Regra de negócio: cliente com saldo em aberto (título pendente) NUNCA pode ser
+// A ou AA — a nota é rebaixada para no máximo B, independente do score bayesiano.
+const GRADE_COLOR: Record<string, string> = { AA: C.green, A: '#5a8542', B: C.gold, C: C.amber, D: C.red }
+const gradeOf = (r: CreditRow) => {
+  const base = riskLabel(r.risk)
+  return r.openBalance > 0 && (base === 'AA' || base === 'A') ? 'B' : base
+}
+const gradeColorOf = (r: CreditRow) => GRADE_COLOR[gradeOf(r)]
+
 export default function RiscoCliente() {
   const [rows, setRows] = useState<CreditRow[]>([])
   const [risk, setRisk] = useState<RiskPoint[]>([])
@@ -112,7 +121,7 @@ export default function RiscoCliente() {
       { label: 'C',   range: '60-80', min: 0.6, max: 0.8,  color: C.amber },
       { label: 'D',   range: '≥80%',  min: 0.8, max: 1.01, color: C.red },
     ]
-    return bands.map(b => ({ ...b, clientes: rows.filter(r => r.risk >= b.min && r.risk < b.max).length }))
+    return bands.map(b => ({ ...b, clientes: rows.filter(r => gradeOf(r) === b.label).length }))
   }, [rows])
 
   const agingTotals = useMemo(() => {
@@ -189,6 +198,7 @@ export default function RiscoCliente() {
           <p className="page-subtitle">
             Avaliação bayesiana de inadimplência com prior Beta(2, 2). A pontuação de cada cliente é
             atualizada conforme suas vendas são quitadas ou caem em inadimplência (≥ 90 dias).
+            <b> Regra:</b> cliente com saldo em aberto nunca recebe nota A ou AA — é rebaixado para no máximo B (marcado com ▼).
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -396,10 +406,13 @@ export default function RiscoCliente() {
                       </td>
                       <td>
                         <span className="badge" style={{
-                          color: riskColor(r.risk),
-                          background: riskColor(r.risk) + '15',
-                          borderColor: riskColor(r.risk),
-                        }}>{riskLabel(r.risk)}</span>
+                          color: gradeColorOf(r),
+                          background: gradeColorOf(r) + '15',
+                          borderColor: gradeColorOf(r),
+                        }}>{gradeOf(r)}</span>
+                        {r.openBalance > 0 && (riskLabel(r.risk) === 'AA' || riskLabel(r.risk) === 'A') && (
+                          <span title="Rebaixado: tem saldo em aberto" style={{ marginLeft: 4, fontSize: 9, color: C.amber }}>▼</span>
+                        )}
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600, color: r.openBalance > 0 ? C.amber : C.textMuted }}>
                         {fmt(r.openBalance)}
