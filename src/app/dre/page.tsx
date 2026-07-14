@@ -321,8 +321,10 @@ export default function DrePage() {
           </div>
 
           <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
-            Regime de caixa (data de baixa). O CMV por unidade reflete quem <b>pagou</b> o fornecedor (compra centralizada) — a margem confiável é a do consolidado.
-            Multmunde entra como memo intragrupo, fora do resultado. Valores da tabela sem centavos por espaço; abra as subcontas e fornecedores para o detalhe.
+            Regime de caixa. Despesas classificadas pelo <b>plano de contas oficial do contador</b> (não mais heurística). CMV = Fornecedor Mercadorias;
+            CAPEX (compra de veículos) em Investimentos; transferências entre lojas excluídas; reembolso a cliente abatido em Deduções.
+            <b> Atenção ao período:</b> as despesas vão até 13/jul e a receita (títulos recebidos) até 30/jun — para comparar como o mesmo intervalo, selecione <b>Jan–Jun</b> nos meses.
+            Valores sem centavos por espaço; abra as subcontas e lançamentos para o detalhe.
           </p>
         </>
       )}
