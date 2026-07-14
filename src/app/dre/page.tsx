@@ -273,7 +273,7 @@ export default function DrePage() {
                       const totalRaw = sumShown(row.byMonth)
                       return (
                         <tr key={row.key} style={{ background: big ? C.navy : '#eef2f8' }}>
-                          <td style={{ fontWeight: 700, fontSize: big ? 13 : 12, color: big ? '#fff' : C.navy, whiteSpace: 'nowrap' }}>(=) {row.label}</td>
+                          <td style={{ fontWeight: 700, fontSize: big ? 13 : 12, color: big ? '#fff' : C.navy, whiteSpace: 'nowrap', background: big ? C.navy : '#eef2f8' }}>(=) {row.label}</td>
                           {shownMonths.map(m => <td key={m} style={{ textAlign: 'right', fontWeight: 600, fontSize: 12, color: big ? C.yellow : ((row.byMonth[m] ?? 0) >= 0 ? C.green : C.red) }}>{cell(m)}</td>)}
                           <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 12, background: big ? C.navyMid : '#e2e9f3', color: big ? C.yellow : (totalRaw >= 0 ? C.green : C.red) }}>{cell(null)}</td>
                         </tr>
