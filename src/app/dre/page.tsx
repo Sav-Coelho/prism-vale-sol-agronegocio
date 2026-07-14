@@ -323,7 +323,7 @@ export default function DrePage() {
           <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
             Regime de caixa. Despesas classificadas pelo <b>plano de contas oficial do contador</b> (não mais heurística). CMV = Fornecedor Mercadorias;
             CAPEX (compra de veículos) em Investimentos; transferências entre lojas excluídas; reembolso a cliente abatido em Deduções.
-            <b> Atenção ao período:</b> as despesas vão até 13/jul e a receita (títulos recebidos) até 30/jun — para comparar como o mesmo intervalo, selecione <b>Jan–Jun</b> nos meses.
+            <b> Período: Jan–Jun/2026</b> — receita e despesas no mesmo intervalo (fechamento de julho entra quando chegarem os títulos recebidos do mês).
             Valores sem centavos por espaço; abra as subcontas e lançamentos para o detalhe.
           </p>
         </>
