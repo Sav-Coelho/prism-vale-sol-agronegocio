@@ -118,6 +118,14 @@ export default function DrePage() {
 
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
 
+  const downloadPdf = () => {
+    const prev = document.title
+    document.title = `DRE ${scope === CONS ? 'Consolidado' : scope} — Vale Sol Agronegócio`
+    const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore) }
+    window.addEventListener('afterprint', restore)
+    window.print()
+  }
+
   return (
     <Shell>
       <div className="page-header">
@@ -179,7 +187,11 @@ export default function DrePage() {
               <button className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: !avMode ? C.navy : '#fff', color: !avMode ? '#fff' : C.textSoft }} onClick={() => setAvMode(false)}>R$</button>
               <button className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: avMode ? C.navy : '#fff', color: avMode ? '#fff' : C.textSoft }} onClick={() => setAvMode(true)}>AV %</button>
             </div>
+            <button className="btn btn-sm" onClick={downloadPdf} style={{ background: C.gold, color: '#fff', border: 'none', fontWeight: 600 }} title="Gera um PDF com todas as linhas, subcontas e fornecedores abertos">⬇ PDF</button>
           </div>
+
+          {/* Documento de impressão — invisível na tela, sai no PDF com tudo aberto */}
+          <DrePrint scope={scope} rows={cur?.rows ?? []} months={shownMonths} />
 
           {/* ═══ DASHBOARD ═══ */}
           {kpis && (
@@ -341,6 +353,86 @@ export default function DrePage() {
       </>
       )}
     </Shell>
+  )
+}
+
+function DrePrint({ scope, rows, months }: { scope: string; rows: DreRow[]; months: string[] }) {
+  const sum = (bm: Record<string, number>) => months.reduce((s, m) => s + (bm[m] ?? 0), 0)
+  const val = (bm: Record<string, number>, m: string | null, sign?: 1 | -1) => {
+    const raw = m ? (bm[m] ?? 0) : sum(bm)
+    return fmtShort(sign === -1 ? -raw : raw)
+  }
+  const th: React.CSSProperties = { padding: '4px 6px', fontSize: 8, textAlign: 'right', color: '#fff', background: C.navy, fontWeight: 600, whiteSpace: 'nowrap' }
+  const td: React.CSSProperties = { padding: '2.5px 6px', fontSize: 8.5, textAlign: 'right', borderBottom: '0.5px solid #e8ebf0', whiteSpace: 'nowrap' }
+  const period = months.length ? (months.length === 1 ? mLabel(months[0]) : `${mLabel(months[0])} – ${mLabel(months[months.length - 1])}`) : '—'
+  return (
+    <div className="dre-print" style={{ fontFamily: 'Arial, sans-serif', color: C.navy, padding: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${C.navy}`, paddingBottom: 8, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.gold, fontWeight: 700 }}>Vale Sol Agronegócio</div>
+          <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1 }}>DRE Gerencial</div>
+          <div style={{ fontSize: 10, color: '#555' }}>Regime de caixa · {scope === CONS ? 'Consolidado' : scope}</div>
+        </div>
+        <div style={{ textAlign: 'right', fontSize: 9, color: '#555' }}>
+          <div>Período: {period}</div>
+          <div>Emitido em {new Date().toLocaleDateString('pt-BR')}</div>
+        </div>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, textAlign: 'left' }}>Linha</th>
+            {months.map(m => <th key={m} style={th}>{mLabel(m)}</th>)}
+            <th style={{ ...th, background: C.navyMid }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(row => {
+            if (row.type === 'subtotal') {
+              const big = row.key === 'LL' || row.key === 'EBITDA'
+              const tot = sum(row.byMonth)
+              return (
+                <tr key={row.key} style={{ background: big ? '#dbe3ef' : '#eef2f8' }}>
+                  <td style={{ ...td, textAlign: 'left', fontWeight: 700, borderTop: `1.5px solid ${C.navy}`, fontSize: big ? 10 : 9 }}>(=) {row.label}</td>
+                  {months.map(m => <td key={m} style={{ ...td, fontWeight: 700, borderTop: `1.5px solid ${C.navy}`, color: (row.byMonth[m] ?? 0) >= 0 ? C.navy : C.red }}>{val(row.byMonth, m)}</td>)}
+                  <td style={{ ...td, fontWeight: 800, borderTop: `1.5px solid ${C.navy}`, color: tot >= 0 ? C.navy : C.red }}>{val(row.byMonth, null)}</td>
+                </tr>
+              )
+            }
+            const isMemo = row.type === 'memo'
+            return (
+              <Fragment key={row.key}>
+                <tr>
+                  <td style={{ ...td, textAlign: 'left', fontWeight: 600, color: isMemo ? C.gold : C.navy, fontStyle: isMemo ? 'italic' : 'normal' }}>{isMemo ? '' : row.sign === -1 ? '(−) ' : '(+) '}{row.label}</td>
+                  {months.map(m => <td key={m} style={{ ...td, color: row.sign === -1 ? C.red : C.navy }}>{val(row.byMonth, m, row.sign)}</td>)}
+                  <td style={{ ...td, fontWeight: 600, color: row.sign === -1 ? C.red : C.navy }}>{val(row.byMonth, null, row.sign)}</td>
+                </tr>
+                {row.subs?.map(s => (
+                  <Fragment key={row.key + '|' + s.sub}>
+                    <tr>
+                      <td style={{ ...td, textAlign: 'left', paddingLeft: 20, color: '#444' }}>{s.sub}</td>
+                      {months.map(m => <td key={m} style={{ ...td, color: '#555' }}>{val(s.byMonth, m, row.sign)}</td>)}
+                      <td style={{ ...td, color: '#333' }}>{val(s.byMonth, null, row.sign)}</td>
+                    </tr>
+                    {s.suppliers?.map((sup, j) => (
+                      <tr key={row.key + '|' + s.sub + '|' + j}>
+                        <td style={{ ...td, textAlign: 'left', paddingLeft: 34, color: '#777', fontSize: 7.5 }}>{sup.code ? sup.code + ' · ' : ''}{sup.name}</td>
+                        <td colSpan={months.length} style={td} />
+                        <td style={{ ...td, color: '#777', fontSize: 7.5 }}>{fmtShort(row.sign === -1 ? -sup.amount : sup.amount)}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+      <div style={{ marginTop: 12, fontSize: 7.5, color: '#777', borderTop: '0.5px solid #ccc', paddingTop: 6, lineHeight: 1.5 }}>
+        Regime de caixa · despesas classificadas pelo plano de contas oficial do contador · valores em R$ sem centavos.
+        Totais dos fornecedores referem-se ao período completo da base. Desenvolvido por Delfos Research LTDA.
+      </div>
+    </div>
   )
 }
 
