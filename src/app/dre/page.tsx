@@ -407,22 +407,31 @@ function DrePrint({ scope, rows, months }: { scope: string; rows: DreRow[]; mont
                   {months.map(m => <td key={m} style={{ ...td, color: row.sign === -1 ? C.red : C.navy }}>{val(row.byMonth, m, row.sign)}</td>)}
                   <td style={{ ...td, fontWeight: 600, color: row.sign === -1 ? C.red : C.navy }}>{val(row.byMonth, null, row.sign)}</td>
                 </tr>
-                {row.subs?.map(s => (
-                  <Fragment key={row.key + '|' + s.sub}>
-                    <tr>
-                      <td style={{ ...td, textAlign: 'left', paddingLeft: 20, color: '#444' }}>{s.sub}</td>
-                      {months.map(m => <td key={m} style={{ ...td, color: '#555' }}>{val(s.byMonth, m, row.sign)}</td>)}
-                      <td style={{ ...td, color: '#333' }}>{val(s.byMonth, null, row.sign)}</td>
-                    </tr>
-                    {s.suppliers?.map((sup, j) => (
-                      <tr key={row.key + '|' + s.sub + '|' + j}>
-                        <td style={{ ...td, textAlign: 'left', paddingLeft: 34, color: '#777', fontSize: 7.5 }}>{sup.code ? sup.code + ' · ' : ''}{sup.name}</td>
-                        <td colSpan={months.length} style={td} />
-                        <td style={{ ...td, color: '#777', fontSize: 7.5 }}>{fmtShort(row.sign === -1 ? -sup.amount : sup.amount)}</td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                ))}
+                {(() => {
+                  const LIMIT = 40
+                  const subs = (row.subs ?? []).slice().sort((a, b) => Math.abs(sum(b.byMonth)) - Math.abs(sum(a.byMonth)))
+                  const top = subs.slice(0, LIMIT), rest = subs.slice(LIMIT)
+                  const restBM: Record<string, number> = {}
+                  months.forEach(m => { restBM[m] = rest.reduce((acc, x) => acc + (x.byMonth[m] ?? 0), 0) })
+                  return (
+                    <>
+                      {top.map(s => (
+                        <tr key={row.key + '|' + s.sub}>
+                          <td style={{ ...td, textAlign: 'left', paddingLeft: 20, color: '#444' }}>{s.sub}</td>
+                          {months.map(m => <td key={m} style={{ ...td, color: '#555' }}>{val(s.byMonth, m, row.sign)}</td>)}
+                          <td style={{ ...td, color: '#333' }}>{val(s.byMonth, null, row.sign)}</td>
+                        </tr>
+                      ))}
+                      {rest.length > 0 && (
+                        <tr key={row.key + '|outros'}>
+                          <td style={{ ...td, textAlign: 'left', paddingLeft: 20, color: '#999', fontStyle: 'italic' }}>Outros ({rest.length} contas)</td>
+                          {months.map(m => <td key={m} style={{ ...td, color: '#999' }}>{val(restBM, m, row.sign)}</td>)}
+                          <td style={{ ...td, color: '#999' }}>{val(restBM, null, row.sign)}</td>
+                        </tr>
+                      )}
+                    </>
+                  )
+                })()}
               </Fragment>
             )
           })}
@@ -430,7 +439,7 @@ function DrePrint({ scope, rows, months }: { scope: string; rows: DreRow[]; mont
       </table>
       <div style={{ marginTop: 12, fontSize: 7.5, color: '#777', borderTop: '0.5px solid #ccc', paddingTop: 6, lineHeight: 1.5 }}>
         Regime de caixa · despesas classificadas pelo plano de contas oficial do contador · valores em R$ sem centavos.
-        Totais dos fornecedores referem-se ao período completo da base. Desenvolvido por Delfos Research LTDA.
+        Cada linha mostra as maiores subcontas; as demais aparecem agrupadas em "Outros". O detalhamento por fornecedor está disponível na tela. Desenvolvido por Delfos Research LTDA.
       </div>
     </div>
   )
