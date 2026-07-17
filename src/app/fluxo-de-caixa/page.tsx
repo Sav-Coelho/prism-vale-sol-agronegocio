@@ -120,9 +120,9 @@ export default function FluxoDeCaixa() {
           <div className="page-eyebrow">Módulo · Tesouraria</div>
           <h1 className="page-title">Fluxo de Caixa</h1>
           <p className="page-subtitle">
-            Importação de títulos a receber e pagamentos a efetuar diretamente do ERP.
-            Os mesmos lançamentos não são duplicados — cada título é identificado por
-            uma chave única gerada a partir de NF, parcela, CNPJ, vencimento e valor.
+            Projeção de caixa consolidada da contabilidade — entradas e saídas previstas
+            por data de vencimento. Considera apenas compromissos com vencimento futuro;
+            vencidos ou do dia não entram na projeção.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
