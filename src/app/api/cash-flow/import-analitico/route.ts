@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     const due = serial(row[iData])
     if (!due) { skippedNoDate++; continue }        // sem data de vencimento não posiciona no fluxo
     const orig = iOrig >= 0 ? serial(row[iOrig]) : null
-    const hist = clean(row[iHist]) || clean(row[iC1] >= 0 ? row[iC1] : '') || '(sem histórico)'
+    const hist = clean(row[iHist]) || (iC1 >= 0 ? clean(row[iC1]) : '') || '(sem histórico)'
     const { titulo, parcela } = splitDoc(clean(row[iDoc]))
     const classif = iC1 >= 0 ? clean(row[iC1]) : null
     const tipo = clean(row[iTipo]) === 'S' ? 'S' : 'E'
