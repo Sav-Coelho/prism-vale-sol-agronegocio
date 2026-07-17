@@ -28,13 +28,20 @@ const SHEET_UNIT: Record<string, string> = {
   'MM RIO BONITO': 'MM - RIO BONITO',
 }
 
-export const DRE_EXP_LINES = ['CMV','ADM','PESSOAL','LOG','COM','IMPOSTOS','FIN','SOCIO','INVEST','DEDUCAO','NAOOP','DIFCAIXA','EXCLUIR'] as const
+export const DRE_EXP_LINES = ['CMV','ADM','PESSOAL','LOG','COM','IMPOSTOS','FIN','SOCIO','INVEST','DEDUCAO','NAOOP','DIFCAIXA','INTRAGRUPO','EXCLUIR'] as const
 export type ExpLine = typeof DRE_EXP_LINES[number]
 
-// mapeia o caminho de ancestrais (plano de contas) para a linha da DRE
-function mapLine(pathNorm: string[]): ExpLine {
+// mapeia o caminho de ancestrais (plano de contas) para a linha da DRE.
+// `who` = contraparte (histórico + rótulo da folha), usado para depurar o CMV.
+function mapLine(pathNorm: string[], who = ''): ExpLine {
   const has = (kw: string) => pathNorm.some(x => x.includes(kw))
-  if (has('FORNECEDOR MERCADORIAS')) return 'CMV'
+  if (has('FORNECEDOR MERCADORIAS')) {
+    // Revisão dos custos variáveis: tira do CMV o que não é mercadoria de revenda.
+    if (who.includes('MULTMUNDE') || who.includes('MULTIMUNDO')) return 'INTRAGRUPO'          // intragrupo → memo, fora do resultado
+    if (who.includes('ORGA LOG')) return 'LOG'                                                 // armazenagem/distribuição → Logística
+    if (who.includes('FCA FIAT') || who.includes('FIAT CHRYSLER')) return who.includes('JUROS') ? 'FIN' : 'INVEST' // veículo financiado: principal→CAPEX, juros→Financeiras
+    return 'CMV'
+  }
   if (has('COMPRA DE VEICULOS')) return 'INVEST'
   if (has('LUCROS DISTRIBUIDOS')) return 'SOCIO'
   if (has('REEMBOLSO PARA CLIENTE')) return 'DEDUCAO'
@@ -100,7 +107,7 @@ export function parseExpenseReport(buffer: ArrayBuffer): { entries: ExpenseEntry
       if (isLeaf && typeof row.val === 'number' && row.val !== 0) {
         const path = [...ancestors, row.label]
         const pathN = path.map(norm)
-        const line = mapLine(pathN)
+        const line = mapLine(pathN, norm(`${row.hist} ${row.label}`))
         if (line !== 'EXCLUIR') {
           const d = serial(row.pag) ?? serial(row.ent)
           const signed = line === 'NAOOP' || line === 'DIFCAIXA' ? row.val : Math.abs(row.val)

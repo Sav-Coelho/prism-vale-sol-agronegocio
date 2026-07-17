@@ -99,7 +99,7 @@ export default function DrePage() {
   const expenseStruct = useMemo(() => {
     if (!cur) return []
     return cur.rows.filter(r => r.type === 'group' && r.sign === -1 && r.key !== 'DEDUCAO')
-      .map(r => ({ label: r.label.replace('Despesas ', '').replace('Custos Variáveis Operacionais', 'CMV'), value: sumShown(r.byMonth) }))
+      .map(r => ({ label: r.label.replace('Despesas ', '').replace('Compras de Mercadoria (pagas)', 'Mercadoria'), value: sumShown(r.byMonth) }))
       .filter(r => r.value > 0).sort((a, b) => b.value - a.value)
   }, [cur, shownMonths])
 
@@ -343,7 +343,8 @@ export default function DrePage() {
           </div>
 
           <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
-            Regime de caixa. Despesas classificadas pelo <b>plano de contas oficial do contador</b> (não mais heurística). CMV = Fornecedor Mercadorias;
+            Regime de caixa. Despesas classificadas pelo <b>plano de contas oficial do contador</b> (não mais heurística). <b>Compras de Mercadoria</b> = Fornecedor Mercadorias (caixa),
+            já depuradas: <b>Multmunde (intragrupo)</b> vai para memo, <b>veículo financiado</b> para CAPEX/Financeiras e <b>logística (Orga Log)</b> para Despesas Logísticas.
             CAPEX (compra de veículos) em Investimentos; transferências entre lojas excluídas; reembolso a cliente abatido em Deduções.
             <b> Período: Jan–Jun/2026</b> — receita e despesas no mesmo intervalo (fechamento de julho entra quando chegarem os títulos recebidos do mês).
             Valores sem centavos por espaço; abra as subcontas e lançamentos para o detalhe.

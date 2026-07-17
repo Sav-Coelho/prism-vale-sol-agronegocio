@@ -93,6 +93,7 @@ export async function GET() {
     const INV = lineByMonth(scope, 'INVEST')
     const NAOOP = lineByMonth(scope, 'NAOOP')
     const DIF = lineByMonth(scope, 'DIFCAIXA')
+    const INTRA = lineByMonth(scope, 'INTRAGRUPO')
 
     const RECLIQ = combine([[REC, 1], [DED, -1]])
     const MC = combine([[RECLIQ, 1], [CMV, -1]])
@@ -134,6 +135,9 @@ export async function GET() {
     ]
     if (totalOf(DIF)) {
       rows.push({ type: 'memo', key: 'DIFCAIXA', label: 'Diferença de Caixa (ajuste)', sign: 1, total: totalOf(DIF), byMonth: DIF, subs: subsOf(scope, 'DIFCAIXA') })
+    }
+    if (totalOf(INTRA)) {
+      rows.push({ type: 'memo', key: 'INTRAGRUPO', label: 'Movimentações Intragrupo (Multmunde)', sign: 1, total: totalOf(INTRA), byMonth: INTRA, subs: subsOf(scope, 'INTRAGRUPO') })
     }
     return { rows }
   }

@@ -15,7 +15,7 @@ export const DRE_LINES = [
 export type DreLine = typeof DRE_LINES[number]
 
 export const LINE_LABEL: Record<DreLine, string> = {
-  CMV: 'Custos Variáveis Operacionais',
+  CMV: 'Compras de Mercadoria (pagas)',
   ADM: 'Despesas Administrativas',
   PESSOAL: 'Despesas com Pessoal',
   LOG: 'Despesas Logísticas',
