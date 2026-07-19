@@ -8,6 +8,7 @@ const LS_KEY = 'arken.sidenav.collapsed'
 const NAV = [
   { href: '/dre',                icon: '▤', label: 'DRE Gerencial' },
   { href: '/fluxo-de-caixa',     icon: '◈', label: 'Fluxo de Caixa' },
+  { href: '/controle-compras',   icon: '🛒', label: 'Controle de Compras' },
   { href: '/risco-cliente',      icon: '◆', label: 'Risco de Cliente' },
   { href: '/analise-comercial',  icon: '⌬', label: 'Análise Comercial' },
 ]

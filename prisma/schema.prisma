@@ -191,3 +191,46 @@ model CashflowEntry {
   @@index([filial])
   @@index([year, month])
 }
+
+// ── Controle de Compras (modelo SamFarma adaptado) ──
+// Comprador com limite mensal de compras.
+model Comprador {
+  id     Int     @id @default(autoincrement())
+  nome   String  @unique
+  limite Float   @default(0)
+  setor  String?
+  ativo  Boolean @default(true)
+}
+
+// Pedido de compra. Suporta parcelamento: `parcelas` pagamentos, o 1º em
+// `primeiraDias` dias após o pedido, os demais a cada `intervaloDias`.
+model PurchaseOrder {
+  id            Int      @id @default(autoincrement())
+  comprador     String
+  fornecedor    String?
+  tipo          String?  // Local | Externo | Frete
+  categoria     String?
+  dataPedido    DateTime
+  valor         Float
+  parcelas      Int      @default(1)
+  primeiraDias  Int      @default(30)   // dias até a 1ª parcela vencer
+  intervaloDias Int      @default(30)   // intervalo entre parcelas
+  status        String   @default("Pendente")
+  observacao    String?
+  createdAt     DateTime @default(now())
+
+  @@index([comprador])
+  @@index([dataPedido])
+}
+
+// Lista editável de categorias de compra.
+model PurchaseCategoria {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+}
+
+// Parâmetros do controle de compras (meta CMV, etc.).
+model PurchaseSetting {
+  key   String @id
+  value Float
+}
