@@ -19,7 +19,6 @@ export async function GET(req: NextRequest) {
   if (!rows.length) return NextResponse.json({ hasData: false })
 
   const months = Array.from(new Set(rows.map(r => ym(r.year, r.month)))).sort()
-  const lastM = months[months.length - 1]
   const empty = () => { const o: Record<string, number> = {}; months.forEach(m => o[m] = 0); return o }
 
   // ─── Detalhe de um cliente ───
@@ -37,8 +36,9 @@ export async function GET(req: NextRequest) {
       monthly[ym(r.year, r.month)] += r.valor
     })
     const produtos = Array.from(prodMap.values()).sort((a, b) => b.total - a.total)
-    // deixou de comprar: teve venda antes, mas 0 no último mês
-    const dropped = produtos.filter(p => p.byMonth[lastM] === 0 && p.total > 0)
+    // deixou de comprar: teve venda antes, mas 0 nos últimos 2 meses (neutraliza mês parcial)
+    const recentKeys = months.slice(Math.max(0, months.length - 2))
+    const dropped = produtos.filter(p => p.total > 0 && recentKeys.every(m => p.byMonth[m] === 0))
       .map(p => ({ nome: p.nome, code: p.code, total: p.total, ultimoMes: months.filter(m => p.byMonth[m] > 0).pop() ?? null }))
       .sort((a, b) => b.total - a.total)
     return NextResponse.json({ hasData: true, cliente, nome, vendedor, months, monthly, produtos, dropped, total: monthly ? Object.values(monthly).reduce((s, v) => s + v, 0) : 0 })
@@ -64,15 +64,18 @@ export async function GET(req: NextRequest) {
     const share = totalGeral ? c.total / totalGeral : 0
     const cum = totalGeral ? acc / totalGeral : 0
     const abc = cum <= 0.8 ? 'A' : cum <= 0.95 ? 'B' : 'C'
+    // status por JANELA de 2 meses (neutraliza um último mês parcial)
     const mesesAtivos = months.filter(m => c.byMonth[m] > 0)
-    const avg = mesesAtivos.length ? c.total / mesesAtivos.length : 0
-    const last = c.byMonth[lastM]
+    const recentKeys = months.slice(Math.max(0, months.length - 2))
+    const baseKeys = months.slice(Math.max(0, months.length - 4), Math.max(0, months.length - 2))
+    const recentSum = recentKeys.reduce((s, m) => s + c.byMonth[m], 0)
+    const baseSum = baseKeys.reduce((s, m) => s + c.byMonth[m], 0)
     const first = mesesAtivos[0] ?? null
     let status = 'Estável'
-    if (first === lastM) status = 'Novo'
-    else if (last === 0) status = 'Sumiu'
-    else if (last < avg * 0.5) status = 'Em queda'
-    else if (last > avg * 1.5) status = 'Crescendo'
+    if (first && months.indexOf(first) >= months.length - 2) status = 'Novo'
+    else if (recentSum === 0) status = 'Sumiu'
+    else if (baseSum > 0 && recentSum < baseSum * 0.5) status = 'Em queda'
+    else if (recentSum > baseSum * 1.5) status = 'Crescendo'
     return { code: c.code, nome: c.nome, vendedor: c.vendedor, total: c.total, qtd: c.qtd, nProd: c.prods.size, abc, share, status, byMonth: c.byMonth }
   })
 

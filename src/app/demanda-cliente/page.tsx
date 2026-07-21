@@ -109,7 +109,7 @@ export default function DemandaCliente() {
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>Clique num status para filtrar a tabela. "Sumiu" = sem compra no último mês; "Em queda" = último mês abaixo da metade da média.</div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>Clique num status para filtrar. Comparação por <b>janela de 2 meses</b> (últimos 2 × 2 anteriores) — "Sumiu" = sem compra nos últimos 2 meses; "Em queda" = caiu mais de 50%. Obs.: o último mês da base pode estar parcial.</div>
             </div>
           </div>
 
