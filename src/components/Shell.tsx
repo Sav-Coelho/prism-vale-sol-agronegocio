@@ -11,6 +11,7 @@ const NAV = [
   { href: '/controle-compras',   icon: '🛒', label: 'Controle de Compras' },
   { href: '/risco-cliente',      icon: '◆', label: 'Risco de Cliente' },
   { href: '/analise-comercial',  icon: '⌬', label: 'Análise Comercial' },
+  { href: '/demanda-cliente',    icon: '◉', label: 'Demanda por Cliente' },
 ]
 
 export default function Shell({ children }: { children: React.ReactNode }) {

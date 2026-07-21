@@ -234,3 +234,21 @@ model PurchaseSetting {
   key   String @id
   value Float
 }
+
+// Demanda por cliente — agregado (cliente × produto × mês) do relatório COMERCIAL.
+// Alimenta a análise "o que cada cliente compra / deixou de comprar".
+model DemandEntry {
+  id           Int     @id @default(autoincrement())
+  vendedor     String?
+  clienteCode  String
+  cliente      String
+  produtoCode  String?
+  produto      String
+  year         Int
+  month        Int
+  qtd          Float
+  valor        Float
+
+  @@index([clienteCode])
+  @@index([year, month])
+}
