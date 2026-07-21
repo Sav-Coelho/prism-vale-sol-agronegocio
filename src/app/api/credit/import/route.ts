@@ -121,7 +121,7 @@ export async function POST(req: Request) {
   // ── Passo 3: carrega Sales atuais e detecta ordem cronológica ──
   const currentSales = await prisma.sale.findMany({
     where: { paymentStatus: { in: ['OVERDUE', 'PAID', 'DEFAULTED'] } },
-    select: { id: true, clientId: true, externalId: true, paymentStatus: true, dueDate: true, amount: true },
+    select: { id: true, clientId: true, externalId: true, paymentStatus: true, dueDate: true, amount: true, paidDate: true },
   })
 
   const currentByClientExt = new Map<string, { id: number; status: string; amount: number }>()
@@ -135,7 +135,11 @@ export async function POST(req: Request) {
     const t = new Date(r.dueDate).getTime()
     return t > m ? t : m
   }, 0)
+  // Só títulos ainda EM ABERTO ancoram a comparação — dueDates de títulos já
+  // resolvidos são história congelada e fariam o máximo do DB só crescer,
+  // podendo travar para sempre a resolução de snapshots legítimos.
   const maxDueDb = currentSales.reduce((m, s) => {
+    if (s.paymentStatus !== 'OVERDUE') return m
     const t = s.dueDate?.getTime() ?? 0
     return t > m ? t : m
   }, 0)
@@ -153,13 +157,19 @@ export async function POST(req: Request) {
 
   currentSales.forEach(s => {
     const inXlsx = xlsxKeysByClient.get(s.clientId)?.has(s.externalId ?? '')
+    // Já resolvido em import anterior (paidDate preenchido): não reprocessar —
+    // re-marcar reescreveria o paidDate e corromperia a série histórica de risco.
+    const alreadyResolved = (s.paymentStatus === 'PAID' || s.paymentStatus === 'DEFAULTED') && s.paidDate != null
     if ((s.paymentStatus === 'OVERDUE' || s.paymentStatus === 'DEFAULTED') && !inXlsx) {
+      if (alreadyResolved) return
       // Só resolve se o novo snapshot é mais RECENTE (senão o título pode nem existir ainda).
       if (isOlderSnapshot) return
       const due = s.dueDate?.getTime() ?? importDate.getTime()
       const daysLate = (importDate.getTime() - due) / (1000 * 60 * 60 * 24)
-      if (daysLate >= DEFAULT_DAYS) idsToMarkDefaulted.push(s.id)
-      else                          idsToMarkPaid.push(s.id)
+      // Um DEFAULTED que se resolve é SEMPRE cura tardia (já era calote) — jamais vira PAID,
+      // mesmo sem dueDate (regra: calote nunca some do histórico).
+      if (s.paymentStatus === 'DEFAULTED' || daysLate >= DEFAULT_DAYS) idsToMarkDefaulted.push(s.id)
+      else                                                             idsToMarkPaid.push(s.id)
     } else if ((s.paymentStatus === 'PAID' || s.paymentStatus === 'DEFAULTED') && inXlsx) {
       idsToRevertToOverdue.push(s.id)         // reabriu no ERP → volta pra OVERDUE
     }
@@ -181,11 +191,14 @@ export async function POST(req: Request) {
     b.items.forEach(r => {
       const extId = extIdOf(r)
       const existing = currentByClientExt.get(`${clientId}::${extId}`)
+      // Saldo em aberto = VLR LÍQUIDO (principal + juros + multa − descto) —
+      // o que o cliente efetivamente deve hoje, não o valor de face do título.
+      const owed = r.netAmount || r.amount
       if (existing) {
         keptCount += 1
         // Refresh do valor caso o ERP tenha corrigido o título entre snapshots
-        if (Math.abs(existing.amount - r.amount) > 0.005) {
-          amountUpdates.push({ id: existing.id, amount: r.amount })
+        if (Math.abs(existing.amount - owed) > 0.005) {
+          amountUpdates.push({ id: existing.id, amount: owed })
         }
         return
       }
@@ -194,12 +207,12 @@ export async function POST(req: Request) {
         clientId,
         externalId: extId,
         description: `Título ${r.titulo}${r.parcela ? ' · ' + r.parcela : ''}`,
-        amount: r.amount,
+        amount: owed,
         date: issueDate,
         dueDate: new Date(r.dueDate),
         paymentStatus: 'OVERDUE',
-        month: issueDate.getMonth() + 1,
-        year: issueDate.getFullYear(),
+        month: issueDate.getUTCMonth() + 1,
+        year: issueDate.getUTCFullYear(),
       })
     })
   })
