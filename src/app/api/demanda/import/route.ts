@@ -1,8 +1,10 @@
 /**
  * Import da demanda por cliente → DemandEntry.
- *  - multipart (file): p/ arquivos pequenos (parse no servidor).
- *  - JSON { entries, reset }: p/ arquivos grandes (>4.5MB) — o cliente parseia
- *    localmente e envia os agregados em lotes; reset=true zera antes do 1º lote.
+ * Substituição POR PERÍODO: apaga somente os (ano, mês) presentes no payload —
+ * permite manter 2025 no banco e atualizar só 2026, e vice-versa.
+ *  - multipart (file): arquivos pequenos (parse no servidor).
+ *  - JSON { entries, resetMonths? }: arquivos grandes (>4.5MB) — o cliente parseia
+ *    localmente e envia em lotes; resetMonths ("YYYY-MM"[]) vem só no 1º lote.
  */
 import { prisma } from '@/lib/prisma'
 import { parseDemanda, isComercialDemanda } from '@/lib/demanda-parser'
@@ -11,6 +13,16 @@ import { NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 export const maxDuration = 60
+
+async function deleteMonths(months: string[]) {
+  let deleted = 0
+  for (const ym of months) {
+    const [y, m] = ym.split('-').map(Number)
+    if (!y || !m) continue
+    deleted += (await prisma.demandEntry.deleteMany({ where: { year: y, month: m } })).count
+  }
+  return deleted
+}
 
 async function insertChunked(entries: unknown[]) {
   let inserted = 0
@@ -26,10 +38,10 @@ export async function POST(req: Request) {
 
   // ── Modo lote (JSON) ──
   if (ct.includes('application/json')) {
-    const { entries, reset } = await req.json()
+    const { entries, resetMonths } = await req.json()
     if (!Array.isArray(entries)) return NextResponse.json({ error: 'entries inválido' }, { status: 400 })
     let deleted = 0
-    if (reset) deleted = (await prisma.demandEntry.deleteMany({})).count
+    if (Array.isArray(resetMonths) && resetMonths.length) deleted = await deleteMonths(resetMonths)
     const inserted = await insertChunked(entries)
     return NextResponse.json({ kind: 'demanda-batch', deleted, inserted })
   }
@@ -43,7 +55,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Formato não reconhecido (esperado COMERCIAL: VENDEDOR, CLIENTE, PRODUTO, DATA).' }, { status: 400 })
   }
   const { entries, clientes, produtos, leaves, total, months } = parseDemanda(buf)
-  const del = await prisma.demandEntry.deleteMany({})
+  const deleted = await deleteMonths(months)          // substitui SÓ os meses do arquivo
   const inserted = await insertChunked(entries)
-  return NextResponse.json({ kind: 'demanda', deleted: del.count, inserted, clientes, produtos, leaves, total, months })
+  return NextResponse.json({ kind: 'demanda', deleted, inserted, clientes, produtos, leaves, total, months })
 }

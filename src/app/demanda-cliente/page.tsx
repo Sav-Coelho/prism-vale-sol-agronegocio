@@ -4,17 +4,19 @@ import Shell from '@/components/Shell'
 import { CommercialUploader } from '@/components/CommercialUploader'
 import { BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
-interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number> }
+interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number>; tCur: number; tPrev: number; yoy: number | null; perdidoYoY: boolean }
 interface Overview {
   hasData: boolean; months: string[]
-  kpis: { totalGeral: number; nClientes: number; nProdutos: number; ticketMedio: number }
+  curYear: number; prevYear: number | null; cmpUpTo: number; hasYoY: boolean
+  kpis: { totalGeral: number; nClientes: number; nProdutos: number; ticketMedio: number; totalCur: number; totalPrev: number; yoyGeral: number | null; perdidosYoY: number }
   monthlyTotal: Record<string, number>; clientes: Cli[]; distAbc: Record<string, number>; statusDist: Record<string, number>
 }
 interface Detail {
   hasData: boolean; cliente: string; nome: string; vendedor: string | null; months: string[]
-  monthly: Record<string, number>; total: number
+  monthly: Record<string, number>; total: number; curYear?: number; prevYear?: number | null
   produtos: { code: string | null; nome: string; total: number; qtd: number; byMonth: Record<string, number> }[]
   dropped: { nome: string; code: string | null; total: number; ultimoMes: string | null }[]
+  droppedYoY: { nome: string; code: string | null; totalPrev: number }[]
 }
 
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14', blue: '#2f5a96' }
@@ -32,6 +34,7 @@ export default function DemandaCliente() {
   const [sel, setSel] = useState<string | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [statusF, setStatusF] = useState<string>('')
+  const [soPerdidos, setSoPerdidos] = useState(false)
 
   const load = async () => { setLoading(true); setOv(await fetch('/api/demanda').then(r => r.json())); setLoading(false) }
   useEffect(() => { load() }, [])
@@ -42,8 +45,8 @@ export default function DemandaCliente() {
   const filtered = useMemo(() => {
     if (!ov?.clientes) return []
     const q = search.trim().toUpperCase()
-    return ov.clientes.filter(c => (!statusF || c.status === statusF) && (!q || c.nome.toUpperCase().includes(q) || c.code.includes(q)))
-  }, [ov, search, statusF])
+    return ov.clientes.filter(c => (!statusF || c.status === statusF) && (!soPerdidos || c.perdidoYoY) && (!q || c.nome.toUpperCase().includes(q) || c.code.includes(q)))
+  }, [ov, search, statusF, soPerdidos])
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
 
   return (
@@ -60,7 +63,7 @@ export default function DemandaCliente() {
       </div>
 
       <div className="mb-6" style={{ maxWidth: 620 }}>
-        <CommercialUploader title="Relatório COMERCIAL (por cliente)" description="XLSX com VENDEDOR · CLIENTE · PRODUTO · DATA · QUANTIDADE · VLR TOTAL. Substitui toda a base." endpoint="/api/demanda/import" onDone={load} />
+        <CommercialUploader title="Relatório COMERCIAL / ABC COMERCIAL (por cliente)" description="XLSX com VENDEDOR · CLIENTE · PRODUTO · DATA · VLR TOTAL. Substitui apenas os meses presentes no arquivo (2025 e 2026 convivem)." endpoint="/api/demanda/import" onDone={load} />
       </div>
 
       {loading ? (
@@ -70,10 +73,16 @@ export default function DemandaCliente() {
       ) : (
         <>
           <div className="grid-4 mb-6">
-            <Kpi label="Faturamento (período)" value={fmt(ov.kpis.totalGeral)} color={C.navy} />
-            <Kpi label="Clientes ativos" value={String(ov.kpis.nClientes)} color={C.gold} />
-            <Kpi label="Produtos distintos" value={String(ov.kpis.nProdutos)} color={C.blue} />
-            <Kpi label="Ticket médio / cliente" value={fmt(ov.kpis.ticketMedio)} color={C.green} />
+            <Kpi label={`Faturamento ${ov.curYear}`} value={fmt(ov.kpis.totalCur)} color={C.navy} />
+            {ov.hasYoY ? (
+              <Kpi label={`vs ${ov.prevYear} (Jan–${['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][ov.cmpUpTo]})`}
+                value={ov.kpis.yoyGeral != null ? `${ov.kpis.yoyGeral >= 0 ? '+' : ''}${(ov.kpis.yoyGeral * 100).toFixed(1)}%` : '—'}
+                color={(ov.kpis.yoyGeral ?? 0) >= 0 ? C.green : C.red} />
+            ) : (
+              <Kpi label="Clientes ativos" value={String(ov.kpis.nClientes)} color={C.gold} />
+            )}
+            <Kpi label={ov.hasYoY ? `Faturamento ${ov.prevYear}` : 'Produtos distintos'} value={ov.hasYoY ? fmt(ov.kpis.totalPrev) : String(ov.kpis.nProdutos)} color={C.blue} />
+            <Kpi label={ov.hasYoY ? `Clientes perdidos vs ${ov.prevYear}` : 'Ticket médio / cliente'} value={ov.hasYoY ? String(ov.kpis.perdidosYoY) : fmt(ov.kpis.ticketMedio)} color={ov.hasYoY ? C.red : C.green} />
           </div>
 
           <div className="grid-2 mb-6">
@@ -108,6 +117,12 @@ export default function DemandaCliente() {
                     {s} · {n}
                   </button>
                 ))}
+                {ov.hasYoY && (
+                  <button onClick={() => setSoPerdidos(p => !p)}
+                    style={{ border: `1px solid ${soPerdidos ? C.red : C.line}`, background: soPerdidos ? C.red : '#fff', color: soPerdidos ? '#fff' : C.red, borderRadius: 20, padding: '4px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                    ⚠ Perdido vs {ov.prevYear} · {ov.kpis.perdidosYoY}
+                  </button>
+                )}
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>Clique num status para filtrar. Comparação por <b>janela de 2 meses</b> (últimos 2 × 2 anteriores) — "Sumiu" = sem compra nos últimos 2 meses; "Em queda" = caiu mais de 50%. Obs.: o último mês da base pode estar parcial.</div>
             </div>
@@ -122,7 +137,7 @@ export default function DemandaCliente() {
             <div className="table-wrap" style={{ maxHeight: '62vh' }}>
               <table>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
-                  <tr><th style={{ textAlign: 'left' }}>Cliente</th><th>ABC</th><th>Status</th><th style={{ textAlign: 'right' }}>Faturamento</th><th style={{ textAlign: 'right' }}>Prod.</th><th style={{ textAlign: 'right' }}>Share</th><th></th></tr>
+                  <tr><th style={{ textAlign: 'left' }}>Cliente</th><th>ABC</th><th>Status</th><th style={{ textAlign: 'right' }}>{ov.hasYoY ? ov.curYear : 'Faturamento'}</th>{ov.hasYoY && <th style={{ textAlign: 'right' }}>{ov.prevYear}</th>}{ov.hasYoY && <th style={{ textAlign: 'right' }}>Δ a/a</th>}<th style={{ textAlign: 'right' }}>Prod.</th><th></th></tr>
                 </thead>
                 <tbody>
                   {filtered.slice(0, 200).map(c => (
@@ -130,13 +145,18 @@ export default function DemandaCliente() {
                       <td style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{c.nome}<div style={{ fontSize: 10, color: C.textMuted }}>{c.code}{c.vendedor ? ` · ${c.vendedor}` : ''}</div></td>
                       <td style={{ textAlign: 'center' }}><span style={{ background: ABC_COLOR[c.abc], color: '#fff', borderRadius: 3, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{c.abc}</span></td>
                       <td style={{ textAlign: 'center', fontSize: 11, color: STATUS_COLOR[c.status] ?? C.textSoft, fontWeight: 600, whiteSpace: 'nowrap' }}>{c.status}</td>
-                      <td style={{ textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{fmt(c.total)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{fmt(ov.hasYoY ? c.tCur : c.total)}</td>
+                      {ov.hasYoY && <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{fmtK(c.tPrev)}</td>}
+                      {ov.hasYoY && (
+                        <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', color: c.perdidoYoY ? C.red : c.yoy == null ? C.textMuted : c.yoy >= 0 ? C.green : C.amber }}>
+                          {c.perdidoYoY ? '⚠ perdido' : c.yoy == null ? 'novo' : `${c.yoy >= 0 ? '+' : ''}${(c.yoy * 100).toFixed(0)}%`}
+                        </td>
+                      )}
                       <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{c.nProd}</td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{(c.share * 100).toFixed(1)}%</td>
                       <td style={{ textAlign: 'center', color: C.gold }}>›</td>
                     </tr>
                   ))}
-                  {filtered.length > 200 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 200 de {filtered.length}. Use a busca para refinar.</td></tr>}
+                  {filtered.length > 200 && <tr><td colSpan={ov.hasYoY ? 9 : 7} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 200 de {filtered.length}. Use a busca para refinar.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -180,10 +200,25 @@ function ClienteDetail({ detail, onClose }: { detail: Detail; onClose: () => voi
           </ResponsiveContainer>
         </div>
 
-        {detail.dropped.length > 0 && (
+        {(detail.droppedYoY?.length ?? 0) > 0 && (
           <div className="card mb-6" style={{ borderLeft: `3px solid ${C.red}` }}>
-            <div className="card-eyebrow" style={{ color: C.red }}>Alerta</div>
-            <div className="card-title" style={{ fontSize: 13, marginBottom: 8 }}>Deixou de comprar (sem compra no último mês) — {detail.dropped.length} itens</div>
+            <div className="card-eyebrow" style={{ color: C.red }}>Alerta ano a ano</div>
+            <div className="card-title" style={{ fontSize: 13, marginBottom: 8 }}>Comprava em {detail.prevYear} — nada em {detail.curYear} · {detail.droppedYoY.length} itens</div>
+            <div style={{ maxHeight: 200, overflow: 'auto' }}>
+              {detail.droppedYoY.slice(0, 30).map((d, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', borderBottom: `1px solid ${C.line}` }}>
+                  <span style={{ color: C.navy }}>{d.nome}</span>
+                  <span style={{ color: C.textMuted, whiteSpace: 'nowrap', marginLeft: 8 }}>{fmtK(d.totalPrev)} em {detail.prevYear}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {detail.dropped.length > 0 && (
+          <div className="card mb-6" style={{ borderLeft: `3px solid ${C.amber}` }}>
+            <div className="card-eyebrow" style={{ color: C.amber }}>Alerta recente</div>
+            <div className="card-title" style={{ fontSize: 13, marginBottom: 8 }}>Sem compra nos últimos 2 meses — {detail.dropped.length} itens</div>
             <div style={{ maxHeight: 200, overflow: 'auto' }}>
               {detail.dropped.slice(0, 30).map((d, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', borderBottom: `1px solid ${C.line}` }}>
