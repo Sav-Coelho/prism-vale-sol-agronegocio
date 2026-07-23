@@ -37,8 +37,8 @@ function mapLine(pathNorm: string[], who = ''): ExpLine {
   const has = (kw: string) => pathNorm.some(x => x.includes(kw))
   if (has('FORNECEDOR MERCADORIAS')) {
     // Revisão dos custos variáveis: tira do CMV o que não é mercadoria de revenda.
+    // Orga Log FICA em mercadoria — cliente confirmou (2026-07): laboratório fatura pela logística.
     if (who.includes('MULTMUNDE') || who.includes('MULTIMUNDO')) return 'INTRAGRUPO'          // intragrupo → memo, fora do resultado
-    if (who.includes('ORGA LOG')) return 'LOG'                                                 // armazenagem/distribuição → Logística
     if (who.includes('FCA FIAT') || who.includes('FIAT CHRYSLER')) return who.includes('JUROS') ? 'FIN' : 'INVEST' // veículo financiado: principal→CAPEX, juros→Financeiras
     return 'CMV'
   }
