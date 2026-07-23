@@ -1,9 +1,10 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
+import { CommercialUploader } from '@/components/CommercialUploader'
 import {
   ComposedChart, Bar, Line, BarChart, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend, ReferenceLine, Cell,
+  ResponsiveContainer, Legend, Cell,
 } from 'recharts'
 
 type Tab = 'dashboard' | 'pedidos' | 'config'
@@ -11,10 +12,11 @@ interface Comprador { id: number; nome: string; limite: number; setor: string | 
 interface Pedido { id: number; comprador: string; fornecedor: string | null; tipo: string | null; categoria: string | null; dataPedido: string; valor: number; parcelas: number; primeiraDias: number; intervaloDias: number; status: string }
 interface Config { compradores: Comprador[]; categorias: string[]; settings: Record<string, number>; receitaRef: { ym: string | null; value: number } }
 interface Analytics {
-  refLabel: string; receitaRef: { ym: string | null; value: number }; metaCmvPct: number; limiteCmvMensal: number
+  refLabel: string; receitaRef: { ym: string | null; value: number; exato?: boolean }; metaCmvPct: number; limiteCmvMensal: number
   limiteTotal: number; compradoTotalMes: number; saldoTotal: number; cmvAtualPct: number
   resumoCompradores: { nome: string; setor: string | null; limite: number; comprado: number; saldo: number; util: number; status: string }[]
   categorias: string[]; months: string[]; projecao: Record<string, number | string>[]; porCategoria: { categoria: string; total: number }[]; comprometidoTotal: number; nPedidos: number
+  boletos?: { count: number; total: number; imobilizadoExcluido: number }
 }
 
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14' }
@@ -65,7 +67,7 @@ export default function ControleCompras() {
         <div className="empty-state"><div className="empty-state-icon">◌</div><div className="empty-state-title">Carregando…</div></div>
       ) : (
         <>
-          {tab === 'dashboard' && <Dashboard an={an} />}
+          {tab === 'dashboard' && <Dashboard an={an} onReload={load} />}
           {tab === 'pedidos' && <Pedidos cfg={cfg} pedidos={pedidos} onChange={load} showToast={showToast} />}
           {tab === 'config' && <ConfigPanel cfg={cfg} an={an} onChange={load} showToast={showToast} />}
         </>
@@ -76,17 +78,29 @@ export default function ControleCompras() {
 }
 
 // ─────────────────────────── DASHBOARD ───────────────────────────
-function Dashboard({ an }: { an: Analytics }) {
+function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
   const catColor = (i: number) => CAT_COLORS[i % CAT_COLORS.length]
+  const refMesAnterior = an.receitaRef.ym ? an.receitaRef.ym.split('-').reverse().join('/') : '—'
   return (
     <>
       <div className="grid-5 mb-6">
         <Kpi label="Limite total (compradores)" value={fmt(an.limiteTotal)} color={C.navy} />
         <Kpi label={`Comprado em ${an.refLabel}`} value={fmt(an.compradoTotalMes)} color={C.gold} />
         <Kpi label="Saldo disponível" value={fmt(an.saldoTotal)} color={an.saldoTotal >= 0 ? C.green : C.red} />
-        <Kpi label="CMV atual (% receita)" value={pct(an.cmvAtualPct)} sub={`meta ${pct(an.metaCmvPct)}`} color={an.cmvAtualPct <= an.metaCmvPct ? C.green : C.red} />
-        <Kpi label={`Limite mensal p/ CMV`} value={fmt(an.limiteCmvMensal)} sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} de ${fmtK(an.receitaRef.value)}` : 'sem receita na DRE'} color={C.navyMid} />
+        <Kpi label="CMV atual (% rec. líq.)" value={pct(an.cmvAtualPct)} sub={`meta ${pct(an.metaCmvPct)}`} color={an.cmvAtualPct <= an.metaCmvPct ? C.green : C.red} />
+        <Kpi label={`Limite de compras · ${an.refLabel}`} value={fmt(an.limiteCmvMensal)}
+          sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × Rec. Líq. ${refMesAnterior}${an.receitaRef.exato === false ? ' (últ. disp.)' : ''}` : 'sem receita na DRE'}
+          color={C.navyMid} />
+      </div>
+
+      <div className="mb-6" style={{ maxWidth: 620 }}>
+        <CommercialUploader
+          title="Pagamentos a Efetuar (ERP)"
+          description={`Boletos já lançados — viram o comprometido real por mês. Substitui a base de boletos.${an.boletos?.count ? ` Hoje: ${an.boletos.count} boletos · ${fmtK(an.boletos.total)}.` : ''}`}
+          endpoint="/api/compras/import-pagamentos"
+          onDone={onReload}
+        />
       </div>
 
       {/* PROJEÇÃO — o gráfico central */}
@@ -94,12 +108,13 @@ function Dashboard({ an }: { an: Analytics }) {
         <div className="card-header">
           <div>
             <div className="card-eyebrow">Projeção de pagamentos de compras</div>
-            <div className="card-title">Comprometido por mês (empilhado por categoria) × limite CMV</div>
+            <div className="card-title">Comprometido por mês (boletos ERP + pedidos) × limite de compras</div>
           </div>
         </div>
         <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
-          Cada barra é o total de parcelas de compras que vencem no mês. A linha tracejada é o limite mensal de compras
-          ({pct(an.metaCmvPct)} da receita). Barra acima da linha = mês já comprometido além do saudável.
+          Cada barra soma os <b>boletos do ERP</b> e as parcelas dos <b>pedidos lançados aqui</b> que vencem no mês.
+          A linha tracejada é o limite de cada mês ({pct(an.metaCmvPct)} × receita líquida do mês anterior).
+          Barra acima da linha = mês já comprometido além do saudável. Compras de imobilizado (veículo/equipamento) ficam fora{an.boletos?.imobilizadoExcluido ? ` (${fmtK(an.boletos.imobilizadoExcluido)} excluídos)` : ''}.
         </p>
         <ResponsiveContainer width="100%" height={360}>
           <ComposedChart data={an.projecao} margin={{ top: 8, right: 20, left: 8, bottom: 4 }}>
@@ -111,12 +126,12 @@ function Dashboard({ an }: { an: Analytics }) {
             {an.categorias.map((cat, i) => (
               <Bar key={cat} dataKey={cat} stackId="a" fill={catColor(i)} radius={i === an.categorias.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} />
             ))}
-            {an.limiteCmvMensal > 0 && (
-              <ReferenceLine y={an.limiteCmvMensal} stroke={C.red} strokeDasharray="6 4" strokeWidth={2}
-                label={{ value: `Limite CMV ${fmtK(an.limiteCmvMensal)}`, position: 'insideTopRight', fill: C.red, fontSize: 11, fontWeight: 600 }} />
-            )}
+            <Line type="stepAfter" dataKey="limite" name="Limite de compras (mês)" stroke={C.red} strokeWidth={2} strokeDasharray="6 4" dot={false} />
           </ComposedChart>
         </ResponsiveContainer>
+        <p style={{ fontSize: 11, color: C.textMuted, marginTop: 8 }}>
+          💡 Ao reimportar os boletos do ERP, remova daqui os pedidos manuais que já viraram boleto — senão contam em dobro.
+        </p>
       </div>
 
       <div className="grid-2 mb-6">
@@ -294,8 +309,8 @@ function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analyt
             <span style={{ color: C.textSoft, fontSize: 13 }}>% da receita = teto de compras por mês</span>
           </div>
           <div style={{ marginTop: 12, fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>
-            Receita de referência (última da DRE{an.receitaRef.ym ? ` · ${an.receitaRef.ym}` : ''}): <b>{fmt(an.receitaRef.value)}</b><br />
-            Limite mensal de compras: <b style={{ color: C.navy }}>{fmt(an.limiteCmvMensal)}</b>
+            Receita <b>líquida</b> de referência (mês anterior{an.receitaRef.ym ? ` · ${an.receitaRef.ym}` : ''}{an.receitaRef.exato === false ? ' — último disponível na DRE' : ''}): <b>{fmt(an.receitaRef.value)}</b><br />
+            Limite de compras do mês atual: <b style={{ color: C.navy }}>{fmt(an.limiteCmvMensal)}</b>
           </div>
         </div>
         <div className="card">

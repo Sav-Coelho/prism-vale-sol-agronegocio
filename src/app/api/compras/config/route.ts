@@ -28,14 +28,20 @@ async function seedIfEmpty() {
     await prisma.purchaseSetting.create({ data: { key: 'metaCmvPct', value: 0.70 } })
 }
 
-// receita de referência = soma da RECEITA do último mês presente na DRE
-async function receitaRef(): Promise<{ ym: string | null; value: number }> {
-  const rows = await prisma.dreEntry.findMany({ where: { line: 'RECEITA' }, select: { year: true, month: true, amount: true } })
-  if (!rows.length) return { ym: null, value: 0 }
+// Receita de referência = RECEITA LÍQUIDA (Bruta − Deduções) do MÊS ANTERIOR ao
+// corrente (regra: limite de julho = meta% × Rec. Líq. de junho). Se o mês
+// anterior não tem receita na DRE ainda, usa o último mês disponível.
+async function receitaRef(): Promise<{ ym: string | null; value: number; exato: boolean }> {
+  const rows = await prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } })
+  if (!rows.length) return { ym: null, value: 0, exato: false }
   const byMonth = new Map<string, number>()
-  rows.forEach(r => { const k = `${r.year}-${String(r.month).padStart(2, '0')}`; byMonth.set(k, (byMonth.get(k) ?? 0) + r.amount) })
+  rows.forEach(r => { const k = `${r.year}-${String(r.month).padStart(2, '0')}`; byMonth.set(k, (byMonth.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount)) })
+  const now = new Date()
+  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+  const prevKey = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`
+  if (byMonth.has(prevKey)) return { ym: prevKey, value: byMonth.get(prevKey) ?? 0, exato: true }
   const latest = Array.from(byMonth.keys()).sort().pop()!
-  return { ym: latest, value: byMonth.get(latest) ?? 0 }
+  return { ym: latest, value: byMonth.get(latest) ?? 0, exato: false }
 }
 
 export async function GET() {

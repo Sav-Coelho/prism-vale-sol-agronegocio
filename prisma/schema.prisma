@@ -235,6 +235,23 @@ model PurchaseSetting {
   value Float
 }
 
+// Boletos a pagar do ERP (RELATORIO DE PAGAMENTOS A EFETUAR) — o "comprometido
+// real" que consome o limite de compras mês a mês. Wipe-and-replace no import.
+model PurchaseCommit {
+  id         Int      @id @default(autoincrement())
+  fornecedor String
+  titulo     String?
+  parcela    String?
+  dueDate    DateTime
+  valor      Float    // VLR LÍQUIDO
+  operacao   String?  // COMPRA DE MERCADORIA | COMPRA IMOBILIZADO | COMPRA ENTREGA FUTURA
+  tipoDocto  String?
+  filial     String?
+  importedAt DateTime @default(now())
+
+  @@index([dueDate])
+}
+
 // Demanda por cliente — agregado (cliente × produto × mês) do relatório COMERCIAL.
 // Alimenta a análise "o que cada cliente compra / deixou de comprar".
 model DemandEntry {
