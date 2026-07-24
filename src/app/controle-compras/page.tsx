@@ -9,8 +9,9 @@ import {
 
 type Tab = 'dashboard' | 'pedidos' | 'config'
 interface Comprador { id: number; nome: string; limite: number; setor: string | null; ativo: boolean }
-interface Pedido { id: number; comprador: string; fornecedor: string | null; tipo: string | null; categoria: string | null; dataPedido: string; valor: number; parcelas: number; primeiraDias: number; intervaloDias: number; status: string }
-interface Config { compradores: Comprador[]; categorias: string[]; settings: Record<string, number>; receitaRef: { ym: string | null; value: number } }
+interface FornecedorReg { id: number; nome: string; ativo: boolean }
+interface Pedido { id: number; comprador: string; fornecedor: string | null; tipo: string | null; categoria: string | null; dataPedido: string; valor: number; parcelas: number; datas?: string[] | null; primeiraDias: number; intervaloDias: number; status: string }
+interface Config { compradores: Comprador[]; categorias: string[]; fornecedores: FornecedorReg[]; settings: Record<string, number>; receitaRef: { ym: string | null; value: number } }
 interface Analytics {
   refLabel: string; receitaRef: { ym: string | null; value: number; exato?: boolean }; metaCmvPct: number; limiteCmvMensal: number
   limiteTotal: number; compradoTotalMes: number; saldoTotal: number; cmvAtualPct: number
@@ -182,30 +183,36 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
 }
 
 // ─────────────────────────── PEDIDOS ───────────────────────────
+const addDays = (iso: string, days: number) => {
+  const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+const fmtDia = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y.slice(2)}` }
+
 function Pedidos({ cfg, pedidos, onChange, showToast }: { cfg: Config; pedidos: Pedido[]; onChange: () => void; showToast: (m: string) => void }) {
   const hoje = new Date().toISOString().slice(0, 10)
-  const [f, setF] = useState({ comprador: cfg.compradores[0]?.nome ?? '', fornecedor: '', tipo: 'Externo', categoria: cfg.categorias[0] ?? '', dataPedido: hoje, valor: '', parcelas: '1', primeiraDias: '30', intervaloDias: '30', status: 'Pendente' })
+  const fornecedoresAtivos = cfg.fornecedores.filter(x => x.ativo)
+  const [f, setF] = useState({ fornecedor: '', valor: '', comprador: cfg.compradores[0]?.nome ?? '', dataPedido: hoje, parcelado: 'nao', nParcelas: '2' })
+  const [datas, setDatas] = useState<string[]>([addDays(hoje, 30)])
   const [busy, setBusy] = useState(false)
   const set = (k: string, v: string) => setF(p => ({ ...p, [k]: v }))
 
-  // preview dos vencimentos
-  const preview = useMemo(() => {
-    const n = Math.max(1, Math.round(+f.parcelas || 1)); const val = +f.valor || 0
-    const base = new Date(f.dataPedido + 'T00:00:00Z').getTime()
-    if (!val) return ''
-    return Array.from({ length: n }, (_, k) => {
-      const d = new Date(base + ((+f.primeiraDias || 0) + k * (+f.intervaloDias || 0)) * 86400000)
-      return `${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCMonth() + 1}`
-    }).join(' · ') + `  (${n}× ${fmtK(val / n)})`
-  }, [f])
+  // regenera as datas-sugestão (30/60/90…) quando muda o nº de parcelas ou o modo
+  const regen = (n: number, base: string) => setDatas(Array.from({ length: n }, (_, k) => addDays(base, 30 * (k + 1))))
+  const onParcelado = (v: string) => { set('parcelado', v); regen(v === 'sim' ? Math.max(2, +f.nParcelas || 2) : 1, f.dataPedido) }
+  const onNParcelas = (v: string) => { set('nParcelas', v); const n = Math.max(2, Math.min(24, Math.round(+v) || 2)); regen(n, f.dataPedido) }
+  const setData = (i: number, v: string) => setDatas(ds => ds.map((d, k) => k === i ? v : d))
 
+  const valorNum = +f.valor || 0
   const add = async () => {
-    if (!f.comprador || !f.valor) { showToast('Comprador e valor obrigatórios'); return }
+    if (!f.fornecedor) { showToast('Selecione o fornecedor (cadastre em Config se faltar)'); return }
+    if (!valorNum) { showToast('Informe o valor do pedido'); return }
+    if (datas.some(d => !d)) { showToast('Preencha todas as datas de pagamento'); return }
     setBusy(true)
-    const r = await fetch('/api/compras/pedidos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, valor: +f.valor, parcelas: +f.parcelas, primeiraDias: +f.primeiraDias, intervaloDias: +f.intervaloDias }) })
+    const r = await fetch('/api/compras/pedidos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fornecedor: f.fornecedor, comprador: f.comprador, dataPedido: f.dataPedido, valor: valorNum, datas }) })
     setBusy(false)
     if (!r.ok) { showToast('Erro ao salvar'); return }
-    setF(p => ({ ...p, fornecedor: '', valor: '' })); showToast('✓ Pedido lançado'); onChange()
+    setF(p => ({ ...p, valor: '' })); showToast('✓ Pedido lançado'); onChange()
   }
   const del = async (id: number) => { if (!confirm('Remover este pedido?')) return; await fetch('/api/compras/pedidos/' + id, { method: 'DELETE' }); showToast('Removido'); onChange() }
 
@@ -216,42 +223,66 @@ function Pedidos({ cfg, pedidos, onChange, showToast }: { cfg: Config; pedidos: 
         <div className="card-eyebrow">Novo pedido</div>
         <div className="card-title" style={{ fontSize: 14, marginBottom: 14 }}>Lançar pedido de compra</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          <Field label="Fornecedor">
+            <select className="form-select" value={f.fornecedor} onChange={e => set('fornecedor', e.target.value)}>
+              <option value="">— Selecione —</option>
+              {fornecedoresAtivos.map(x => <option key={x.id} value={x.nome}>{x.nome}</option>)}
+            </select>
+          </Field>
+          <Field label="Valor do pedido (R$)"><input style={inp} type="number" value={f.valor} onChange={e => set('valor', e.target.value)} placeholder="0,00" /></Field>
           <Field label="Comprador"><select className="form-select" value={f.comprador} onChange={e => set('comprador', e.target.value)}>{cfg.compradores.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}</select></Field>
-          <Field label="Fornecedor"><input style={inp} value={f.fornecedor} onChange={e => set('fornecedor', e.target.value)} placeholder="Ex.: Zoetis" /></Field>
-          <Field label="Tipo"><select className="form-select" value={f.tipo} onChange={e => set('tipo', e.target.value)}>{['Externo', 'Local', 'Frete'].map(t => <option key={t}>{t}</option>)}</select></Field>
-          <Field label="Categoria"><select className="form-select" value={f.categoria} onChange={e => set('categoria', e.target.value)}>{cfg.categorias.map(c => <option key={c}>{c}</option>)}</select></Field>
-          <Field label="Data do pedido"><input style={inp} type="date" value={f.dataPedido} onChange={e => set('dataPedido', e.target.value)} /></Field>
-          <Field label="Valor total (R$)"><input style={inp} type="number" value={f.valor} onChange={e => set('valor', e.target.value)} placeholder="0,00" /></Field>
-          <Field label="Nº parcelas"><input style={inp} type="number" min={1} value={f.parcelas} onChange={e => set('parcelas', e.target.value)} /></Field>
-          <Field label="Status"><select className="form-select" value={f.status} onChange={e => set('status', e.target.value)}>{['Pendente', 'Parcial', 'Pago'].map(s => <option key={s}>{s}</option>)}</select></Field>
-          <Field label="1ª parcela (dias)"><input style={inp} type="number" value={f.primeiraDias} onChange={e => set('primeiraDias', e.target.value)} /></Field>
-          <Field label="Intervalo (dias)"><input style={inp} type="number" value={f.intervaloDias} onChange={e => set('intervaloDias', e.target.value)} /></Field>
-          <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'flex-end' }}>
+          <Field label="Data do pedido"><input style={inp} type="date" value={f.dataPedido} onChange={e => { set('dataPedido', e.target.value); if (e.target.value) regen(datas.length, e.target.value) }} /></Field>
+          <Field label="Pagamento parcelado?">
+            <select className="form-select" value={f.parcelado} onChange={e => onParcelado(e.target.value)}>
+              <option value="nao">Não — à vista / pagamento único</option>
+              <option value="sim">Sim — parcelado</option>
+            </select>
+          </Field>
+          {f.parcelado === 'sim' && (
+            <Field label="Nº de parcelas"><input style={inp} type="number" min={2} max={24} value={f.nParcelas} onChange={e => onNParcelas(e.target.value)} /></Field>
+          )}
+          <div style={{ gridColumn: f.parcelado === 'sim' ? 'span 2' : 'span 2', display: 'flex', alignItems: 'flex-end' }}>
             <button className="btn btn-primary" disabled={busy} onClick={add} style={{ width: '100%' }}>{busy ? '…' : '+ Lançar pedido'}</button>
           </div>
         </div>
-        {preview && <div style={{ marginTop: 12, fontSize: 12, color: C.textSoft }}>📅 Vencimentos: <b>{preview}</b></div>}
+
+        {/* Datas de pagamento */}
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${C.line}` }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 8 }}>
+            {f.parcelado === 'sim' ? `Datas das ${datas.length} parcelas${valorNum ? ` (${fmtK(valorNum / datas.length)} cada)` : ''}` : 'Data do pagamento'}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {datas.map((d, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {f.parcelado === 'sim' && <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>{i + 1}ª</span>}
+                <input style={{ ...inp, width: 150 }} type="date" value={d} onChange={e => setData(i, e.target.value)} />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}><div className="card-title" style={{ fontSize: 14 }}>{pedidos.length} pedidos lançados</div></div>
         <div className="table-wrap" style={{ maxHeight: '60vh' }}>
           <table>
-            <thead style={{ position: 'sticky', top: 0 }}><tr><th style={{ textAlign: 'left' }}>Data</th><th style={{ textAlign: 'left' }}>Comprador</th><th style={{ textAlign: 'left' }}>Fornecedor</th><th style={{ textAlign: 'left' }}>Categoria</th><th style={{ textAlign: 'right' }}>Valor</th><th>Parcelas</th><th>Status</th><th></th></tr></thead>
+            <thead style={{ position: 'sticky', top: 0 }}><tr><th style={{ textAlign: 'left' }}>Data</th><th style={{ textAlign: 'left' }}>Comprador</th><th style={{ textAlign: 'left' }}>Fornecedor</th><th style={{ textAlign: 'right' }}>Valor</th><th style={{ textAlign: 'left' }}>Pagamentos</th><th></th></tr></thead>
             <tbody>
               {pedidos.map(p => (
                 <tr key={p.id}>
                   <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{new Date(p.dataPedido).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</td>
                   <td style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{p.comprador}</td>
                   <td style={{ fontSize: 12 }}>{p.fornecedor || '—'}</td>
-                  <td style={{ fontSize: 11, color: C.textMuted }}>{p.categoria || '—'}</td>
-                  <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600 }}>{fmt(p.valor)}</td>
-                  <td style={{ textAlign: 'center', fontSize: 11 }}>{p.parcelas}× <span style={{ color: C.textMuted }}>({p.primeiraDias}/{p.intervaloDias}d)</span></td>
-                  <td style={{ textAlign: 'center', fontSize: 11 }}>{p.status}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(p.valor)}</td>
+                  <td style={{ fontSize: 11, color: C.textSoft }}>
+                    {Array.isArray(p.datas) && p.datas.length
+                      ? `${p.datas.length}× · ` + p.datas.map(fmtDia).join(' · ')
+                      : `${p.parcelas}× (${p.primeiraDias}/${p.intervaloDias}d)`}
+                  </td>
                   <td style={{ textAlign: 'center' }}><button className="btn btn-sm btn-danger" onClick={() => del(p.id)}>×</button></td>
                 </tr>
               ))}
-              {!pedidos.length && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 32, color: C.textMuted }}>Nenhum pedido lançado ainda.</td></tr>}
+              {!pedidos.length && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 32, color: C.textMuted }}>Nenhum pedido lançado ainda.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -262,7 +293,8 @@ function Pedidos({ cfg, pedidos, onChange, showToast }: { cfg: Config; pedidos: 
 
 // ─────────────────────────── CONFIG ───────────────────────────
 function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analytics; onChange: () => void; showToast: (m: string) => void }) {
-  const [novaCat, setNovaCat] = useState('')
+  const [novoForn, setNovoForn] = useState('')
+  const [buscaForn, setBuscaForn] = useState('')
   const [novoComp, setNovoComp] = useState({ nome: '', limite: '', setor: '' })
   const post = async (body: unknown) => { const r = await fetch('/api/compras/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) showToast('Erro'); else onChange() }
   const inp: React.CSSProperties = { padding: '6px 9px', border: `1px solid ${C.line}`, borderRadius: 4, fontSize: 13 }
@@ -314,19 +346,26 @@ function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analyt
           </div>
         </div>
         <div className="card">
-          <div className="card-eyebrow">Categorias de compra</div>
-          <div className="card-title" style={{ fontSize: 14, marginBottom: 12 }}>Lista usada nos pedidos e na projeção</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            {cfg.categorias.map(cat => (
-              <span key={cat} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#eef2f8', borderRadius: 4, padding: '4px 8px', fontSize: 12, color: C.navy }}>
-                {cat}<button onClick={() => post({ kind: 'categoria', op: 'delete', data: { nome: cat } })} style={{ border: 'none', background: 'none', color: C.red, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
-              </span>
+          <div className="card-eyebrow">Fornecedores</div>
+          <div className="card-title" style={{ fontSize: 14, marginBottom: 12 }}>Pré-cadastro usado no lançamento de pedidos ({cfg.fornecedores.length})</div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input style={{ ...inp, flex: 1 }} placeholder="Novo fornecedor" value={novoForn} onChange={e => setNovoForn(e.target.value)} />
+            <button className="btn btn-primary btn-sm" onClick={() => { if (novoForn.trim()) { post({ kind: 'fornecedor', op: 'upsert', data: { nome: novoForn.trim() } }); setNovoForn('') } }}>+ Adicionar</button>
+          </div>
+          <input style={{ ...inp, width: '100%', marginBottom: 8 }} placeholder="Buscar…" value={buscaForn} onChange={e => setBuscaForn(e.target.value)} />
+          <div style={{ maxHeight: 260, overflow: 'auto', border: `1px solid ${C.line}`, borderRadius: 4 }}>
+            {cfg.fornecedores.filter(x => !buscaForn.trim() || x.nome.toUpperCase().includes(buscaForn.trim().toUpperCase())).map(x => (
+              <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', borderBottom: `1px solid ${C.line}`, opacity: x.ativo ? 1 : 0.5 }}>
+                <span style={{ flex: 1, fontSize: 12, color: C.navy }}>{x.nome}</span>
+                <label style={{ fontSize: 10, color: C.textMuted, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="checkbox" defaultChecked={x.ativo} onChange={e => post({ kind: 'fornecedor', op: 'upsert', data: { id: x.id, nome: x.nome, ativo: e.target.checked } })} />ativo
+                </label>
+                <button className="btn btn-sm btn-danger" onClick={() => post({ kind: 'fornecedor', op: 'delete', data: { id: x.id } })}>×</button>
+              </div>
             ))}
+            {!cfg.fornecedores.length && <div style={{ padding: 16, fontSize: 12, color: C.textMuted, textAlign: 'center' }}>Nenhum fornecedor — importe os boletos do ERP (o cadastro é semeado automaticamente) ou adicione acima.</div>}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input style={{ ...inp, flex: 1 }} placeholder="Nova categoria" value={novaCat} onChange={e => setNovaCat(e.target.value)} />
-            <button className="btn btn-primary btn-sm" onClick={() => { if (novaCat.trim()) { post({ kind: 'categoria', op: 'upsert', data: { nome: novaCat.trim() } }); setNovaCat('') } }}>+ Adicionar</button>
-          </div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8 }}>💡 Ao importar os boletos do ERP pela 1ª vez, os fornecedores reais são cadastrados automaticamente.</div>
         </div>
       </div>
     </div>

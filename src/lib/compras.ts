@@ -9,14 +9,26 @@ export interface OrderLike {
   parcelas: number
   primeiraDias: number
   intervaloDias: number
+  datas?: unknown          // Json: array de datas ISO ("YYYY-MM-DD") das parcelas
 }
 
 export const ymKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 export const ymLabel = (key: string) => { const [y, m] = key.split('-'); return `${MONTHS[+m - 1]}/${y.slice(2)}` }
 
-// datas/valores de cada parcela de um pedido
+// datas/valores de cada parcela de um pedido.
+// Preferência: datas EXPLÍCITAS (o.datas); fallback: primeiraDias/intervaloDias (pedidos antigos).
 export function installments(o: OrderLike): { due: Date; amount: number }[] {
+  const explicit = Array.isArray(o.datas)
+    ? (o.datas as unknown[])
+        .filter((x): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}/.test(x))
+        .map(x => new Date(x.length === 10 ? x + 'T00:00:00Z' : x))
+        .filter(d => !isNaN(d.getTime()))
+    : []
+  if (explicit.length > 0) {
+    const per = o.valor / explicit.length
+    return explicit.map(due => ({ due, amount: per }))
+  }
   const n = Math.max(1, Math.round(o.parcelas || 1))
   const per = o.valor / n
   const base = o.dataPedido.getTime()

@@ -26,6 +26,16 @@ async function seedIfEmpty() {
     await prisma.comprador.createMany({ data: DEFAULT_COMPRADORES.map(c => ({ ...c, limite: 0, ativo: true })), skipDuplicates: true })
   if (await prisma.purchaseSetting.findUnique({ where: { key: 'metaCmvPct' } }) === null)
     await prisma.purchaseSetting.create({ data: { key: 'metaCmvPct', value: 0.70 } })
+  // Pré-cadastro de fornecedores: se vazio, semeia com os credores reais dos boletos do ERP
+  if (await prisma.fornecedor.count() === 0) {
+    const boletos = await prisma.purchaseCommit.findMany({ select: { fornecedor: true }, distinct: ['fornecedor'] })
+    if (boletos.length) {
+      await prisma.fornecedor.createMany({
+        data: boletos.map(b => ({ nome: b.fornecedor.trim() })).filter(f => f.nome),
+        skipDuplicates: true,
+      })
+    }
+  }
 }
 
 // Receita de referência = RECEITA LÍQUIDA (Bruta − Deduções) do MÊS ANTERIOR ao
@@ -46,15 +56,16 @@ async function receitaRef(): Promise<{ ym: string | null; value: number; exato: 
 
 export async function GET() {
   await seedIfEmpty()
-  const [compradores, categorias, settings, rec] = await Promise.all([
+  const [compradores, categorias, fornecedores, settings, rec] = await Promise.all([
     prisma.comprador.findMany({ orderBy: { nome: 'asc' } }),
     prisma.purchaseCategoria.findMany({ orderBy: { nome: 'asc' } }),
+    prisma.fornecedor.findMany({ orderBy: { nome: 'asc' } }),
     prisma.purchaseSetting.findMany(),
     receitaRef(),
   ])
   const settingsMap: Record<string, number> = {}
   settings.forEach(s => settingsMap[s.key] = s.value)
-  return NextResponse.json({ compradores, categorias: categorias.map(c => c.nome), settings: settingsMap, receitaRef: rec })
+  return NextResponse.json({ compradores, categorias: categorias.map(c => c.nome), fornecedores, settings: settingsMap, receitaRef: rec })
 }
 
 export async function POST(req: Request) {
@@ -67,6 +78,10 @@ export async function POST(req: Request) {
     } else if (kind === 'categoria') {
       if (op === 'delete') await prisma.purchaseCategoria.deleteMany({ where: { nome: data.nome } })
       else await prisma.purchaseCategoria.create({ data: { nome: data.nome } })
+    } else if (kind === 'fornecedor') {
+      if (op === 'delete') await prisma.fornecedor.deleteMany({ where: { id: data.id } })
+      else if (data.id) await prisma.fornecedor.update({ where: { id: data.id }, data: { nome: data.nome, ativo: data.ativo ?? true } })
+      else await prisma.fornecedor.create({ data: { nome: String(data.nome).trim(), ativo: true } })
     } else if (kind === 'setting') {
       await prisma.purchaseSetting.upsert({ where: { key: data.key }, create: { key: data.key, value: data.value }, update: { value: data.value } })
     } else {

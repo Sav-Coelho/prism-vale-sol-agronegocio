@@ -73,7 +73,7 @@ export async function GET() {
   const cmvAtualPct = refLimit.baseYm && (recliq.get(refLimit.baseYm) ?? 0) > 0 ? compradoTotalMes / (recliq.get(refLimit.baseYm) ?? 1) : 0
 
   // ── Projeção: boletos do ERP + parcelas dos pedidos manuais, por mês × categoria ──
-  const catOf = (p: typeof pedidos[number]) => p.categoria || 'Sem categoria'
+  const catOf = (p: typeof pedidos[number]) => p.categoria || 'Pedidos lançados'
   const bucket = new Map<string, Map<string, number>>()
   const bump = (k: string, cat: string, v: number) => {
     if (!bucket.has(k)) bucket.set(k, new Map())

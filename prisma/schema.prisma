@@ -202,25 +202,34 @@ model Comprador {
   ativo  Boolean @default(true)
 }
 
-// Pedido de compra. Suporta parcelamento: `parcelas` pagamentos, o 1º em
-// `primeiraDias` dias após o pedido, os demais a cada `intervaloDias`.
+// Pedido de compra. Parcelamento por DATAS EXPLÍCITAS (`datas` = array ISO de
+// vencimentos, valor rateado igualmente). Campos primeiraDias/intervaloDias
+// permanecem como fallback de pedidos antigos.
 model PurchaseOrder {
   id            Int      @id @default(autoincrement())
   comprador     String
   fornecedor    String?
-  tipo          String?  // Local | Externo | Frete
-  categoria     String?
+  tipo          String?  // legado
+  categoria     String?  // legado
   dataPedido    DateTime
   valor         Float
   parcelas      Int      @default(1)
-  primeiraDias  Int      @default(30)   // dias até a 1ª parcela vencer
-  intervaloDias Int      @default(30)   // intervalo entre parcelas
+  datas         Json?    // ["2026-08-30", "2026-09-30", ...] — datas de pagamento
+  primeiraDias  Int      @default(30)
+  intervaloDias Int      @default(30)
   status        String   @default("Pendente")
   observacao    String?
   createdAt     DateTime @default(now())
 
   @@index([comprador])
   @@index([dataPedido])
+}
+
+// Pré-cadastro de fornecedores para o lançamento de pedidos.
+model Fornecedor {
+  id    Int     @id @default(autoincrement())
+  nome  String  @unique
+  ativo Boolean @default(true)
 }
 
 // Lista editável de categorias de compra.
