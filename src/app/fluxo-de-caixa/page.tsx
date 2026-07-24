@@ -1,14 +1,18 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
 import {
-  BarChart, Bar, LineChart, Line, ScatterChart, Scatter,
+  BarChart, Bar, LineChart, Line, ScatterChart, Scatter, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
 
-type Tab = 'import' | 'view'
+type Tab = 'import' | 'view' | 'daily'
 type Kind = 'receivable' | 'payable'
+
+interface DailyItem { nome: string; titulo: string | null; parcela: string | null; classif: string | null; valor: number }
+interface DailyDay { date: string; receber: number; pagar: number; saldoDia: number; acumulado: number; nReceber: number; nPagar: number; recebimentos: DailyItem[]; pagamentos: DailyItem[] }
+interface DailyResponse { hasData: boolean; hoje: string; resumo: { totReceber: number; totPagar: number; saldo: number; nDias: number }; dias: DailyDay[] }
 
 interface ItemRow {
   fitid: string
@@ -101,6 +105,7 @@ function detectFilialFromFilename(name: string): string | null {
 export default function FluxoDeCaixa() {
   const [tab, setTab] = useState<Tab>('view')
   const [series, setSeries] = useState<SeriesResponse | null>(null)
+  const [daily, setDaily] = useState<DailyResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedUnit, setSelectedUnit] = useState<string>('') // '' = Consolidado
   const [toast, setToast] = useState('')
@@ -110,6 +115,7 @@ export default function FluxoDeCaixa() {
     setLoading(true)
     const qs = unit ? `?unit=${encodeURIComponent(unit)}` : ''
     fetch('/api/cash-flow/series' + qs).then(r => r.json()).then(d => { setSeries(d); setLoading(false) })
+    fetch('/api/cash-flow/daily').then(r => r.json()).then(setDaily)
   }
   useEffect(() => { loadSeries(selectedUnit) }, [selectedUnit])
 
@@ -143,7 +149,7 @@ export default function FluxoDeCaixa() {
             </div>
           )}
           <div style={{ display: 'flex', gap: 6 }}>
-            {([['view', 'Visão Geral'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
+            {([['view', 'Visão Geral'], ['daily', 'Por Dia'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
               <button key={k}
                 className={tab === k ? 'btn btn-primary' : 'btn'}
                 onClick={() => setTab(k)}>
@@ -156,6 +162,7 @@ export default function FluxoDeCaixa() {
 
       {tab === 'import' && <ImportPanel showToast={showToast} onSaved={() => loadSeries(selectedUnit)} />}
       {tab === 'view'   && (loading ? <Loading /> : series ? <ViewPanel series={series} /> : <Loading />)}
+      {tab === 'daily'  && (daily ? <DailyPanel daily={daily} /> : <Loading />)}
 
       {toast && <div className="toast">{toast}</div>}
     </Shell>
@@ -740,6 +747,132 @@ function ScatterDaysVsValue({
       <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, textAlign: 'right' }}>
         {data.length} {entityLabel}{data.length !== 1 ? 'es' : ''} · média ponderada pela exposição: <b style={{ color: C.navy }}>{avgRound} dias</b>
       </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────
+//  DAILY PANEL — fluxo por dia com as contas componentes
+// ─────────────────────────────────────────────────────────
+const WEEKDAY = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+const dayLabel = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y.slice(2)}` }
+const dayShort = (iso: string) => { const [, m, d] = iso.split('-'); return `${d}/${m}` }
+const weekdayOf = (iso: string) => WEEKDAY[new Date(iso + 'T00:00:00Z').getUTCDay()]
+const fmtK2 = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0)) }
+
+function DailyPanel({ daily }: { daily: DailyResponse }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  if (!daily.hasData) {
+    return <div className="card"><div className="empty-state"><div className="empty-state-icon">◇</div><div className="empty-state-title">Sem lançamentos futuros</div></div></div>
+  }
+  const chartData = daily.dias.slice(0, 45).map(d => ({ dia: dayShort(d.date), receber: d.receber, pagar: d.pagar, acumulado: d.acumulado }))
+  const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
+  const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
+
+  return (
+    <>
+      <div className="card mb-6">
+        <div className="grid-4" style={{ gap: 28 }}>
+          <KpiBig label="A receber (futuro)" value={fmt(daily.resumo.totReceber)} sub={`${daily.resumo.nDias} dias com movimento`} color={C.green} />
+          <KpiBig label="A pagar (futuro)" value={fmt(daily.resumo.totPagar)} sub="vencimentos de hoje em diante" color={C.red} />
+          <KpiBig label="Saldo projetado" value={fmt(daily.resumo.saldo)} sub="a receber − a pagar" color={daily.resumo.saldo >= 0 ? C.green : C.red} />
+          <KpiBig label="Hoje" value={dayLabel(daily.hoje)} sub={weekdayOf(daily.hoje)} color={C.navy} />
+        </div>
+      </div>
+
+      <div className="card mb-6 card-accent-yellow">
+        <div className="card-header">
+          <div>
+            <div className="card-eyebrow">Próximos 45 dias com movimento</div>
+            <div className="card-title">Entradas × Saídas por dia · saldo acumulado</div>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart data={chartData} margin={{ top: 8, right: 24, bottom: 4, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+            <XAxis dataKey="dia" tick={{ fontSize: 9, fill: C.textSoft }} stroke={C.line} interval={2} />
+            <YAxis tick={{ fontSize: 10, fill: C.textSoft }} stroke={C.line} tickFormatter={fmtK2} />
+            <Tooltip {...tooltipStyle} formatter={(v: number) => fmt(v)} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="receber" name="A receber" fill={C.green} radius={[2, 2, 0, 0]} />
+            <Bar dataKey="pagar" name="A pagar" fill={C.red} radius={[2, 2, 0, 0]} />
+            <Line dataKey="acumulado" name="Saldo acumulado" stroke={C.navy} strokeWidth={2} dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
+          <div className="card-eyebrow">Dia a dia</div>
+          <div className="card-title" style={{ fontSize: 14 }}>Clique num dia para ver as contas componentes</div>
+        </div>
+        <div className="table-wrap" style={{ maxHeight: '65vh' }}>
+          <table>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Dia</th>
+                <th style={{ textAlign: 'right' }}>A receber</th>
+                <th style={{ textAlign: 'right' }}>A pagar</th>
+                <th style={{ textAlign: 'right' }}>Saldo do dia</th>
+                <th style={{ textAlign: 'right' }}>Acumulado</th>
+                <th style={{ width: 30 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {daily.dias.map(d => {
+                const isOpen = open[d.date]
+                return (
+                  <Fragment key={d.date}>
+                    <tr onClick={() => toggle(d.date)} style={{ cursor: 'pointer', background: isOpen ? '#eef2f8' : undefined }}>
+                      <td style={{ fontSize: 13, fontWeight: 600, color: C.navy, whiteSpace: 'nowrap' }}>
+                        {dayLabel(d.date)} <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>· {weekdayOf(d.date)}</span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: C.green, fontWeight: 600 }}>{d.receber ? fmt(d.receber) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{d.nReceber ? ` (${d.nReceber})` : ''}</span></td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: C.red, fontWeight: 600 }}>{d.pagar ? fmt(d.pagar) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{d.nPagar ? ` (${d.nPagar})` : ''}</span></td>
+                      <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: d.saldoDia >= 0 ? C.green : C.red }}>{fmt(d.saldoDia)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: d.acumulado >= 0 ? C.navy : C.red }}>{fmt(d.acumulado)}</td>
+                      <td style={{ textAlign: 'center', color: C.gold }}>{isOpen ? '▾' : '▸'}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: 0, background: '#fbfcfe' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+                            <DayList titulo={`A RECEBER · ${d.nReceber} título${d.nReceber !== 1 ? 's' : ''} · ${fmt(d.receber)}`} cor={C.green} items={d.recebimentos} />
+                            <DayList titulo={`A PAGAR · ${d.nPagar} título${d.nPagar !== 1 ? 's' : ''} · ${fmt(d.pagar)}`} cor={C.red} items={d.pagamentos} borda />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
+        Vencimentos de hoje em diante, um dia por linha. O acumulado soma os saldos diários na ordem — assume liquidação no vencimento.
+      </p>
+    </>
+  )
+}
+
+function DayList({ titulo, cor, items, borda }: { titulo: string; cor: string; items: DailyItem[]; borda?: boolean }) {
+  const MAX = 80
+  return (
+    <div style={{ padding: '12px 20px', borderLeft: borda ? `1px solid ${C.line}` : undefined }}>
+      <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, color: cor, marginBottom: 8 }}>{titulo}</div>
+      {items.length === 0 && <div style={{ fontSize: 12, color: C.textMuted }}>— nada neste dia —</div>}
+      {items.slice(0, MAX).map((i, k) => (
+        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, padding: '3px 0', borderBottom: `1px solid ${C.line}` }}>
+          <span style={{ color: C.navy, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {i.nome}
+            <span style={{ color: C.textMuted, fontSize: 10 }}>{i.titulo ? ` · tít ${i.titulo}${i.parcela ? '/' + i.parcela : ''}` : ''}{i.classif ? ` · ${i.classif}` : ''}</span>
+          </span>
+          <span style={{ fontWeight: 600, whiteSpace: 'nowrap', color: cor }}>{fmt(i.valor)}</span>
+        </div>
+      ))}
+      {items.length > MAX && <div style={{ fontSize: 11, color: C.textMuted, paddingTop: 6 }}>… e mais {items.length - MAX} títulos</div>}
     </div>
   )
 }
