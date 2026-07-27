@@ -1,6 +1,7 @@
 /**
- * Alimenta o /fluxo-de-caixa a partir do CashFlow Analítico consolidado (projetado).
- * Mapeia TIPO E (entrada) → Receivable e TIPO S (saída) → Payable, sob filial 'CONSOLIDADO'.
+ * Alimenta o /fluxo-de-caixa a partir do CashFlow Analítico (projetado).
+ * Mapeia TIPO E (entrada) → Receivable e TIPO S (saída) → Payable, preservando a
+ * FILIAL do arquivo (fallback 'CONSOLIDADO' se vier vazia).
  * Wipe TOTAL de Receivable/Payable e substitui por esta projeção (decisão do usuário).
  * A stale-rule (dueDate <= hoje não entra em análise) é aplicada pela /series na leitura.
  */
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   const H = (m[0] || []).map(h => norm(h))
   const col = (name: string) => H.indexOf(name)
   const iData = col('DATA'), iOrig = col('DATA_ORIGEM'), iHist = col('HISTORICO'), iDoc = col('DOCUMENTO'), iTipo = col('TIPO'), iVal = col('VALOR')
-  const iC1 = col('CLASSIF_CONTABIL(1)')
+  const iC1 = col('CLASSIF_CONTABIL(1)'), iFil = col('FILIAL')
   if (iData < 0 || iTipo < 0 || iVal < 0) {
     return NextResponse.json({ error: 'Formato não reconhecido (esperado CashFlow Analítico: DATA, TIPO, VALOR).' }, { status: 400 })
   }
@@ -52,6 +53,7 @@ export async function POST(req: Request) {
     const hist = clean(row[iHist]) || (iC1 >= 0 ? clean(row[iC1]) : '') || '(sem histórico)'
     const { titulo, parcela } = splitDoc(clean(row[iDoc]))
     const classif = iC1 >= 0 ? clean(row[iC1]) : null
+    const filial = (iFil >= 0 ? clean(row[iFil]) : '') || FILIAL
     const tipo = clean(row[iTipo]) === 'S' ? 'S' : 'E'
     const amt = Math.abs(val)
 
@@ -59,13 +61,13 @@ export async function POST(req: Request) {
       receivables.push({
         fitid: `cfa|E|${r}`, dueDate: due, issueDate: orig,
         customerName: hist, customerDoc: null, titulo, parcela,
-        amount: amt, netAmount: amt, filial: FILIAL, observation: classif, status: 'PENDING',
+        amount: amt, netAmount: amt, filial, observation: classif, status: 'PENDING',
       })
     } else {
       payables.push({
         fitid: `cfa|S|${r}`, dueDate: due, entryDate: orig,
         supplierName: hist, supplierDoc: null, titulo, parcela,
-        amount: amt, netAmount: amt, filial: FILIAL, operacao: classif, observation: classif, status: 'PENDING',
+        amount: amt, netAmount: amt, filial, operacao: classif, observation: classif, status: 'PENDING',
       })
     }
   }
