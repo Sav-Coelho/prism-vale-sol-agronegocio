@@ -42,12 +42,19 @@ export async function GET() {
   })
   const latestRecYm = Array.from(recliq.keys()).sort().pop() ?? null
 
-  // limite de um mês = meta% × Rec.Líq. do mês ANTERIOR (fallback: último mês com receita)
-  const limitInfo = (ym: string): { limite: number; baseYm: string | null; exato: boolean } => {
-    const p = prevYm(ym)
-    if (recliq.has(p)) return { limite: (recliq.get(p) ?? 0) * metaCmvPct, baseYm: p, exato: true }
-    if (latestRecYm) return { limite: (recliq.get(latestRecYm) ?? 0) * metaCmvPct, baseYm: latestRecYm, exato: false }
-    return { limite: 0, baseYm: null, exato: false }
+  // Limite de um mês (regra do cliente, automática):
+  //  · se os 3 meses-calendário ANTERIORES têm receita líquida na DRE → meta% × MÉDIA dos 3;
+  //  · senão, meta% × Rec.Líq. do mês anterior;
+  //  · senão, último mês disponível (fallback sinalizado).
+  const limitInfo = (ym: string): { limite: number; baseYm: string | null; exato: boolean; modo: '3m' | '1m' | 'fallback' } => {
+    const p1 = prevYm(ym), p2 = prevYm(p1), p3 = prevYm(p2)
+    if (recliq.has(p1) && recliq.has(p2) && recliq.has(p3)) {
+      const media = ((recliq.get(p1) ?? 0) + (recliq.get(p2) ?? 0) + (recliq.get(p3) ?? 0)) / 3
+      return { limite: media * metaCmvPct, baseYm: `${p3}…${p1}`, exato: true, modo: '3m' }
+    }
+    if (recliq.has(p1)) return { limite: (recliq.get(p1) ?? 0) * metaCmvPct, baseYm: p1, exato: true, modo: '1m' }
+    if (latestRecYm) return { limite: (recliq.get(latestRecYm) ?? 0) * metaCmvPct, baseYm: latestRecYm, exato: false, modo: 'fallback' }
+    return { limite: 0, baseYm: null, exato: false, modo: 'fallback' }
   }
 
   // mês de referência = mês corrente (servidor, UTC)
@@ -55,6 +62,8 @@ export async function GET() {
   const curStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
   const refYm = ymKey(curStart)
   const refLimit = limitInfo(refYm)
+  // base de receita usada no limite do mês corrente (média dos 3 ou mês único)
+  const receitaBase = metaCmvPct > 0 ? refLimit.limite / metaCmvPct : 0
 
   // ── Resumo por comprador (comprado NO MÊS pela data do pedido) ──
   const compradoNoMes = new Map<string, number>()
@@ -70,7 +79,7 @@ export async function GET() {
   })
   const limiteTotal = compradores.filter(c => c.ativo).reduce((s, c) => s + c.limite, 0)
   const compradoTotalMes = Array.from(compradoNoMes.values()).reduce((s, v) => s + v, 0)
-  const cmvAtualPct = refLimit.baseYm && (recliq.get(refLimit.baseYm) ?? 0) > 0 ? compradoTotalMes / (recliq.get(refLimit.baseYm) ?? 1) : 0
+  const cmvAtualPct = receitaBase > 0 ? compradoTotalMes / receitaBase : 0
 
   // ── Projeção: boletos do ERP + parcelas dos pedidos manuais, por mês × categoria ──
   const catOf = (p: typeof pedidos[number]) => p.categoria || 'Pedidos lançados'
@@ -129,7 +138,7 @@ export async function GET() {
 
   return NextResponse.json({
     refYm, refLabel: ymLabel(refYm),
-    receitaRef: { ym: refLimit.baseYm, value: refLimit.baseYm ? (recliq.get(refLimit.baseYm) ?? 0) : 0, exato: refLimit.exato },
+    receitaRef: { ym: refLimit.baseYm, value: receitaBase, exato: refLimit.exato, modo: refLimit.modo },
     metaCmvPct, limiteCmvMensal: refLimit.limite,
     limiteTotal, compradoTotalMes, saldoTotal: limiteTotal - compradoTotalMes, cmvAtualPct,
     resumoCompradores,

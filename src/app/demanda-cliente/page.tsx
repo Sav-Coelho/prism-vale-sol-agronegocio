@@ -5,12 +5,13 @@ import { CommercialUploader } from '@/components/CommercialUploader'
 import { BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number>; tCur: number; tPrev: number; yoy: number | null; perdidoYoY: boolean; margem: number | null }
+interface VendRank { nome: string; total: number; tCur: number; tPrev: number; yoy: number | null; clientesAtivos: number; clientesPerdidos: number; clientesNovos: number; margem: number | null }
 interface Overview {
   hasData: boolean; months: string[]
   curYear: number; prevYear: number | null; cmpUpTo: number; hasYoY: boolean
   filtros: { vendedores: string[]; anos: number[]; vendedor: string | null; years: number[]; months: number[] }
   kpis: { totalGeral: number; nClientes: number; nProdutos: number; ticketMedio: number; totalCur: number; totalPrev: number; yoyGeral: number | null; perdidosYoY: number }
-  monthlyTotal: Record<string, number>; clientes: Cli[]; distAbc: Record<string, number>; statusDist: Record<string, number>
+  monthlyTotal: Record<string, number>; clientes: Cli[]; distAbc: Record<string, number>; statusDist: Record<string, number>; vendedoresRank: VendRank[]
 }
 interface DetailProduto { code: string | null; nome: string; total: number; qtd: number; byMonth: Record<string, number>; margem: number | null }
 interface Detail {
@@ -43,6 +44,7 @@ export default function DemandaCliente() {
   const [vendF, setVendF] = useState('')
   const [yearsF, setYearsF] = useState<number[]>([])
   const [monthsF, setMonthsF] = useState<number[]>([])
+  const [view, setView] = useState<'clientes' | 'vendedores'>('clientes')
 
   const load = async () => {
     setLoading(true)
@@ -175,7 +177,16 @@ export default function DemandaCliente() {
             </div>
           </div>
 
+          {/* Toggle Clientes × Vendedores */}
+          <div style={{ display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: 6, overflow: 'hidden', marginBottom: 14 }}>
+            <button onClick={() => setView('clientes')} className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: view === 'clientes' ? C.navy : '#fff', color: view === 'clientes' ? '#fff' : C.textSoft, fontWeight: 600 }}>◉ Clientes</button>
+            <button onClick={() => setView('vendedores')} className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: view === 'vendedores' ? C.navy : '#fff', color: view === 'vendedores' ? '#fff' : C.textSoft, fontWeight: 600 }}>★ Ranking de Vendedores</button>
+          </div>
+
+          {view === 'vendedores' && <VendedoresRank ov={ov} />}
+
           {/* Ranking de clientes */}
+          {view === 'clientes' && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <div className="card-title" style={{ fontSize: 14 }}>Clientes {statusF && `· ${statusF}`} <span style={{ color: C.textMuted, fontWeight: 400 }}>({filtered.length})</span></div>
@@ -212,6 +223,7 @@ export default function DemandaCliente() {
               <b>Margem</b> = margem de venda real: (valor vendido − qtd × custo de reposição do ABC de Estoque) ÷ valor vendido, nos itens com custo conhecido.
             </div>
           </div>
+          )}
 
           {sel && !detail && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -222,6 +234,66 @@ export default function DemandaCliente() {
         </>
       )}
     </Shell>
+  )
+}
+
+function VendedoresRank({ ov }: { ov: Overview }) {
+  const vs = ov.vendedoresRank ?? []
+  const maxCur = Math.max(1, ...vs.map(v => ov.hasYoY ? v.tCur : v.total))
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
+        <div className="card-eyebrow">Avaliação comercial</div>
+        <div className="card-title" style={{ fontSize: 14 }}>Ranking de Vendedores <span style={{ color: C.textMuted, fontWeight: 400 }}>({vs.length}) — respeita os filtros acima</span></div>
+      </div>
+      <div className="table-wrap" style={{ maxHeight: '62vh' }}>
+        <table>
+          <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
+            <tr>
+              <th style={{ textAlign: 'left' }}>#</th>
+              <th style={{ textAlign: 'left' }}>Vendedor</th>
+              <th style={{ textAlign: 'right' }}>{ov.hasYoY ? `Faturamento ${ov.curYear}` : 'Faturamento'}</th>
+              {ov.hasYoY && <th style={{ textAlign: 'right' }}>{ov.prevYear}</th>}
+              {ov.hasYoY && <th style={{ textAlign: 'right' }}>Δ a/a</th>}
+              <th style={{ textAlign: 'right' }}>Margem real</th>
+              <th style={{ textAlign: 'right' }}>Clientes ativos</th>
+              {ov.hasYoY && <th style={{ textAlign: 'right' }}>Perdidos</th>}
+              {ov.hasYoY && <th style={{ textAlign: 'right' }}>Novos</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {vs.map((v, i) => {
+              const val = ov.hasYoY ? v.tCur : v.total
+              return (
+                <tr key={v.nome}>
+                  <td style={{ fontSize: 12, color: C.textMuted }}>{i + 1}º</td>
+                  <td style={{ fontSize: 13, fontWeight: 600, color: C.navy, whiteSpace: 'nowrap' }}>
+                    {v.nome}
+                    <div style={{ background: '#eef2f8', borderRadius: 2, height: 4, marginTop: 4, width: 160 }}>
+                      <div style={{ width: `${Math.min(100, val / maxCur * 100)}%`, height: 4, background: C.gold, borderRadius: 2 }} />
+                    </div>
+                  </td>
+                  <td style={{ textAlign: 'right', fontSize: 13, fontWeight: 700 }}>{fmt(val)}</td>
+                  {ov.hasYoY && <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{fmtK(v.tPrev)}</td>}
+                  {ov.hasYoY && (
+                    <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: v.yoy == null ? C.textMuted : v.yoy >= 0 ? C.green : C.amber }}>
+                      {v.yoy == null ? '—' : `${v.yoy >= 0 ? '+' : ''}${(v.yoy * 100).toFixed(0)}%`}
+                    </td>
+                  )}
+                  <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: mgColor(v.margem) }}>{mgFmt(v.margem)}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12 }}>{v.clientesAtivos}</td>
+                  {ov.hasYoY && <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: v.clientesPerdidos > 0 ? C.red : C.textMuted }}>{v.clientesPerdidos}</td>}
+                  {ov.hasYoY && <td style={{ textAlign: 'right', fontSize: 12, color: v.clientesNovos > 0 ? C.green : C.textMuted }}>{v.clientesNovos}</td>}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: '8px 20px', fontSize: 11, color: C.textMuted, borderTop: `1px solid ${C.line}` }}>
+        <b>Perdidos</b> = clientes do vendedor que compravam em {ov.prevYear ?? 'ano anterior'} e não compraram em {ov.curYear}; <b>Novos</b> = o inverso. <b>Margem real</b> = sobre o preço efetivamente praticado × custo de reposição.
+      </div>
+    </div>
   )
 }
 

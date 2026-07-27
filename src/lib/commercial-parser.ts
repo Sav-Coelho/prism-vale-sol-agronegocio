@@ -105,8 +105,8 @@ export function parseStockAbc(buffer: ArrayBuffer): ParsedStock[] {
   const descIdx = idx['DESCRICAO'] ?? idx['DESCRIÇÃO']
   const qtyIdx  = idx['QTDE'] ?? idx['QUANTIDADE']
   // indexHeaders normaliza (uppercase + sem acento), então busca só a forma normalizada.
-  // O ERP passou a exportar "CUSTO UNITÁRIO" → "CUSTO UNITARIO"; versões antigas usavam só "CUSTO"
-  const costIdx = idx['CUSTO UNITARIO'] ?? idx['CUSTO']
+  // Layouts do ERP já vistos: "CUSTO UNITÁRIO", "CUSTO" e (jul/2026) "CUSTO LIQUIDO".
+  const costIdx = idx['CUSTO UNITARIO'] ?? idx['CUSTO LIQUIDO'] ?? idx['CUSTO']
   const totalIdx = idx['VALOR TOTAL'] ?? idx['VALOR']
 
   const items: ParsedStock[] = []

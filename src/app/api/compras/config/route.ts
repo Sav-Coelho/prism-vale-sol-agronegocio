@@ -38,20 +38,24 @@ async function seedIfEmpty() {
   }
 }
 
-// Receita de referência = RECEITA LÍQUIDA (Bruta − Deduções) do MÊS ANTERIOR ao
-// corrente (regra: limite de julho = meta% × Rec. Líq. de junho). Se o mês
-// anterior não tem receita na DRE ainda, usa o último mês disponível.
-async function receitaRef(): Promise<{ ym: string | null; value: number; exato: boolean }> {
+// Receita de referência do limite (regra automática do cliente):
+//  · 3 meses anteriores completos na DRE → MÉDIA dos 3;
+//  · senão, Rec. Líq. do mês anterior;
+//  · senão, último mês disponível.
+async function receitaRef(): Promise<{ ym: string | null; value: number; exato: boolean; modo: string }> {
   const rows = await prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } })
-  if (!rows.length) return { ym: null, value: 0, exato: false }
+  if (!rows.length) return { ym: null, value: 0, exato: false, modo: 'fallback' }
   const byMonth = new Map<string, number>()
   rows.forEach(r => { const k = `${r.year}-${String(r.month).padStart(2, '0')}`; byMonth.set(k, (byMonth.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount)) })
   const now = new Date()
-  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
-  const prevKey = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`
-  if (byMonth.has(prevKey)) return { ym: prevKey, value: byMonth.get(prevKey) ?? 0, exato: true }
+  const keyOf = (off: number) => { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - off, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}` }
+  const [p1, p2, p3] = [keyOf(1), keyOf(2), keyOf(3)]
+  if (byMonth.has(p1) && byMonth.has(p2) && byMonth.has(p3)) {
+    return { ym: `${p3}…${p1}`, value: ((byMonth.get(p1) ?? 0) + (byMonth.get(p2) ?? 0) + (byMonth.get(p3) ?? 0)) / 3, exato: true, modo: '3m' }
+  }
+  if (byMonth.has(p1)) return { ym: p1, value: byMonth.get(p1) ?? 0, exato: true, modo: '1m' }
   const latest = Array.from(byMonth.keys()).sort().pop()!
-  return { ym: latest, value: byMonth.get(latest) ?? 0, exato: false }
+  return { ym: latest, value: byMonth.get(latest) ?? 0, exato: false, modo: 'fallback' }
 }
 
 export async function GET() {

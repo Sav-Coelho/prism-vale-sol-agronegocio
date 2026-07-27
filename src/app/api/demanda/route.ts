@@ -156,6 +156,37 @@ export async function GET(req: NextRequest) {
   const statusDist: Record<string, number> = {}
   clientes.forEach(c => statusDist[c.status] = (statusDist[c.status] ?? 0) + 1)
 
+  // ── Ranking de VENDEDORES (mesma janela filtrada) ──
+  interface VendCli { tCur: number; tPrev: number }
+  interface Vend { nome: string; total: number; tCur: number; tPrev: number; cmpCur: number; cmpPrev: number; clientes: Map<string, VendCli>; valCC: number; cusCC: number }
+  const vmap = new Map<string, Vend>()
+  win.forEach(r => {
+    const v = r.vendedor || '(sem vendedor)'
+    if (!vmap.has(v)) vmap.set(v, { nome: v, total: 0, tCur: 0, tPrev: 0, cmpCur: 0, cmpPrev: 0, clientes: new Map(), valCC: 0, cusCC: 0 })
+    const x = vmap.get(v)!
+    x.total += r.valor
+    if (!x.clientes.has(r.clienteCode)) x.clientes.set(r.clienteCode, { tCur: 0, tPrev: 0 })
+    const vc = x.clientes.get(r.clienteCode)!
+    if (r.year === curYear) { x.tCur += r.valor; vc.tCur += r.valor; if (cmpMonths.includes(r.month)) x.cmpCur += r.valor }
+    if (prevYear && r.year === prevYear) { x.tPrev += r.valor; vc.tPrev += r.valor; if (cmpMonths.includes(r.month)) x.cmpPrev += r.valor }
+    const custo = r.produtoCode ? costs.get(r.produtoCode) : undefined
+    if (custo != null && r.valor > 0) { x.valCC += r.valor; x.cusCC += r.qtd * custo }
+  })
+  const vendedoresRank = Array.from(vmap.values()).map(v => {
+    let ativos = 0, perdidos = 0, novosCli = 0
+    v.clientes.forEach(vc => {
+      if (vc.tCur > 0) ativos++
+      if (hasYoY && vc.tPrev > 0 && vc.tCur === 0) perdidos++
+      if (hasYoY && vc.tPrev === 0 && vc.tCur > 0) novosCli++
+    })
+    return {
+      nome: v.nome, total: v.total, tCur: v.tCur, tPrev: v.tPrev,
+      yoy: hasYoY && v.cmpPrev > 0 ? (v.cmpCur - v.cmpPrev) / v.cmpPrev : null,
+      clientesAtivos: ativos, clientesPerdidos: perdidos, clientesNovos: novosCli,
+      margem: v.valCC > 0 ? (v.valCC - v.cusCC) / v.valCC : null,
+    }
+  }).sort((a, b) => (hasYoY ? b.tCur - a.tCur : b.total - a.total))
+
   const sumCmpCur = sorted.reduce((s, c) => s + c.cmpCur, 0)
   const sumCmpPrev = sorted.reduce((s, c) => s + c.cmpPrev, 0)
   const sumTCur = sorted.reduce((s, c) => s + c.tCur, 0)
@@ -175,6 +206,6 @@ export async function GET(req: NextRequest) {
       yoyGeral: hasYoY && sumCmpPrev > 0 ? (sumCmpCur - sumCmpPrev) / sumCmpPrev : null,
       perdidosYoY,
     },
-    monthlyTotal, clientes, distAbc: dist, statusDist,
+    monthlyTotal, clientes, distAbc: dist, statusDist, vendedoresRank,
   })
 }

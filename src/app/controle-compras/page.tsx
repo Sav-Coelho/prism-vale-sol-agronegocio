@@ -7,13 +7,13 @@ import {
   ResponsiveContainer, Legend, Cell,
 } from 'recharts'
 
-type Tab = 'dashboard' | 'pedidos' | 'config'
+type Tab = 'dashboard' | 'pedidos' | 'reposicao' | 'config'
 interface Comprador { id: number; nome: string; limite: number; setor: string | null; ativo: boolean }
 interface FornecedorReg { id: number; nome: string; ativo: boolean }
 interface Pedido { id: number; comprador: string; fornecedor: string | null; tipo: string | null; categoria: string | null; dataPedido: string; valor: number; parcelas: number; datas?: string[] | null; primeiraDias: number; intervaloDias: number; status: string }
 interface Config { compradores: Comprador[]; categorias: string[]; fornecedores: FornecedorReg[]; settings: Record<string, number>; receitaRef: { ym: string | null; value: number } }
 interface Analytics {
-  refLabel: string; receitaRef: { ym: string | null; value: number; exato?: boolean }; metaCmvPct: number; limiteCmvMensal: number
+  refLabel: string; receitaRef: { ym: string | null; value: number; exato?: boolean; modo?: string }; metaCmvPct: number; limiteCmvMensal: number
   limiteTotal: number; compradoTotalMes: number; saldoTotal: number; cmvAtualPct: number
   resumoCompradores: { nome: string; setor: string | null; limite: number; comprado: number; saldo: number; util: number; status: string }[]
   categorias: string[]; months: string[]; projecao: Record<string, number | string>[]; porCategoria: { categoria: string; total: number }[]; comprometidoTotal: number; nPedidos: number
@@ -58,7 +58,7 @@ export default function ControleCompras() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {([['dashboard', 'Dashboard'], ['pedidos', 'Pedidos'], ['config', 'Config']] as [Tab, string][]).map(([k, l]) => (
+          {([['dashboard', 'Dashboard'], ['pedidos', 'Pedidos'], ['reposicao', 'Reposição por Giro'], ['config', 'Config']] as [Tab, string][]).map(([k, l]) => (
             <button key={k} className={tab === k ? 'btn btn-primary' : 'btn'} onClick={() => setTab(k)}>{l}</button>
           ))}
         </div>
@@ -70,6 +70,7 @@ export default function ControleCompras() {
         <>
           {tab === 'dashboard' && <Dashboard an={an} onReload={load} />}
           {tab === 'pedidos' && <Pedidos cfg={cfg} pedidos={pedidos} onChange={load} showToast={showToast} />}
+          {tab === 'reposicao' && <ReposicaoPanel an={an} />}
           {tab === 'config' && <ConfigPanel cfg={cfg} an={an} onChange={load} showToast={showToast} />}
         </>
       )}
@@ -82,7 +83,9 @@ export default function ControleCompras() {
 function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
   const catColor = (i: number) => CAT_COLORS[i % CAT_COLORS.length]
-  const refMesAnterior = an.receitaRef.ym ? an.receitaRef.ym.split('-').reverse().join('/') : '—'
+  const refBaseLabel = an.receitaRef.modo === '3m'
+    ? `média 3 meses (${an.receitaRef.ym})`
+    : `Rec. Líq. ${an.receitaRef.ym ? an.receitaRef.ym.split('-').reverse().join('/') : '—'}${an.receitaRef.exato === false ? ' (últ. disp.)' : ''}`
   return (
     <>
       <div className="grid-5 mb-6">
@@ -91,7 +94,7 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
         <Kpi label="Saldo disponível" value={fmt(an.saldoTotal)} color={an.saldoTotal >= 0 ? C.green : C.red} />
         <Kpi label="CMV atual (% rec. líq.)" value={pct(an.cmvAtualPct)} sub={`meta ${pct(an.metaCmvPct)}`} color={an.cmvAtualPct <= an.metaCmvPct ? C.green : C.red} />
         <Kpi label={`Limite de compras · ${an.refLabel}`} value={fmt(an.limiteCmvMensal)}
-          sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × Rec. Líq. ${refMesAnterior}${an.receitaRef.exato === false ? ' (últ. disp.)' : ''}` : 'sem receita na DRE'}
+          sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × ${refBaseLabel}` : 'sem receita na DRE'}
           color={C.navyMid} />
       </div>
 
@@ -369,6 +372,106 @@ function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analyt
         </div>
       </div>
     </div>
+  )
+}
+
+// ─────────────────────────── REPOSIÇÃO POR GIRO ───────────────────────────
+interface RepRow { code: string; nome: string; classe: string; qtdVendida: number; faturamento: number; giroDia: number; estoque: number; cobertura: number | null; status: string; sugQtd: number; sugCusto: number | null; custo: number | null; semCadastroEstoque: boolean }
+interface RepData { hasData: boolean; params: { alvoDias: number; baseDias: number }; kpis: { itens: number; precisaRepor: number; rupturasA: number; custoReporTudo: number; custoReporA: number; semCusto: number }; statusDist: Record<string, number>; rows: RepRow[] }
+const REP_COLOR: Record<string, string> = { RUPTURA: C.red, 'CRÍTICO': '#d3542c', REPOR: C.amber, OK: C.green, EXCESSO: '#6a5acd' }
+
+function ReposicaoPanel({ an }: { an: Analytics }) {
+  const [alvo, setAlvo] = useState(30)
+  const [rep, setRep] = useState<RepData | null>(null)
+  const [statusF, setStatusF] = useState('')
+  const [classeF, setClasseF] = useState('')
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    setRep(null)
+    fetch(`/api/compras/reposicao?dias=${alvo}`).then(r => r.json()).then(setRep)
+  }, [alvo])
+
+  const folgaProx = (() => {
+    const next = an.projecao.find(p => (p.total as number) > 0 && (p.folga as number) !== undefined)
+    return next ? { mes: String(next.mes), folga: Number(next.folga) } : null
+  })()
+
+  const chip = (active: boolean, color = C.navy): React.CSSProperties => ({ border: `1px solid ${active ? color : C.line}`, background: active ? color : '#fff', color: active ? '#fff' : C.textSoft, borderRadius: 20, padding: '4px 12px', fontSize: 12, cursor: 'pointer' })
+  const rows = (rep?.rows ?? []).filter(r =>
+    (!statusF || r.status === statusF) && (!classeF || r.classe === classeF) &&
+    (!search.trim() || r.nome.toUpperCase().includes(search.trim().toUpperCase()) || r.code.includes(search.trim())))
+
+  if (!rep) return <div className="empty-state"><div className="empty-state-icon">◌</div><div className="empty-state-title">Calculando giro…</div></div>
+  if (!rep.hasData) return <div className="card"><div className="empty-state"><div className="empty-state-icon">♻</div><div className="empty-state-title">Sem dados de vendas/estoque</div><div className="empty-state-sub">Atualize o ABC de Vendas e o Estoque na Análise Comercial.</div></div></div>
+
+  return (
+    <>
+      <div className="grid-5 mb-6">
+        <Kpi label="Rupturas curva A" value={String(rep.kpis.rupturasA)} sub="vendem muito, estoque zero" color={C.red} />
+        <Kpi label="Itens a repor" value={String(rep.kpis.precisaRepor)} sub={`p/ cobertura de ${rep.params.alvoDias} dias`} color={C.amber} />
+        <Kpi label="Custo repor SÓ curva A" value={fmt(rep.kpis.custoReporA)} color={C.navy} />
+        <Kpi label="Custo repor tudo" value={fmt(rep.kpis.custoReporTudo)} sub={rep.kpis.semCusto ? `${rep.kpis.semCusto} itens sem custo fora` : undefined} color={C.navyMid} />
+        {folgaProx && <Kpi label={`Folga do limite · ${folgaProx.mes}`} value={fmt(folgaProx.folga)} sub="o que cabe sem estourar" color={folgaProx.folga >= rep.kpis.custoReporA ? C.green : C.red} />}
+      </div>
+
+      <div className="card mb-6" style={{ padding: '12px 20px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600 }}>Cobertura-alvo</span>
+          {[15, 30, 45, 60].map(d => <button key={d} style={chip(alvo === d, C.gold)} onClick={() => setAlvo(d)}>{d} dias</button>)}
+          <span style={{ width: 12 }} />
+          <span style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600 }}>Status</span>
+          {Object.entries(rep.statusDist).map(([s, n]) => (
+            <button key={s} style={chip(statusF === s, REP_COLOR[s] ?? C.navy)} onClick={() => setStatusF(statusF === s ? '' : s)}>{s} · {n}</button>
+          ))}
+          <span style={{ width: 12 }} />
+          {['A', 'B', 'C'].map(c => <button key={c} style={chip(classeF === c)} onClick={() => setClasseF(classeF === c ? '' : c)}>{c}</button>)}
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto…" style={{ marginLeft: 'auto', padding: '7px 10px', border: `1px solid ${C.line}`, borderRadius: 4, fontSize: 13, minWidth: 200 }} />
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
+          <div className="card-eyebrow">Prioridade: curva A → ruptura → cobertura</div>
+          <div className="card-title" style={{ fontSize: 14 }}>Sugestão de reposição <span style={{ color: C.textMuted, fontWeight: 400 }}>({rows.length} itens)</span></div>
+        </div>
+        <div className="table-wrap sticky-first" style={{ maxHeight: '62vh' }}>
+          <table style={{ minWidth: '100%' }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 3 }}>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Produto</th>
+                <th>Classe</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Giro/dia</th>
+                <th style={{ textAlign: 'right' }}>Estoque</th>
+                <th style={{ textAlign: 'right' }}>Cobertura</th>
+                <th style={{ textAlign: 'right' }}>Sugerir compra</th>
+                <th style={{ textAlign: 'right' }}>Custo sugerido</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 300).map(r => (
+                <tr key={r.code}>
+                  <td style={{ fontSize: 12, color: C.navy, fontWeight: 600, background: '#fff', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.nome}<span style={{ color: C.textMuted, fontWeight: 400, fontSize: 10 }}> · {r.code}</span></td>
+                  <td style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: r.classe === 'A' ? C.green : r.classe === 'B' ? C.gold : C.textMuted }}>{r.classe}</td>
+                  <td style={{ textAlign: 'center' }}><span style={{ background: REP_COLOR[r.status] ?? C.navy, color: '#fff', borderRadius: 3, padding: '2px 8px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{r.status}</span></td>
+                  <td style={{ textAlign: 'right', fontSize: 12 }}>{r.giroDia >= 1 ? r.giroDia.toFixed(1) : r.giroDia.toFixed(2)}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.estoque <= 0 ? C.red : C.navy }}>{r.estoque.toLocaleString('pt-BR')}{r.semCadastroEstoque ? ' *' : ''}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12, color: r.cobertura != null && r.cobertura < rep.params.alvoDias ? C.red : C.textSoft }}>{r.cobertura != null ? `${Math.round(r.cobertura)} d` : '—'}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: r.sugQtd > 0 ? C.navy : C.textMuted }}>{r.sugQtd > 0 ? r.sugQtd.toLocaleString('pt-BR') + ' un' : '—'}</td>
+                  <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600 }}>{r.sugCusto != null ? fmt(r.sugCusto) : r.sugQtd > 0 ? 'sem custo' : '—'}</td>
+                </tr>
+              ))}
+              {rows.length > 300 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 300 de {rows.length}. Use os filtros.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: '8px 20px', fontSize: 11, color: C.textMuted, borderTop: `1px solid ${C.line}` }}>
+          Giro/dia = vendas de {rep.params.baseDias} dias ÷ {rep.params.baseDias}. Cobertura = estoque ÷ giro. Sugestão = giro × {rep.params.alvoDias}d − estoque.
+          “*” = item vendido sem cadastro no relatório de estoque. Compare o custo da curva A com a folga do limite antes de aprovar os pedidos.
+        </div>
+      </div>
+    </>
   )
 }
 
