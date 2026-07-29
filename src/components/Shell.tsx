@@ -12,7 +12,6 @@ const NAV = [
   { href: '/risco-cliente',      icon: '◆', label: 'Risco de Cliente' },
   { href: '/analise-comercial',  icon: '⌬', label: 'Análise Comercial' },
   { href: '/demanda-cliente',    icon: '◉', label: 'Demanda por Cliente' },
-  { href: '/radar-precificacao', icon: '⊚', label: 'Radar de Precificação' },
 ]
 
 export default function Shell({ children }: { children: React.ReactNode }) {
