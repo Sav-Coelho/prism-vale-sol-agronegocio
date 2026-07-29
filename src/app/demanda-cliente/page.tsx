@@ -46,6 +46,9 @@ export default function DemandaCliente() {
   const [monthsF, setMonthsF] = useState<number[]>([])
   const [view, setView] = useState<'clientes' | 'vendedores'>('clientes')
 
+  const [selNome, setSelNome] = useState('')
+  const [errMsg, setErrMsg] = useState('')
+
   const load = async () => {
     setLoading(true)
     const p = new URLSearchParams()
@@ -57,7 +60,22 @@ export default function DemandaCliente() {
     setLoading(false)
   }
   useEffect(() => { load() }, [vendF, yearsF, monthsF])  // eslint-disable-line react-hooks/exhaustive-deps
-  const openCliente = async (code: string) => { setSel(code); setDetail(null); setDetail(await fetch('/api/demanda?cliente=' + encodeURIComponent(code)).then(r => r.json())) }
+
+  const fecharDrill = () => { setSel(null); setDetail(null); setSelNome('') }
+  const openCliente = async (code: string, nome: string) => {
+    setSel(code); setSelNome(nome); setDetail(null)
+    try {
+      const r = await fetch('/api/demanda?cliente=' + encodeURIComponent(code))
+      if (!r.ok) throw new Error('HTTP ' + r.status)
+      const d = await r.json()
+      if (!d?.hasData || d.notFound || !Array.isArray(d.produtos)) throw new Error('sem dados')
+      setDetail(d)
+    } catch {
+      fecharDrill()
+      setErrMsg(`Não consegui abrir "${nome}" — tente novamente em alguns segundos.`)
+      setTimeout(() => setErrMsg(''), 5000)
+    }
+  }
 
   const months = ov?.months ?? []
   const monthlySeries = useMemo(() => months.map(m => ({ mes: mLabel(m), valor: ov?.monthlyTotal[m] ?? 0 })), [ov, months])
@@ -199,7 +217,7 @@ export default function DemandaCliente() {
                 </thead>
                 <tbody>
                   {filtered.slice(0, 200).map(c => (
-                    <tr key={c.code} style={{ cursor: 'pointer' }} onClick={() => openCliente(c.code)}>
+                    <tr key={c.code} style={{ cursor: 'pointer' }} onClick={() => openCliente(c.code, c.nome)}>
                       <td style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{c.nome}<div style={{ fontSize: 10, color: C.textMuted }}>{c.code}{c.vendedor ? ` · ${c.vendedor}` : ''}</div></td>
                       <td style={{ textAlign: 'center' }}><span style={{ background: ABC_COLOR[c.abc], color: '#fff', borderRadius: 3, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{c.abc}</span></td>
                       <td style={{ textAlign: 'center', fontSize: 11, color: STATUS_COLOR[c.status] ?? C.textSoft, fontWeight: 600, whiteSpace: 'nowrap' }}>{c.status}</td>
@@ -226,11 +244,18 @@ export default function DemandaCliente() {
           )}
 
           {sel && !detail && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ background: '#fff', borderRadius: 6, padding: '22px 34px', fontSize: 14, color: C.navy }}>◌ Carregando cliente…</div>
+            <div onClick={fecharDrill} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 6, padding: '24px 34px', textAlign: 'center', maxWidth: 420 }}>
+                <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 6 }}>Abrindo cliente</div>
+                <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 18, color: C.navy, marginBottom: 14 }}>◌ {selNome || sel}</div>
+                <button className="btn btn-sm" onClick={fecharDrill}>← Voltar</button>
+              </div>
             </div>
           )}
-          {sel && detail && <ClienteDetail detail={detail} onClose={() => { setSel(null); setDetail(null) }} />}
+          {sel && detail && <ClienteDetail detail={detail} nomeFallback={selNome} onClose={fecharDrill} />}
+          {errMsg && (
+            <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: C.red, color: '#fff', padding: '10px 22px', borderRadius: 6, fontSize: 13, zIndex: 60, boxShadow: '0 4px 16px rgba(0,0,0,0.25)' }}>{errMsg}</div>
+          )}
         </>
       )}
     </Shell>
@@ -297,24 +322,33 @@ function VendedoresRank({ ov }: { ov: Overview }) {
   )
 }
 
-function ClienteDetail({ detail, onClose }: { detail: Detail; onClose: () => void }) {
+function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nomeFallback?: string; onClose: () => void }) {
   const months = detail.months ?? []
+  const produtos = detail.produtos ?? []
+  const nome = detail.nome || nomeFallback || `Cliente ${detail.cliente}`
   const monthly = useMemo(() => months.map(m => ({ mes: mLabel(m), valor: detail.monthly?.[m] ?? 0 })), [detail, months])
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
   const thSticky: React.CSSProperties = { position: 'sticky', top: 0, zIndex: 3, background: C.navy, color: '#fff' }
+  // ESC fecha e volta pro Arken
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
   return (
-    // Tela cheia (pedido da reunião): nome do cliente em destaque, sem side-sheet
+    // Tela cheia (pedido da reunião): nome do cliente em destaque + Voltar sempre visível
     <div style={{ position: 'fixed', inset: 0, background: '#f4f6fa', zIndex: 50, display: 'flex', flexDirection: 'column' }}>
       <div style={{ background: C.navy, color: '#fff', padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
+        <button className="btn" onClick={onClose} style={{ background: C.yellow, color: C.navy, fontWeight: 700, whiteSpace: 'nowrap' }}>← Voltar ao Arken</button>
+        <div style={{ flex: 1, minWidth: 240 }}>
           <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.yellow, fontWeight: 700 }}>Cliente {detail.cliente}{detail.vendedor ? ` · vendedor ${detail.vendedor}` : ''}</div>
-          <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 26, lineHeight: 1.1 }}>{detail.nome}</div>
+          <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 26, lineHeight: 1.1 }}>{nome}</div>
         </div>
         <div style={{ display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Total no período</div><div style={{ fontSize: 18, color: C.yellow, fontFamily: 'var(--font-serif), serif' }}>{fmt(detail.total)}</div></div>
-          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Produtos</div><div style={{ fontSize: 18, fontFamily: 'var(--font-serif), serif' }}>{detail.produtos.length}</div></div>
+          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Total no período</div><div style={{ fontSize: 18, color: C.yellow, fontFamily: 'var(--font-serif), serif' }}>{fmt(detail.total ?? 0)}</div></div>
+          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Produtos</div><div style={{ fontSize: 18, fontFamily: 'var(--font-serif), serif' }}>{produtos.length}</div></div>
           <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Margem média real</div><div style={{ fontSize: 18, fontFamily: 'var(--font-serif), serif', color: detail.margemMedia == null ? '#fff' : detail.margemMedia >= 0.2 ? '#7ce3a8' : detail.margemMedia >= 0.1 ? C.yellow : '#ff9c8f' }}>{mgFmt(detail.margemMedia)}</div></div>
-          <button className="btn" onClick={onClose} style={{ background: '#fff' }}>✕ Fechar</button>
+          <button className="btn" onClick={onClose} style={{ background: '#fff' }}>✕ Fechar (Esc)</button>
         </div>
       </div>
 
@@ -349,7 +383,7 @@ function ClienteDetail({ detail, onClose }: { detail: Detail; onClose: () => voi
               </div>
             </div>
           )}
-          {detail.dropped.length > 0 && (
+          {(detail.dropped?.length ?? 0) > 0 && (
             <div className="card" style={{ borderLeft: `3px solid ${C.amber}` }}>
               <div className="card-eyebrow" style={{ color: C.amber }}>Alerta recente</div>
               <div className="card-title" style={{ fontSize: 13, marginBottom: 8 }}>Sem compra nos últimos 2 meses — {detail.dropped.length} itens</div>
@@ -379,7 +413,7 @@ function ClienteDetail({ detail, onClose }: { detail: Detail; onClose: () => voi
                 </tr>
               </thead>
               <tbody>
-                {detail.produtos.map((p, i) => (
+                {produtos.map((p, i) => (
                   <tr key={i}>
                     <td style={{ fontSize: 12, color: C.navy, background: '#fff' }}>{p.nome}</td>
                     <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: mgColor(p.margem) }}>{mgFmt(p.margem)}</td>

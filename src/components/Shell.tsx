@@ -46,6 +46,16 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
       <div className={`layout${collapsed ? ' layout-collapsed' : ''}`}>
         <aside className="sidenav">
+          <button
+            type="button"
+            onClick={toggle}
+            className="sidenav-toggle"
+            aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
+            title={collapsed ? 'Expandir menu' : 'Recolher menu'}
+          >
+            <span className="sidenav-toggle-icon">{collapsed ? '›' : '‹'}</span>
+            {!collapsed && <span>Recolher menu</span>}
+          </button>
           {!collapsed && <div className="sidenav-section">Módulos</div>}
           {NAV.map(n => {
             const active = pathname.startsWith(n.href)
@@ -63,16 +73,6 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             )
           })}
 
-          <button
-            type="button"
-            onClick={toggle}
-            className="sidenav-toggle"
-            aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'}
-            title={collapsed ? 'Expandir menu' : 'Recolher menu'}
-          >
-            <span className="sidenav-toggle-icon">{collapsed ? '›' : '‹'}</span>
-            {!collapsed && <span>Recolher</span>}
-          </button>
         </aside>
 
         <main className="page">

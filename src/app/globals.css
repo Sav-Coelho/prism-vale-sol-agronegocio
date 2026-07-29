@@ -196,15 +196,15 @@ a:hover { color: var(--arken-navy-light); text-decoration: underline; }
 .layout-collapsed .sidenav-label { display: none; }
 .layout-collapsed .sidenav-icon { font-size: 16px; opacity: 1; }
 
-/* Botão de toggle no rodapé da sidenav */
+/* Botão de toggle no TOPO da sidenav (sempre visível, sem rolar) */
 .sidenav-toggle {
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
+  width: 100%;
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 14px 16px;
+  padding: 10px 16px 14px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--arken-line);
   background: transparent;
-  border: none;
-  border-top: 1px solid var(--arken-line);
+  border-top: none; border-left: none; border-right: none;
   color: var(--arken-text-muted);
   font-size: 11px;
   letter-spacing: 0.1em;
