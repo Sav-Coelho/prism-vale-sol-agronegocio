@@ -1,6 +1,14 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Shell from '@/components/Shell'
+
+// Renderiza no <body> — escapa de qualquer ancestral com transform que
+// prenderia o position:fixed ao container da página em vez do viewport.
+function BodyPortal({ children }: { children: React.ReactNode }) {
+  if (typeof document === 'undefined') return null
+  return createPortal(children, document.body)
+}
 import { CommercialUploader } from '@/components/CommercialUploader'
 import { BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -244,17 +252,21 @@ export default function DemandaCliente() {
           )}
 
           {sel && !detail && (
-            <div onClick={fecharDrill} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 6, padding: '24px 34px', textAlign: 'center', maxWidth: 420 }}>
-                <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 6 }}>Abrindo cliente</div>
-                <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 18, color: C.navy, marginBottom: 14 }}>◌ {selNome || sel}</div>
-                <button className="btn btn-sm" onClick={fecharDrill}>← Voltar</button>
+            <BodyPortal>
+              <div onClick={fecharDrill} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 6, padding: '24px 34px', textAlign: 'center', maxWidth: 420 }}>
+                  <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 6 }}>Abrindo cliente</div>
+                  <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 18, color: C.navy, marginBottom: 14 }}>◌ {selNome || sel}</div>
+                  <button className="btn btn-sm" onClick={fecharDrill}>← Voltar</button>
+                </div>
               </div>
-            </div>
+            </BodyPortal>
           )}
-          {sel && detail && <ClienteDetail detail={detail} nomeFallback={selNome} onClose={fecharDrill} />}
+          {sel && detail && <BodyPortal><ClienteDetail detail={detail} nomeFallback={selNome} onClose={fecharDrill} /></BodyPortal>}
           {errMsg && (
-            <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: C.red, color: '#fff', padding: '10px 22px', borderRadius: 6, fontSize: 13, zIndex: 60, boxShadow: '0 4px 16px rgba(0,0,0,0.25)' }}>{errMsg}</div>
+            <BodyPortal>
+              <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: C.red, color: '#fff', padding: '10px 22px', borderRadius: 6, fontSize: 13, zIndex: 60, boxShadow: '0 4px 16px rgba(0,0,0,0.25)' }}>{errMsg}</div>
+            </BodyPortal>
           )}
         </>
       )}
