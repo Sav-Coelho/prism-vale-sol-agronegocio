@@ -253,7 +253,7 @@ export default function DemandaCliente() {
 
           {sel && !detail && (
             <BodyPortal>
-              <div onClick={fecharDrill} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div onClick={fecharDrill} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.45)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 6, padding: '24px 34px', textAlign: 'center', maxWidth: 420 }}>
                   <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 6 }}>Abrindo cliente</div>
                   <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 18, color: C.navy, marginBottom: 14 }}>◌ {selNome || sel}</div>
@@ -265,7 +265,7 @@ export default function DemandaCliente() {
           {sel && detail && <BodyPortal><ClienteDetail detail={detail} nomeFallback={selNome} onClose={fecharDrill} /></BodyPortal>}
           {errMsg && (
             <BodyPortal>
-              <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: C.red, color: '#fff', padding: '10px 22px', borderRadius: 6, fontSize: 13, zIndex: 60, boxShadow: '0 4px 16px rgba(0,0,0,0.25)' }}>{errMsg}</div>
+              <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: C.red, color: '#fff', padding: '10px 22px', borderRadius: 6, fontSize: 13, zIndex: 210, boxShadow: '0 4px 16px rgba(0,0,0,0.25)' }}>{errMsg}</div>
             </BodyPortal>
           )}
         </>
@@ -352,7 +352,7 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
   // ── Minimizada: barrinha no canto, Arken totalmente utilizável atrás ──
   if (mode === 'min') {
     return (
-      <div style={{ position: 'fixed', bottom: 18, right: 18, zIndex: 55, background: C.navy, color: '#fff', borderRadius: 8, boxShadow: '0 8px 28px rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+      <div style={{ position: 'fixed', bottom: 18, right: 18, zIndex: 201, background: C.navy, color: '#fff', borderRadius: 8, boxShadow: '0 8px 28px rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
         <span style={{ fontSize: 12.5, fontWeight: 600, padding: '0 14px', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>◉ {nome}</span>
         <button className="win-btn" title="Restaurar" onClick={() => setMode('janela')}>❐</button>
         <button className="win-btn close" title="Fechar" onClick={onClose}>✕</button>
@@ -366,9 +366,10 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
 
   return (
     <>
-      {/* fundo escurecido — o Arken continua visível atrás; clicar fora fecha */}
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.5)', zIndex: 49 }} />
-      <div style={{ ...winStyle, zIndex: 50, background: '#f4f6fa', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 56px rgba(0,0,0,0.45)' }}>
+      {/* fundo escurecido — o Arken continua visível atrás; clicar fora fecha.
+          z-index acima da topbar (100) para a barra de título nunca ficar encoberta. */}
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.5)', zIndex: 200 }} />
+      <div style={{ ...winStyle, zIndex: 201, background: '#f4f6fa', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 56px rgba(0,0,0,0.45)' }}>
 
         {/* barra de título estilo navegador: nome à esquerda, — □ ✕ à direita */}
         <div style={{ background: C.navy, color: '#fff', display: 'flex', alignItems: 'center', height: 46, flexShrink: 0, paddingLeft: 18 }}>
