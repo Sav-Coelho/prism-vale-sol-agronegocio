@@ -469,6 +469,17 @@ th.sortable:not(.sort-asc):not(.sort-desc)::after { border-bottom: 5px solid cur
 @media (max-width: 1280px) { .grid-5 { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 720px)  { .grid-5 { grid-template-columns: repeat(2, 1fr); } }
 
+/* ── Botões de janela (estilo navegador) do drill de cliente ── */
+.win-btn {
+  width: 46px; height: 46px;
+  border: none; background: transparent; color: #fff;
+  font-size: 15px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 120ms ease;
+}
+.win-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.win-btn.close:hover { background: #b03022; }
+
 /* ── Documento de impressão da DRE (Salvar como PDF) ── */
 .dre-print { display: none; }
 @media print {

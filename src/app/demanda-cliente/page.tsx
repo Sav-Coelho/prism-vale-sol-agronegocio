@@ -323,6 +323,7 @@ function VendedoresRank({ ov }: { ov: Overview }) {
 }
 
 function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nomeFallback?: string; onClose: () => void }) {
+  const [mode, setMode] = useState<'janela' | 'max' | 'min'>('janela')
   const months = detail.months ?? []
   const produtos = detail.produtos ?? []
   const nome = detail.nome || nomeFallback || `Cliente ${detail.cliente}`
@@ -335,24 +336,49 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
-  return (
-    // Tela cheia (pedido da reunião): nome do cliente em destaque + Voltar sempre visível
-    <div style={{ position: 'fixed', inset: 0, background: '#f4f6fa', zIndex: 50, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ background: C.navy, color: '#fff', padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        <button className="btn" onClick={onClose} style={{ background: C.yellow, color: C.navy, fontWeight: 700, whiteSpace: 'nowrap' }}>← Voltar ao Arken</button>
-        <div style={{ flex: 1, minWidth: 240 }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.yellow, fontWeight: 700 }}>Cliente {detail.cliente}{detail.vendedor ? ` · vendedor ${detail.vendedor}` : ''}</div>
-          <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 26, lineHeight: 1.1 }}>{nome}</div>
-        </div>
-        <div style={{ display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Total no período</div><div style={{ fontSize: 18, color: C.yellow, fontFamily: 'var(--font-serif), serif' }}>{fmt(detail.total ?? 0)}</div></div>
-          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Produtos</div><div style={{ fontSize: 18, fontFamily: 'var(--font-serif), serif' }}>{produtos.length}</div></div>
-          <div><div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.75 }}>Margem média real</div><div style={{ fontSize: 18, fontFamily: 'var(--font-serif), serif', color: detail.margemMedia == null ? '#fff' : detail.margemMedia >= 0.2 ? '#7ce3a8' : detail.margemMedia >= 0.1 ? C.yellow : '#ff9c8f' }}>{mgFmt(detail.margemMedia)}</div></div>
-          <button className="btn" onClick={onClose} style={{ background: '#fff' }}>✕ Fechar (Esc)</button>
-        </div>
-      </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px 28px' }}>
+  // ── Minimizada: barrinha no canto, Arken totalmente utilizável atrás ──
+  if (mode === 'min') {
+    return (
+      <div style={{ position: 'fixed', bottom: 18, right: 18, zIndex: 55, background: C.navy, color: '#fff', borderRadius: 8, boxShadow: '0 8px 28px rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600, padding: '0 14px', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>◉ {nome}</span>
+        <button className="win-btn" title="Restaurar" onClick={() => setMode('janela')}>❐</button>
+        <button className="win-btn close" title="Fechar" onClick={onClose}>✕</button>
+      </div>
+    )
+  }
+
+  const winStyle: React.CSSProperties = mode === 'max'
+    ? { position: 'fixed', inset: 0, borderRadius: 0 }
+    : { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 'min(1240px, 94vw)', height: 'min(88vh, 920px)', borderRadius: 10 }
+
+  return (
+    <>
+      {/* fundo escurecido — o Arken continua visível atrás; clicar fora fecha */}
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,37,64,0.5)', zIndex: 49 }} />
+      <div style={{ ...winStyle, zIndex: 50, background: '#f4f6fa', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 16px 56px rgba(0,0,0,0.45)' }}>
+
+        {/* barra de título estilo navegador: nome à esquerda, — □ ✕ à direita */}
+        <div style={{ background: C.navy, color: '#fff', display: 'flex', alignItems: 'center', height: 46, flexShrink: 0, paddingLeft: 18 }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10, overflow: 'hidden' }}>
+            <span style={{ fontFamily: 'var(--font-serif), serif', fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>◉ {nome}</span>
+            <span style={{ fontSize: 11, color: '#9fb0c6', whiteSpace: 'nowrap' }}>cliente {detail.cliente}{detail.vendedor ? ` · vendedor ${detail.vendedor}` : ''}</span>
+          </div>
+          <div style={{ display: 'flex', flexShrink: 0 }}>
+            <button className="win-btn" title="Minimizar" onClick={() => setMode('min')}>—</button>
+            <button className="win-btn" title={mode === 'max' ? 'Restaurar janela' : 'Expandir (tela cheia)'} onClick={() => setMode(mode === 'max' ? 'janela' : 'max')}>{mode === 'max' ? '❐' : '□'}</button>
+            <button className="win-btn close" title="Fechar (Esc)" onClick={onClose}>✕</button>
+          </div>
+        </div>
+
+        {/* faixa de indicadores */}
+        <div style={{ background: C.navyMid, color: '#fff', padding: '8px 18px', display: 'flex', gap: 28, flexWrap: 'wrap', flexShrink: 0 }}>
+          <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Total no período </span><b style={{ color: C.yellow, fontSize: 14 }}>{fmt(detail.total ?? 0)}</b></div>
+          <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Produtos </span><b style={{ fontSize: 14 }}>{produtos.length}</b></div>
+          <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Margem média real </span><b style={{ fontSize: 14, color: detail.margemMedia == null ? '#fff' : detail.margemMedia >= 0.2 ? '#7ce3a8' : detail.margemMedia >= 0.1 ? C.yellow : '#ff9c8f' }}>{mgFmt(detail.margemMedia)}</b></div>
+        </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '18px 22px' }}>
         <div className="card mb-6">
           <div className="card-eyebrow">Tendência</div>
           <div className="card-title" style={{ fontSize: 13, marginBottom: 8 }}>Compras mês a mês</div>
@@ -401,7 +427,7 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
 
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '12px 18px', borderBottom: `1px solid ${C.line}` }}><div className="card-title" style={{ fontSize: 13 }}>Produtos comprados — colunas mensais</div></div>
-          <div className="table-wrap sticky-first" style={{ maxHeight: 'calc(100vh - 420px)', minHeight: 260 }}>
+          <div className="table-wrap sticky-first" style={{ maxHeight: '48vh', minHeight: 240 }}>
             <table style={{ minWidth: '100%' }}>
               {/* cabeçalho FIXO ao rolar na vertical (pedido da reunião) */}
               <thead>
@@ -426,7 +452,8 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   )
 }
 
