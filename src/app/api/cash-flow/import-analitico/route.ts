@@ -34,7 +34,18 @@ export async function POST(req: Request) {
   const H = (m[0] || []).map(h => norm(h))
   const col = (name: string) => H.indexOf(name)
   const iData = col('DATA'), iOrig = col('DATA_ORIGEM'), iHist = col('HISTORICO'), iDoc = col('DOCUMENTO'), iTipo = col('TIPO'), iVal = col('VALOR')
-  const iC1 = col('CLASSIF_CONTABIL(1)'), iFil = col('FILIAL')
+  const iFil = col('FILIAL')
+  const iCs = [1, 2, 3, 4, 5, 6].map(k => col('CLASSIF_CONTABIL(' + k + ')')).filter(i => i >= 0)
+  const iC1 = iCs.length ? iCs[0] : -1
+  // Classificação exibida = nível MAIS ESPECÍFICO preenchido (o nível 1 costuma ser
+  // genérico: "OUTRAS CONTAS › FORNECEDOR MERCADORIAS" → mostra "FORNECEDOR MERCADORIAS").
+  const classifOf = (row: unknown[]): string | null => {
+    for (let k = iCs.length - 1; k >= 0; k--) {
+      const v = clean(row[iCs[k]])
+      if (v) return v
+    }
+    return null
+  }
   if (iData < 0 || iTipo < 0 || iVal < 0) {
     return NextResponse.json({ error: 'Formato não reconhecido (esperado CashFlow Analítico: DATA, TIPO, VALOR).' }, { status: 400 })
   }
@@ -52,7 +63,7 @@ export async function POST(req: Request) {
     const orig = iOrig >= 0 ? serial(row[iOrig]) : null
     const hist = clean(row[iHist]) || (iC1 >= 0 ? clean(row[iC1]) : '') || '(sem histórico)'
     const { titulo, parcela } = splitDoc(clean(row[iDoc]))
-    const classif = iC1 >= 0 ? clean(row[iC1]) : null
+    const classif = classifOf(row)
     const filial = (iFil >= 0 ? clean(row[iFil]) : '') || FILIAL
     const tipo = clean(row[iTipo]) === 'S' ? 'S' : 'E'
     const amt = Math.abs(val)
