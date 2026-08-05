@@ -14,14 +14,14 @@ export async function GET() {
   const today = new Date()
   today.setUTCHours(0, 0, 0, 0)
 
+  // Inclui TUDO que está na base — inclusive vencimentos já passados (decisão do
+  // usuário: o fluxo mostra o extrato completo, não só o futuro).
   const [receivables, payables] = await Promise.all([
     prisma.receivable.findMany({
-      where: { dueDate: { gte: today } },
       select: { dueDate: true, customerName: true, titulo: true, parcela: true, netAmount: true, observation: true },
       orderBy: { dueDate: 'asc' },
     }),
     prisma.payable.findMany({
-      where: { dueDate: { gte: today } },
       select: { dueDate: true, supplierName: true, titulo: true, parcela: true, netAmount: true, operacao: true },
       orderBy: { dueDate: 'asc' },
     }),

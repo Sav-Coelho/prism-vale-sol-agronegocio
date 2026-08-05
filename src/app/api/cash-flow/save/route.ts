@@ -28,9 +28,8 @@ export async function POST(req: Request) {
   }
   const filial = body.filial.trim()
 
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const isStale = (isoDueDate: string) => new Date(isoDueDate) <= today
+  // Inclui TUDO: vencimentos passados também entram (decisão do usuário).
+  const isStale = (_isoDueDate: string) => false
 
   if (kind === 'receivable') {
     const valid = (body.items as ParsedReceivable[]).filter(i => !isStale(i.dueDate))

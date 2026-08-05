@@ -28,10 +28,8 @@ function daysBetween(later: Date, earlier: Date) {
 }
 
 export async function GET(req: NextRequest) {
-  // Filtra apenas títulos futuros (dueDate > hoje) — vencidos não entram em análise
-  const cutoff = new Date()
-  cutoff.setHours(0, 0, 0, 0)
-
+  // Inclui TUDO que está na base, inclusive vencimentos passados (decisão do
+  // usuário: o fluxo reflete o extrato completo importado, sem recorte).
   const { searchParams } = new URL(req.url)
   const unit = searchParams.get('unit')?.trim()
   const unitFilter = unit ? { filial: unit } : {}
@@ -49,14 +47,14 @@ export async function GET(req: NextRequest) {
       select: { filial: true },
     }),
     prisma.receivable.findMany({
-      where: { dueDate: { gt: cutoff }, ...unitFilter },
+      where: { ...unitFilter },
       select: {
         dueDate: true, issueDate: true, amount: true, netAmount: true,
         customerName: true, status: true,
       },
     }),
     prisma.payable.findMany({
-      where: { dueDate: { gt: cutoff }, ...unitFilter },
+      where: { ...unitFilter },
       select: {
         dueDate: true, entryDate: true, amount: true, netAmount: true,
         supplierName: true, status: true,

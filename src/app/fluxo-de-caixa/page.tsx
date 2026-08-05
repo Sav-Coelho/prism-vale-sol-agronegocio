@@ -126,9 +126,9 @@ export default function FluxoDeCaixa() {
           <div className="page-eyebrow">Módulo · Tesouraria</div>
           <h1 className="page-title">Fluxo de Caixa</h1>
           <p className="page-subtitle">
-            Projeção de caixa consolidada da contabilidade — entradas e saídas previstas
-            por data de vencimento. Considera apenas compromissos com vencimento futuro;
-            vencidos ou do dia não entram na projeção.
+            Projeção de caixa consolidada da contabilidade — entradas e saídas por data de
+            vencimento. Considera <b>todos</b> os lançamentos importados, inclusive vencimentos
+            já passados.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -218,8 +218,8 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
 
   const save = async () => {
     if (!preview) return
-    const valid = preview.items.filter(i => !i.isStale)
-    if (valid.length === 0) { showToast('Nenhum título com vencimento futuro pra salvar'); return }
+    const valid = preview.items   // inclui todos, vencidos também
+    if (valid.length === 0) { showToast('Nenhum título pra salvar'); return }
     const kindLabel = preview.kind === 'receivable' ? 'títulos a receber' : 'pagamentos a efetuar'
     const confirmMsg = `Isso vai APAGAR todos os ${kindLabel} da filial "${preview.filial}" e substituir pelos ${valid.length} desta planilha. Demais filiais não são afetadas. Confirma?`
     if (!confirm(confirmMsg)) return
@@ -327,8 +327,8 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn" onClick={() => setPreview(null)}>Descartar</button>
-            <button className="btn btn-primary" onClick={save} disabled={saving || preview.validCount === 0}>
-              {saving ? 'Salvando…' : `Autorizar e substituir base (${preview.validCount})`}
+            <button className="btn btn-primary" onClick={save} disabled={saving || preview.total === 0}>
+              {saving ? 'Salvando…' : `Autorizar e substituir base (${preview.total})`}
             </button>
           </div>
         </div>
@@ -336,13 +336,13 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
         <div style={{ marginBottom: 14, padding: '10px 14px', background: '#fff8e1', border: `1px solid ${C.gold}`, borderRadius: 4, fontSize: 12, color: '#7a5c00', lineHeight: 1.5 }}>
           ⚠ <b>Substituição completa.</b> Ao salvar, todos os {isRecv ? 'títulos a receber' : 'pagamentos a efetuar'} atualmente
           no banco serão <b>apagados</b> e substituídos pelos {preview.validCount} desta planilha. Isso garante
-          que títulos cancelados no ERP entre importações também sumam aqui. Títulos com vencimento <b>vencido ou do dia atual</b>
-          ({preview.staleCount}) são ignorados automaticamente — não entram em análise de fluxo futuro.
+          que títulos cancelados no ERP entre importações também sumam aqui. <b>Todos</b> os títulos entram,
+          inclusive os já vencidos ({preview.staleCount} com vencimento até hoje).
         </div>
 
         <div style={{ display: 'flex', gap: 24, marginBottom: 18 }}>
-          <KpiInline label="Válidos (vencimento futuro)" value={String(preview.validCount)} color={C.green} />
-          <KpiInline label="Vencidos / do dia (ignorados)" value={String(preview.staleCount)} color={C.amber} />
+          <KpiInline label="Com vencimento futuro" value={String(preview.validCount)} color={C.green} />
+          <KpiInline label="Já vencidos (também entram)" value={String(preview.staleCount)} color={C.amber} />
           <KpiInline label="Total no arquivo" value={String(preview.total)} color={C.navy} />
         </div>
 
