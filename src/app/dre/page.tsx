@@ -343,10 +343,9 @@ export default function DrePage() {
           </div>
 
           <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
-            Regime de caixa. Despesas classificadas pelo <b>plano de contas oficial do contador</b> (não mais heurística). <b>Compras de Mercadoria</b> = Fornecedor Mercadorias (caixa),
-            já depuradas: <b>Multmunde (intragrupo)</b> vai para memo e <b>veículo financiado</b> para CAPEX/Financeiras. Orga Log permanece em mercadoria (laboratório fatura pela logística — confirmado).
-            CAPEX (compra de veículos) em Investimentos; transferências entre lojas excluídas; reembolso a cliente abatido em Deduções.
-            <b> Período: Jan–Jun/2026</b> — receita e despesas no mesmo intervalo (fechamento de julho entra quando chegarem os títulos recebidos do mês).
+            Regime de caixa, com o <b>CashFlow Analítico da contabilidade como fonte única</b> — receita e despesa saem do mesmo razão, no mesmo intervalo.
+            Depurações aplicadas: <b>Multmunde (intragrupo)</b> em memo, <b>veículo financiado</b> em CAPEX/Financeiras, transferências entre lojas excluídas,
+            reembolso a cliente <b>líquido</b> nas Deduções e Orga Log em mercadoria (laboratório fatura pela logística — confirmado).
             Valores sem centavos por espaço; abra as subcontas e lançamentos para o detalhe.
           </p>
         </>

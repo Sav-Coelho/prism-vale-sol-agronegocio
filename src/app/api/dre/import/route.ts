@@ -8,6 +8,7 @@
 import { prisma } from '@/lib/prisma'
 import { parseDre, canonicalizeUnit } from '@/lib/dre-parser'
 import { parseExpenseReport } from '@/lib/dre-expense-parser'
+import { buildDreFromCashflow, isCashflowAnaliticoFile } from '@/lib/dre-cashflow-source'
 import { classifyExpense } from '@/lib/dre-classifier'
 import * as XLSX from 'xlsx'
 import { NextResponse } from 'next/server'
@@ -42,6 +43,26 @@ export async function POST(req: Request) {
     const cur = map.get(k)
     if (cur) cur.amount += amount
     else map.set(k, { ...b, amount })
+  }
+
+  // ── CashFlow Analítico como FONTE ÚNICA da DRE (receita + despesa) ──
+  // Substitui TUDO (receita e despesa) pelos meses presentes no arquivo.
+  if (isCashflowAnaliticoFile(buf)) {
+    const { entries, months, rows, totalE, totalS } = buildDreFromCashflow(buf)
+    const data = entries.map(e => ({ ...e }))
+    const result = await prisma.$transaction(async tx => {
+      const del = await tx.dreEntry.deleteMany({})     // fonte única: base inteira é substituída
+      let ins = 0
+      const CHUNK = 3000
+      for (let i = 0; i < data.length; i += CHUNK) {
+        ins += (await tx.dreEntry.createMany({ data: data.slice(i, i + CHUNK) })).count
+      }
+      return { deleted: del.count, inserted: ins }
+    }, { timeout: 240_000 })
+    return NextResponse.json({
+      kind: 'dre-from-cashflow', months, linhasBrutas: rows,
+      totalEntradas: totalE, totalSaidas: totalS, buckets: data.length, ...result,
+    })
   }
 
   // ── Relatório de Despesas classificado (plano de contas do contador) ──
