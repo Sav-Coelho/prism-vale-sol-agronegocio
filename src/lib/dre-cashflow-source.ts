@@ -53,7 +53,11 @@ function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string
 
   // ── SAÍDAS ──
   if (has('DEPOSITO C/C') || has('TRANSFERENCIA ENTRE LOJAS')) return null   // transferência: fora
-  if (W.includes('MULTMUNDE') || W.includes('MULTIMUNDO')) return { line: 'INTRAGRUPO', sub: 'Transferências Multmunde' }
+  // Intragrupo = pagamento AO fornecedor Multmunde (histórico), não a despesa
+  // operacional da loja "DESPESAS MULTMUNDE MATRIZ - LOJA 1", que é despesa normal.
+  if ((W.includes('MULTMUNDE') || W.includes('MULTIMUNDO')) && has('FORNECEDOR MERCADORIAS')) {
+    return { line: 'INTRAGRUPO', sub: 'Transferências Multmunde' }
+  }
   if (W.includes('FCA FIAT') || W.includes('FIAT CHRYSLER')) {
     return W.includes('JUROS') ? { line: 'FIN', sub: 'Juros de financiamento (veículo)' }
                                : { line: 'INVEST', sub: 'Veículo financiado (principal)' }
@@ -64,9 +68,10 @@ function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string
   if (has('REEMBOLSO PARA CLIENTE')) return { line: 'DEDUCAO', sub: 'Reembolso a Cliente' }
   if (has('PAGAMENTO EMPRESTIMOS')) return { line: 'FIN', sub: 'Pagamento de Empréstimos' }
   if (has('COM PESSOAL')) return { line: 'PESSOAL', sub: last }
-  if (has('COMERCIAL')) return { line: 'COM', sub: last }
+  if (has('COMERCIAL') || has('COMISSAO')) return { line: 'COM', sub: last }
   if (has('LOGISTICA') || has('COM VEICULO')) return { line: 'LOG', sub: last }
-  if (has('TRIBUTOS') || has('IRPJ') || has('DIFAL') || has('PARCELAMENTO DE IMPOSTOS')) return { line: 'IMPOSTOS', sub: last }
+  // impostos: cobre "TRIBUTOS E IMPOSTOS" e "PARCELAMENTO(S) DE IMPOSTOS"
+  if (has('TRIBUTOS') || has('IRPJ') || has('DIFAL') || has('IMPOSTO')) return { line: 'IMPOSTOS', sub: last }
   if (has('BANCO') || has('TARIFA')) return { line: 'FIN', sub: last }
   if (has('DIFERENCA DO CAIXA') || has('DIFERENCA DE CAIXA')) return { line: 'DIFCAIXA', sub: last }
   if (has('ADMINISTRATIV') || has('DESP ADM')) return { line: 'ADM', sub: last }
@@ -120,7 +125,8 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
     if (tipo === 'E') totalE += Math.abs(val); else totalS += Math.abs(val)
     months.add(`${year}-${String(month).padStart(2, '0')}`)
 
-    // REEMBIN entra como valor NEGATIVO em DEDUCAO (líquido = saídas − entradas)
+    // Reembolso é lava-e-passa: a entrada abate a saída dentro de Deduções
+    // (líquido). Guardamos com sinal negativo e a compensação é feita depois.
     const line = c.line === 'REEMBIN' ? 'DEDUCAO' : c.line
     const amount = c.line === 'REEMBIN' ? -Math.abs(val) : Math.abs(val)
     const kind = line === 'RECEITA' ? 'RECEITA' : line === 'DEDUCAO' ? 'DEDUCAO' : line === 'JUROS' ? 'JUROS' : 'EXP'
@@ -131,5 +137,29 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
     }, amount)
   }
 
-  return { entries: Array.from(map.values()), months: Array.from(months).sort(), rows, totalE, totalS }
+  // O reembolso recebido pode superar o pago no período (recuperação de meses
+  // anteriores). Deduções nunca fica negativa: o excedente vai p/ Não-Operacional.
+  const byMonth = new Map<string, { ded: number; unit: string }[]>()
+  const all = Array.from(map.values())
+  const dedByUnitMonth = new Map<string, number>()
+  all.forEach(e => {
+    if (e.line !== 'DEDUCAO') return
+    const k = `${e.unit}|${e.year}|${e.month}`
+    dedByUnitMonth.set(k, (dedByUnitMonth.get(k) ?? 0) + e.amount)
+  })
+  const extras: CfDreEntry[] = []
+  Array.from(dedByUnitMonth.entries()).forEach(([k, net]) => {
+    if (net >= 0) return
+    const [unit, y, mo] = k.split('|')
+    // zera as deduções negativas dessa unidade/mês e joga o excedente em NAOOP
+    all.filter(e => e.line === 'DEDUCAO' && e.unit === unit && e.year === +y && e.month === +mo)
+       .forEach(e => { if (e.amount < 0) e.amount = 0 })
+    extras.push({
+      unit, kind: 'EXP', line: 'NAOOP', sub: 'Reembolso recebido (excedente)',
+      supplier: null, supplierCode: null, year: +y, month: +mo, amount: -net,
+    })
+  })
+  void byMonth
+
+  return { entries: [...all, ...extras], months: Array.from(months).sort(), rows, totalE, totalS }
 }
