@@ -480,15 +480,17 @@ th.sortable:not(.sort-asc):not(.sort-desc)::after { border-bottom: 5px solid cur
 .win-btn:hover { background: rgba(255, 255, 255, 0.14); }
 .win-btn.close:hover { background: #b03022; }
 
-/* ── Documento de impressão da DRE (Salvar como PDF) ── */
-.dre-print { display: none; }
+/* ── Documentos de impressão (Salvar como PDF) ── */
+.dre-print, .vend-print { display: none; }
 @media print {
   body * { visibility: hidden; }
-  .dre-print, .dre-print * { visibility: visible; }
-  .dre-print { display: block; position: absolute; left: 0; top: 0; width: 100%; }
+  .dre-print, .dre-print *, .vend-print, .vend-print * { visibility: visible; }
+  .dre-print, .vend-print {
+    display: block; position: absolute; left: 0; top: 0; width: 100%;
+    /* garante que as cores/fundos saiam no PDF */
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
   @page { size: A4 landscape; margin: 10mm; }
-  /* garante que as cores/fundos saiam no PDF */
-  .dre-print { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
 .mb-3 { margin-bottom: 12px; }

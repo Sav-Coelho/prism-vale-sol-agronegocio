@@ -69,6 +69,14 @@ export default function DemandaCliente() {
   }
   useEffect(() => { load() }, [vendF, yearsF, monthsF])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  const gerarPdfVendedor = () => {
+    const prev = document.title
+    document.title = `Carteira ${vendF} — Vale Sol Agronegócio`
+    const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore) }
+    window.addEventListener('afterprint', restore)
+    window.print()
+  }
+
   const fecharDrill = () => { setSel(null); setDetail(null); setSelNome('') }
   const openCliente = async (code: string, nome: string) => {
     setSel(code); setSelNome(nome); setDetail(null)
@@ -143,6 +151,13 @@ export default function DemandaCliente() {
                 ))}
               </div>
               {loading && <span style={{ fontSize: 12, color: C.textMuted }}>◌ atualizando…</span>}
+              {vendF && !loading && (
+                <button className="btn btn-sm" onClick={gerarPdfVendedor}
+                  style={{ marginLeft: 'auto', background: C.gold, color: '#fff', border: 'none', fontWeight: 600 }}
+                  title={`Gera o PDF da carteira de ${vendF} para o vendedor trabalhar em campo`}>
+                  ⬇ PDF do vendedor
+                </button>
+              )}
             </div>
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8 }}>
               {ov.hasYoY
@@ -202,6 +217,8 @@ export default function DemandaCliente() {
               <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>Clique num status para filtrar. Janela de 2 meses (últimos 2 × 2 anteriores) — o último mês da base pode estar parcial.</div>
             </div>
           </div>
+
+          {vendF && <VendedorPrint ov={ov} vendedor={vendF} />}
 
           {/* Toggle Clientes × Vendedores */}
           <div style={{ display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: 6, overflow: 'hidden', marginBottom: 14 }}>
@@ -271,6 +288,97 @@ export default function DemandaCliente() {
         </>
       )}
     </Shell>
+  )
+}
+
+// ── PDF da carteira do vendedor (pedido do Felipe: material p/ o vendedor
+//    trabalhar em campo, no tempo entre um cliente e outro) ──
+function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
+  const v = ov.vendedoresRank?.find(x => x.nome === vendedor)
+  const perdidos = ov.clientes.filter(c => c.perdidoYoY).sort((a, b) => b.tPrev - a.tPrev)
+  const emQueda = ov.clientes.filter(c => !c.perdidoYoY && c.yoy != null && c.yoy < -0.2).sort((a, b) => (a.tCur - a.tPrev) - (b.tCur - b.tPrev))
+  const carteira = ov.clientes.filter(c => (ov.hasYoY ? c.tCur : c.total) > 0)
+  const periodo = ov.filtros.months.length
+    ? ov.filtros.months.map(m => MONTHS[m]).join(', ')
+    : `Jan–${MONTHS[ov.cmpUpTo]}`
+  const th: React.CSSProperties = { padding: '4px 6px', fontSize: 8.5, textAlign: 'left', color: '#fff', background: C.navy, fontWeight: 600 }
+  const td: React.CSSProperties = { padding: '3px 6px', fontSize: 9, borderBottom: '0.5px solid #e8ebf0' }
+  const num: React.CSSProperties = { ...td, textAlign: 'right', whiteSpace: 'nowrap' }
+
+  const Bloco = ({ titulo, cor, nota, linhas, modo }: { titulo: string; cor: string; nota: string; linhas: Cli[]; modo: 'perdido' | 'queda' | 'carteira' }) => (
+    <div style={{ marginBottom: 16, pageBreakInside: 'auto' }}>
+      <div style={{ borderLeft: `4px solid ${cor}`, paddingLeft: 8, marginBottom: 6 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{titulo} <span style={{ color: cor }}>({linhas.length})</span></div>
+        <div style={{ fontSize: 9, color: '#666' }}>{nota}</div>
+      </div>
+      {linhas.length === 0 ? <div style={{ fontSize: 10, color: '#888', padding: '4px 8px' }}>— nenhum —</div> : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={th}>Cliente</th>
+              <th style={{ ...th, width: 34, textAlign: 'center' }}>ABC</th>
+              <th style={{ ...th, textAlign: 'right' }}>{ov.curYear}</th>
+              {ov.hasYoY && <th style={{ ...th, textAlign: 'right' }}>{ov.prevYear}</th>}
+              {ov.hasYoY && <th style={{ ...th, textAlign: 'right', width: 60 }}>Δ a/a</th>}
+              <th style={{ ...th, textAlign: 'right', width: 54 }}>Margem</th>
+              <th style={{ ...th, width: 150 }}>Anotações da visita</th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map(c => (
+              <tr key={c.code}>
+                <td style={{ ...td, fontWeight: 600, color: C.navy }}>{c.nome}<span style={{ color: '#888', fontWeight: 400 }}> · {c.code}</span></td>
+                <td style={{ ...td, textAlign: 'center', fontWeight: 700, color: c.abc === 'A' ? C.green : c.abc === 'B' ? C.gold : '#888' }}>{c.abc}</td>
+                <td style={num}>{modo === 'perdido' ? '—' : fmt(c.tCur)}</td>
+                {ov.hasYoY && <td style={{ ...num, color: '#555' }}>{fmt(c.tPrev)}</td>}
+                {ov.hasYoY && <td style={{ ...num, fontWeight: 700, color: modo === 'perdido' ? C.red : (c.yoy ?? 0) >= 0 ? C.green : C.amber }}>{modo === 'perdido' ? 'perdido' : c.yoy == null ? 'novo' : `${c.yoy >= 0 ? '+' : ''}${(c.yoy * 100).toFixed(0)}%`}</td>}
+                <td style={{ ...num, color: mgColor(c.margem) }}>{mgFmt(c.margem)}</td>
+                <td style={{ ...td, borderBottom: '0.5px solid #c8d0dc' }}></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+
+  return (
+    <div className="vend-print" style={{ fontFamily: 'Arial, sans-serif', color: '#1c2b3a', padding: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `2px solid ${C.navy}`, paddingBottom: 8, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 9, letterSpacing: '0.15em', textTransform: 'uppercase', color: C.gold, fontWeight: 700 }}>Vale Sol Agronegócio · Carteira de clientes</div>
+          <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1, color: C.navy }}>{vendedor}</div>
+        </div>
+        <div style={{ textAlign: 'right', fontSize: 9, color: '#555' }}>
+          <div>Período: {periodo} · {ov.filtros.years.join(' × ')}</div>
+          <div>Emitido em {new Date().toLocaleDateString('pt-BR')}</div>
+        </div>
+      </div>
+
+      {/* Placar do vendedor */}
+      <div style={{ display: 'flex', gap: 20, marginBottom: 14, flexWrap: 'wrap', background: '#f4f7fb', padding: '8px 12px', borderRadius: 4 }}>
+        <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Faturamento {ov.curYear}</div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{fmt(v?.tCur ?? ov.kpis.totalCur)}</div></div>
+        {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>{ov.prevYear}</div><div style={{ fontSize: 15, color: '#555' }}>{fmt(v?.tPrev ?? ov.kpis.totalPrev)}</div></div>}
+        {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Variação a/a</div><div style={{ fontSize: 15, fontWeight: 700, color: (v?.yoy ?? 0) >= 0 ? C.green : C.red }}>{v?.yoy == null ? '—' : `${v.yoy >= 0 ? '+' : ''}${(v.yoy * 100).toFixed(1)}%`}</div></div>}
+        <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Margem real</div><div style={{ fontSize: 15, fontWeight: 700, color: mgColor(v?.margem ?? null) }}>{mgFmt(v?.margem ?? null)}</div></div>
+        <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Clientes ativos</div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{v?.clientesAtivos ?? carteira.length}</div></div>
+        {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Perdidos</div><div style={{ fontSize: 15, fontWeight: 700, color: C.red }}>{perdidos.length}</div></div>}
+      </div>
+
+      <Bloco titulo="① RESGATE — clientes que sumiram" cor={C.red} linhas={perdidos.slice(0, 60)}
+        nota={`Compravam em ${ov.prevYear} e não compraram nada em ${ov.curYear}. Ordem: quem valia mais. Ligue e descubra o porquê.`} modo="perdido" />
+
+      <Bloco titulo="② ATENÇÃO — caindo mais de 20%" cor={C.amber} linhas={emQueda.slice(0, 40)}
+        nota="Ainda compram, mas bem menos que no ano passado. Ordem: maior perda em reais." modo="queda" />
+
+      <Bloco titulo="③ CARTEIRA ATIVA" cor={C.green} linhas={carteira.slice(0, 120)}
+        nota="Todos os clientes que compraram no período, do maior para o menor." modo="carteira" />
+
+      <div style={{ marginTop: 10, fontSize: 8, color: '#777', borderTop: '0.5px solid #ccc', paddingTop: 6, lineHeight: 1.5 }}>
+        Margem real = (valor vendido − custo de reposição) ÷ valor vendido, nos itens com custo cadastrado. Δ a/a compara o mesmo período dos dois anos.
+        Listas limitadas aos maiores casos de cada bloco. Desenvolvido por Delfos Research LTDA.
+      </div>
+    </div>
   )
 }
 
