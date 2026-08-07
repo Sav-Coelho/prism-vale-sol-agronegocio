@@ -151,9 +151,9 @@ export default function DemandaCliente() {
                 ))}
               </div>
               {loading && <span style={{ fontSize: 12, color: C.textMuted }}>◌ atualizando…</span>}
-              {vendF && !loading && (
-                <button className="btn btn-sm" onClick={gerarPdfVendedor}
-                  style={{ marginLeft: 'auto', background: C.gold, color: '#fff', border: 'none', fontWeight: 600 }}
+              {vendF && (
+                <button className="btn btn-sm" onClick={gerarPdfVendedor} disabled={loading}
+                  style={{ marginLeft: 'auto', background: loading ? C.line : C.gold, color: loading ? C.textMuted : '#fff', border: 'none', fontWeight: 600 }}
                   title={`Gera o PDF da carteira de ${vendF} para o vendedor trabalhar em campo`}>
                   ⬇ PDF do vendedor
                 </button>
