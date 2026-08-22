@@ -45,9 +45,16 @@ async function seedIfEmpty() {
 async function receitaRef(): Promise<{ ym: string | null; value: number; exato: boolean; modo: string }> {
   const rows = await prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } })
   if (!rows.length) return { ym: null, value: 0, exato: false, modo: 'fallback' }
-  const byMonth = new Map<string, number>()
-  rows.forEach(r => { const k = `${r.year}-${String(r.month).padStart(2, '0')}`; byMonth.set(k, (byMonth.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount)) })
   const now = new Date()
+  // só meses FECHADOS: o mês corrente (parcial) não entra na base de receita
+  const curYm = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
+  const byMonth = new Map<string, number>()
+  rows.forEach(r => {
+    const k = `${r.year}-${String(r.month).padStart(2, '0')}`
+    if (k >= curYm) return
+    byMonth.set(k, (byMonth.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount))
+  })
+  if (byMonth.size === 0) return { ym: null, value: 0, exato: false, modo: 'fallback' }
   const keyOf = (off: number) => { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - off, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}` }
   const [p1, p2, p3] = [keyOf(1), keyOf(2), keyOf(3)]
   if (byMonth.has(p1) && byMonth.has(p2) && byMonth.has(p3)) {

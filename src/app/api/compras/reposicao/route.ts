@@ -4,7 +4,10 @@
  * Sugestão de compra = o que falta para atingir a cobertura-alvo (?dias=30),
  * priorizando rupturas de curva A. Custo pela base de custo de reposição.
  *   ?dias=30      → cobertura-alvo em dias
- *   ?base=208     → dias do período coberto pelo ABC de Vendas (01/01→27/07 ≈ 208)
+ *   ?base=221     → dias do período do ABC de Vendas (override manual).
+ * Sem ?base, o período é AUTOMÁTICO: os exports do ABC são sempre YTD
+ * (01/01 → data da extração), então usamos 01/01 do ano da importação até a
+ * data em que o ABC foi importado no Arken — se atualiza sozinho a cada import.
  */
 import { prisma } from '@/lib/prisma'
 import { NextResponse } from 'next/server'
@@ -15,13 +18,25 @@ export const revalidate = 0
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const alvoDias = Math.max(5, Math.min(180, parseInt(url.searchParams.get('dias') ?? '30', 10) || 30))
-  const baseDias = Math.max(30, Math.min(400, parseInt(url.searchParams.get('base') ?? '208', 10) || 208))
 
   const [sales, stock] = await Promise.all([
     prisma.salesAbcItem.findMany(),
     prisma.stockItem.findMany({ select: { code: true, qty: true, unitCost: true } }),
   ])
   const stockMap = new Map(stock.map(s => [s.code, s]))
+
+  // dias do período de vendas: manual (?base=) ou automático pelo último import
+  const baseParam = parseInt(url.searchParams.get('base') ?? '', 10)
+  let baseAuto: string | null = null
+  let baseDias: number
+  if (!isNaN(baseParam) && baseParam > 0) {
+    baseDias = Math.max(30, Math.min(400, baseParam))
+  } else {
+    const lastImport = sales.reduce<Date | null>((m, s) => (m === null || s.updatedAt > m ? s.updatedAt : m), null) ?? new Date()
+    const jan1 = Date.UTC(lastImport.getUTCFullYear(), 0, 1)
+    baseDias = Math.max(30, Math.min(400, Math.round((lastImport.getTime() - jan1) / 86400000)))
+    baseAuto = lastImport.toISOString().slice(0, 10)
+  }
 
   const rows = sales
     .filter(s => s.qtySold > 0)
@@ -65,7 +80,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     hasData: rows.length > 0,
-    params: { alvoDias, baseDias },
+    params: { alvoDias, baseDias, baseAuto },
     kpis: {
       itens: rows.length, precisaRepor: precisa.length, rupturasA,
       custoReporTudo: custoTotal, custoReporA: custoA,

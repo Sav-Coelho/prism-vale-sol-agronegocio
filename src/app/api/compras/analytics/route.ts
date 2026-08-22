@@ -34,10 +34,18 @@ export async function GET() {
 
   const metaCmvPct = settings.find(s => s.key === 'metaCmvPct')?.value ?? 0.70
 
+  // mês de referência = mês corrente (servidor, UTC) — precisa vir antes da receita
+  const now = new Date()
+  const curStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+  const refYm = ymKey(curStart)
+
   // ── Receita LÍQUIDA por mês (Bruta − Deduções) da DRE ──
+  // Só meses FECHADOS (anteriores ao corrente): um mês parcial (ex.: agosto com
+  // 2 dias de caixa) derrubaria o limite dos meses seguintes na projeção.
   const recliq = new Map<string, number>()
   recRows.forEach(r => {
     const k = `${r.year}-${String(r.month).padStart(2, '0')}`
+    if (k >= refYm) return
     recliq.set(k, (recliq.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount))
   })
   const latestRecYm = Array.from(recliq.keys()).sort().pop() ?? null
@@ -57,10 +65,6 @@ export async function GET() {
     return { limite: 0, baseYm: null, exato: false, modo: 'fallback' }
   }
 
-  // mês de referência = mês corrente (servidor, UTC)
-  const now = new Date()
-  const curStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-  const refYm = ymKey(curStart)
   const refLimit = limitInfo(refYm)
   // base de receita usada no limite do mês corrente (média dos 3 ou mês único)
   const receitaBase = metaCmvPct > 0 ? refLimit.limite / metaCmvPct : 0
@@ -144,6 +148,9 @@ export async function GET() {
     resumoCompradores,
     categorias, months, projecao, porCategoria, comprometidoTotal,
     nPedidos: pedidos.length,
-    boletos: { count: commits.length, total: boletosTotal, imobilizadoExcluido: boletosImobilizado },
+    boletos: {
+      count: commits.length, total: boletosTotal, imobilizadoExcluido: boletosImobilizado,
+      importadoEm: commits.length ? commits.reduce((m, c) => c.importedAt > m ? c.importedAt : m, commits[0].importedAt) : null,
+    },
   })
 }

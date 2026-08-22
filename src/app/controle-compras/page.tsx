@@ -17,7 +17,7 @@ interface Analytics {
   limiteTotal: number; compradoTotalMes: number; saldoTotal: number; cmvAtualPct: number
   resumoCompradores: { nome: string; setor: string | null; limite: number; comprado: number; saldo: number; util: number; status: string }[]
   categorias: string[]; months: string[]; projecao: Record<string, number | string>[]; porCategoria: { categoria: string; total: number }[]; comprometidoTotal: number; nPedidos: number
-  boletos?: { count: number; total: number; imobilizadoExcluido: number }
+  boletos?: { count: number; total: number; imobilizadoExcluido: number; importadoEm?: string | null }
 }
 
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14' }
@@ -86,6 +86,9 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
   const refBaseLabel = an.receitaRef.modo === '3m'
     ? `média 3 meses (${an.receitaRef.ym})`
     : `Rec. Líq. ${an.receitaRef.ym ? an.receitaRef.ym.split('-').reverse().join('/') : '—'}${an.receitaRef.exato === false ? ' (últ. disp.)' : ''}`
+  const boletosIdade = an.boletos?.importadoEm
+    ? Math.floor((Date.now() - new Date(an.boletos.importadoEm).getTime()) / 86400000)
+    : null
   return (
     <>
       <div className="grid-5 mb-6">
@@ -105,6 +108,12 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
           endpoint="/api/compras/import-pagamentos"
           onDone={onReload}
         />
+        {boletosIdade != null && (
+          <div style={{ marginTop: 6, fontSize: 11.5, color: boletosIdade > 7 ? C.amber : C.textMuted, fontWeight: boletosIdade > 7 ? 600 : 400 }}>
+            {boletosIdade > 7 ? '⚠ ' : ''}Base de boletos importada há {boletosIdade} dia{boletosIdade === 1 ? '' : 's'}
+            {boletosIdade > 7 ? ' — pedidos novos lançados no ERP desde então não aparecem no comprometido. Reimporte o relatório.' : '.'}
+          </div>
+        )}
       </div>
 
       {/* PROJEÇÃO — o gráfico central */}
@@ -307,6 +316,12 @@ function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analyt
       <div className="card">
         <div className="card-eyebrow">Compradores</div>
         <div className="card-title" style={{ fontSize: 14, marginBottom: 12 }}>Limite mensal por comprador</div>
+        {cfg.compradores.filter(c => c.ativo).every(c => !c.limite) && an.limiteCmvMensal > 0 && (
+          <div style={{ fontSize: 12, color: C.amber, fontWeight: 600, marginBottom: 10, lineHeight: 1.5 }}>
+            ⚠ Nenhum comprador tem limite definido — o quadro &quot;Comprado × limite&quot; do Dashboard fica sem status.
+            O limite de compras de {an.refLabel} é <b>{fmt(an.limiteCmvMensal)}</b>: distribua esse valor entre os compradores ativos.
+          </div>
+        )}
         <div className="table-wrap">
           <table>
             <thead><tr><th style={{ textAlign: 'left' }}>Nome</th><th style={{ textAlign: 'left' }}>Setor</th><th style={{ textAlign: 'right' }}>Limite (R$)</th><th>Ativo</th><th></th></tr></thead>
@@ -377,7 +392,7 @@ function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analyt
 
 // ─────────────────────────── REPOSIÇÃO POR GIRO ───────────────────────────
 interface RepRow { code: string; nome: string; classe: string; qtdVendida: number; faturamento: number; giroDia: number; estoque: number; cobertura: number | null; status: string; sugQtd: number; sugCusto: number | null; custo: number | null; semCadastroEstoque: boolean }
-interface RepData { hasData: boolean; params: { alvoDias: number; baseDias: number }; kpis: { itens: number; precisaRepor: number; rupturasA: number; custoReporTudo: number; custoReporA: number; semCusto: number }; statusDist: Record<string, number>; rows: RepRow[] }
+interface RepData { hasData: boolean; params: { alvoDias: number; baseDias: number; baseAuto?: string | null }; kpis: { itens: number; precisaRepor: number; rupturasA: number; custoReporTudo: number; custoReporA: number; semCusto: number }; statusDist: Record<string, number>; rows: RepRow[] }
 const REP_COLOR: Record<string, string> = { RUPTURA: C.red, 'CRÍTICO': '#d3542c', REPOR: C.amber, OK: C.green, EXCESSO: '#6a5acd' }
 
 function ReposicaoPanel({ an }: { an: Analytics }) {
@@ -467,7 +482,9 @@ function ReposicaoPanel({ an }: { an: Analytics }) {
           </table>
         </div>
         <div style={{ padding: '8px 20px', fontSize: 11, color: C.textMuted, borderTop: `1px solid ${C.line}` }}>
-          Giro/dia = vendas de {rep.params.baseDias} dias ÷ {rep.params.baseDias}. Cobertura = estoque ÷ giro. Sugestão = giro × {rep.params.alvoDias}d − estoque.
+          Giro/dia = vendas de {rep.params.baseDias} dias ÷ {rep.params.baseDias}
+          {rep.params.baseAuto ? ` (período 01/01 → ${rep.params.baseAuto.split('-').reverse().slice(0, 2).join('/')}, automático pelo último ABC importado)` : ''}.
+          {' '}Cobertura = estoque ÷ giro. Sugestão = giro × {rep.params.alvoDias}d − estoque.
           “*” = item vendido sem cadastro no relatório de estoque. Compare o custo da curva A com a folga do limite antes de aprovar os pedidos.
         </div>
       </div>

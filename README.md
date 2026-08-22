@@ -1,211 +1,130 @@
-# Prism DRE System — Documentação Técnica
+# Arken — Vale Sol Agronegócio
 
-Sistema financeiro da **Brave Educação** para importação de extratos OFX, classificação de lançamentos e geração de DRE por unidade/mês. Desenvolvido em Next.js 14 + Prisma + PostgreSQL (Neon), hospedado na Vercel com deploy automático via GitHub.
+Sistema de gestão corporativa do **Vale Sol Agronegócio**, um grupo varejista
+agropecuário/veterinário (marcas **VS** — Vale do Sol — e **MM** — Multimundo, 7 lojas).
+
+Reúne, num único painel, seis análises que hoje o cliente extrai de planilhas soltas do
+ERP: DRE gerencial de caixa, fluxo de caixa, controle de compras, risco de crédito de
+clientes, análise comercial (margem/curva ABC/giro) e demanda por cliente.
+
+> **Não há integração ao vivo com o ERP.** Todo módulo é alimentado por **arquivos XLSX
+> exportados do ERP** e enviados pela tela. O app parseia, reconcilia e analisa.
+
+- **Deploy:** Vercel (hobby) — auto-deploy a cada `push` no branch `main`
+- **Repositório:** `github.com/Sav-Coelho/prism-vale-sol-agronegocio`
+- **Referência técnica completa:** [CONTEXTO_PRISM.md](CONTEXTO_PRISM.md) · guia para Claude Code: [CLAUDE.md](CLAUDE.md) · deep-dive do risco: [docs/RISCO_CLIENTE.md](docs/RISCO_CLIENTE.md)
 
 ---
 
 ## Stack
 
-- **Next.js 14** (App Router, full-stack — páginas e APIs no mesmo projeto)
-- **Prisma ORM** + **PostgreSQL** (Neon free tier, `sa-east-1`)
-- **Recharts** para gráficos
-- **TypeScript** strict
-- **Vercel** para deploy (build: `prisma generate && prisma db push && next build`)
+| Camada | Tech |
+|--------|------|
+| Frontend | Next.js 14 (App Router) + React 18 + TypeScript strict |
+| Backend | API Routes serverless (mesmo projeto) |
+| ORM | Prisma 5 (`prisma db push`, sem migrations versionadas) |
+| Banco | PostgreSQL — Neon free tier (`sa-east-1`) |
+| Gráficos | Recharts |
+| Planilhas | `xlsx` (SheetJS) |
+| Deploy | Vercel — build: `prisma generate && prisma db push --accept-data-loss && next build` |
 
-### Variáveis de ambiente (Vercel)
+Sem biblioteca de UI (CSS próprio) e **sem autenticação** — operado por uma pessoa (o
+controller do cliente). Fontes: **Inter** + **DM Serif Display**.
+
+### Variáveis de ambiente (Vercel / `.env`)
 ```
-DATABASE_URL=   # Neon connection pooling URL
-DIRECT_URL=     # Neon direct URL (para migrations)
-ANTHROPIC_API_KEY=  # Claude API (assistente IA na página AI)
-```
-
----
-
-## Estrutura de arquivos
-
-```
-financeiro/
-├── prisma/
-│   └── schema.prisma          # Modelos do banco
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx         # Title: "Prism DRE System", favicon losango amarelo
-│   │   ├── page.tsx           # Redirect para /dashboard
-│   │   ├── dashboard/         # Visão geral com métricas e gráfico DRE
-│   │   ├── dre/               # DRE detalhada por mês/unidade
-│   │   ├── lancamentos/       # Importação OFX + classificação (página principal)
-│   │   ├── plano-de-contas/   # CRUD do plano de contas
-│   │   ├── saldo/             # Evolução do saldo bancário
-│   │   ├── unidades/          # Cadastro de unidades e contas bancárias
-│   │   └── api/
-│   │       ├── accounts/      # CRUD contas do plano (GET, POST, PUT, DELETE)
-│   │       ├── classify/
-│   │       │   └── suggest/   # POST — sugestões do classificador inteligente
-│   │       ├── dre/           # GET — cálculo DRE agregado
-│   │       ├── ofx/
-│   │       │   ├── route.ts   # POST — salva lançamentos OFX em lote
-│   │       │   └── parse/     # POST — parseia arquivo OFX (preview)
-│   │       ├── saldo/         # GET — snapshots de saldo por conta bancária
-│   │       ├── transactions/  # GET lista, PUT classifica, DELETE remove
-│   │       └── units/         # GET unidades com bankAccounts aninhados
-│   ├── components/
-│   │   ├── Shell.tsx          # Layout (topbar "Prism" + sidebar com nav)
-│   │   ├── AccountCombobox.tsx# Combobox buscável para seleção de conta do plano
-│   │   └── AIAssistant.tsx    # Assistente IA (Claude API)
-│   └── lib/
-│       ├── prisma.ts          # PrismaClient singleton + seed de unidades/bancos/conta neutra
-│       ├── ofx-parser.ts      # Parser OFX (transações, saldo, banco)
-│       ├── dre.ts             # Cálculo do DRE (calcDRE, MONTH_NAMES)
-│       └── classifier.ts      # tokenize() + jaccardSimilarity() para sugestões
-└── src/app/icon.svg           # Favicon: losango amarelo (#eaca2d)
+DATABASE_URL=   # Neon — URL com connection pooling (runtime)
+DIRECT_URL=     # Neon — URL direta (usada pelo prisma db push no build)
 ```
 
 ---
 
-## Banco de dados (schema.prisma)
+## Módulos
 
-### Modelos
+A raiz `/` redireciona para `/risco-cliente`. Navegação em `src/components/Shell.tsx`.
 
-**Unit** — Unidades do negócio (MATRIZ, CICERO, CIPO, NOVA SOURE, FERNANDA)
-- `id`, `name` (unique)
-- Relações: `bankAccounts[]`, `transactions[]`
+### ▤ DRE Gerencial — `/dre`
+DRE em **regime de caixa**, com colunas mensais, consolidado e por unidade. **Fonte única:**
+o XLSX *CashFlow Analítico* da contabilidade — o import classifica cada evento de caixa numa
+linha da DRE e **substitui a base inteira**. Carrega as "depurações" acordadas com o cliente
+(financiamento de veículo FCA separando principal/juros, intragrupo Multmunde fora do
+resultado, transferências entre lojas excluídas, reembolso a cliente líquido nas deduções
+etc.). Estrutura: Receita Bruta → Deduções → Receita Líquida → CMV → Margem de Contribuição
+→ despesas (ADM/Pessoal/Log/Comercial) → Lucro Operacional → Impostos → EBITDA → Financeiras
+→ Sócio/CAPEX/Não-operacional → Lucro Líquido. Drill-down por subconta e fornecedor.
 
-**BankAccount** — Contas bancárias vinculadas a uma unidade
-- `id`, `name`, `unitId`, `initialBalance` (Float, default 0)
-- `ofxBankId String?` — identificador OFX (BANKID ou ORG do `<FI>`)
-- `ofxAcctId String?` — número da conta OFX (ACCTID)
-- Usado para auto-identificar o banco ao importar OFX
+### ◈ Fluxo de Caixa — `/fluxo-de-caixa`
+Visão do **razão de caixa** da contabilidade (mesmo XLSX CashFlow Analítico), como árvore de
+classificação contábil de 6 níveis (entradas × saídas), por filial e consolidado, com quebra
+mensal. É uma visão **à parte da DRE** — não entra em nenhum cálculo de resultado.
 
-**Account** — Plano de contas
-- `id`, `code` (unique, ex: "3.1.1"), `name`, `type`, `dreGroup`, `active`
-- Tipos: `RECEITA`, `DESPESA`, `ATIVO`, `PASSIVO`, `NEUTRO`
-- `dreGroup` controla onde aparece no DRE
-- Conta especial: `9.9.01 — Transferência entre Contas` (type=NEUTRO) — ao classificar, exibe seletores de unidade/conta destino e cria contrapartida automaticamente; aparece na DRE como seção informativa sem contabilizar
+### 🛒 Controle de Compras — `/controle-compras`
+Orçamento de compras vs. comprometido real. Projeta, por mês × categoria, os **boletos a
+pagar do ERP** (`PurchaseCommit`, importados do relatório "Pagamentos a Efetuar") somados às
+**parcelas dos pedidos manuais**. O **limite mensal** é automático: `meta %CMV × Receita
+Líquida` (média dos 3 meses anteriores puxada da DRE). Inclui sugestão de reposição por giro,
+priorizando rupturas da curva A.
 
-**Transaction** — Lançamentos financeiros
-- `id`, `date`, `description`, `amount`, `memo?`, `fitid?` (unique — previne duplicatas OFX)
-- `accountId?` — conta do plano (null = não classificado, não entra no DRE)
-- `unitId?`, `bankAccountId?`
-- `transferToUnitId?`, `transferToBankAccountId?` — preenchidos quando é saída de transferência; a contrapartida de entrada é criada automaticamente com `fitid + '_entrada'`
-- `month`, `year` — índices para filtro
+### ◆ Risco de Cliente — `/risco-cliente`
+Score de crédito **bayesiano** (`Beta(2,2)`) por cliente, alimentado pelo histórico de
+títulos a receber. Cada título é um ensaio (pagou = sucesso, calote/≥90 dias vencido =
+falha); a nota vai de **AA a D**. Regra dura: cliente com saldo em aberto nunca é A/AA (cai
+para no máximo B, ▼). Traz série temporal do risco da carteira, aging e ranking.
+**Documentação detalhada:** [docs/RISCO_CLIENTE.md](docs/RISCO_CLIENTE.md).
 
-**BalanceSnapshot** — Saldos capturados via OFX
-- `id`, `bankAccountId`, `date`, `balance`
-- `@@unique([bankAccountId, date])` — um snapshot por conta por dia
-- Populado por: linhas `isBalance` do OFX + bloco `<LEDGERBAL>`
+### ⌬ Análise Comercial — `/analise-comercial`
+Cruza três relatórios (preço de venda × ABC de estoque × ABC de vendas) por código de
+produto e entrega: **margem** bruta por SKU, **curva ABC** com participação acumulada e
+**giro** de estoque (cobertura em meses, status ruptura/saudável/excesso), além de uma tabela
+mestre unindo os três eixos.
 
-### Seed automático (prisma.ts)
-Ao iniciar, `seedUnits()` cria as 5 unidades e seus bancos se não existirem. `seedTransferAccount()` garante a conta 9.9.01.
-
-Unidades e bancos pré-configurados:
-```
-MATRIZ:      ITAU MATRIZ, BRADESCO MATRIZ, BNB MATRIZ, BB MATRIZ
-CICERO:      ITAU CICERO, BRADESCO CICERO
-CIPO:        ITAU CIPO, BRADESCO CIPO
-NOVA SOURE:  ITAU NOVA SOURE, CAIXA NOVA SOURE
-FERNANDA:    ITAU FERNANDA, BRADESCO FERNANDA, BNB FERNANDA
-```
-
----
-
-## Funcionalidades principais
-
-### Importação OFX (`/lancamentos`)
-
-**Fluxo:**
-1. Usuário arrasta/seleciona arquivo `.OFX`
-2. `POST /api/ofx/parse` parseia o arquivo:
-   - **Detecta a conta bancária primeiro**, depois verifica duplicatas de `fitid` escopadas à mesma conta — evita falsos positivos entre bancos diferentes
-   - Extrai `<FI><ORG>` e `<BANKACCTFROM>` para identificar o banco
-   - Extrai `<LEDGERBAL>` (saldo final)
-   - Extrai todas as `<STMTTRN>` — marca `isBalance=true` se `TRNTYPE=BALANCE` ou memo começa com "SALDO"
-3. Preview é exibido — linhas `isBalance` aparecem travadas (sem combobox)
-4. Classificador inteligente roda em background (`POST /api/classify/suggest`) e abre painel flutuante com sugestões
-5. Analista revisa, aceita/nega por linha ou em lote, pode arrastar o painel pela tela
-6. `POST /api/ofx` salva em lote:
-   - `createMany({ skipDuplicates: true })` — uma query para todas as transações
-   - Salva linhas `isBalance` como `BalanceSnapshot` diários
-   - Salva `LEDGERBAL` como `BalanceSnapshot`
-   - Atualiza `ofxBankId/ofxAcctId` na conta bancária (primeira vez)
-
-**Parser OFX (`ofx-parser.ts`):**
-- Extrai `<ORG>` do bloco `<FI>` (aparece sem tag de fechamento em alguns bancos)
-- Data OFX no formato `YYYYMMDD[HHMMSS[+offset]]`
-- `isBalance`: `TRNTYPE=BALANCE` ou memo começa com `/^saldo\b/i`
-
-### Classificador Inteligente (`/api/classify/suggest`)
-
-Algoritmo baseado em similaridade Jaccard sem dependências externas:
-
-```
-tokenize(memo): lowercase → remove números → remove não-letras → split → filtra tokens > 2 chars
-jaccardSimilarity(A, B): |A∩B| / |A∪B|
-```
-
-**Fluxo:**
-1. Carrega até 10.000 transações classificadas do histórico (excluindo Transferência entre Contas)
-2. Deduplica: por memo único, mantém a conta mais frequente
-3. Para cada memo novo, calcula similaridade com todas as referências
-4. Retorna sugestões com score ≥ 0.35, com `confidence` (0-100%)
-
-**Propagação em tempo real:** quando analista classifica uma linha manualmente, aplica a mesma conta nas linhas com similaridade ≥ 0.25 ainda não classificadas.
-
-**Painel flutuante:** aparece centralizado, arrastável pelo header, minimizável. Botões ✓/✕ por linha. "Aceitar todas" / "Negar todas".
-
-### Classificação de conta (`AccountCombobox.tsx`)
-
-Combobox buscável por nome ou código. Contas `NEUTRO` aparecem no topo com separador visual. Botão ✕ para limpar.
-
-### Saldo Bancário (`/saldo`)
-
-Exibe evolução do saldo usando apenas os `BalanceSnapshot` registrados. Gráfico de linha com Recharts. Um ponto por importação OFX (cada linha isBalance + LEDGERBAL = pontos diários).
-
-### DRE (`/dre`)
-
-Cálculo em `lib/dre.ts`. Agrupa transações por `dreGroup` da conta do plano. Filtra por mês/ano/unidade. Transferências entre contas aparecem ao final numa **seção informativa** (tipo `'transfer'`) que não contabiliza nos totais financeiros.
+### ◉ Demanda por Cliente — `/demanda-cliente`
+A partir do relatório COMERCIAL (Vendedor › Cliente › Produto › Data), mostra o que cada
+cliente compra e **deixou de comprar**. Filtros por vendedor/ano/mês, comparativo ano-a-ano,
+ranking de clientes (ABC + status Novo/Sumiu/Em queda/Crescendo) e de vendedores, com margem
+real (custo do ABC de estoque).
 
 ---
 
-## Decisões técnicas importantes
+## Modelo de dados (resumo)
 
-**TypeScript no Vercel:** o compilador alvo não suporta `for...of` em `Map`/`Set` nem spread `[...set]`. Sempre usar `Array.from()`:
-```typescript
-// ❌ falha no build
-for (const [k, v] of map) { ... }
-const arr = [...set]
+17 modelos no `prisma/schema.prisma`, por módulo:
 
-// ✅ correto
-Array.from(map.entries()).forEach(([k, v]) => { ... })
-const arr = Array.from(set)
-```
+- **Crédito:** `Unit`, `Client` (`code` do ERP = chave de dedup), `Sale` (um título a
+  receber; `paymentStatus` PENDING/PAID/OVERDUE/DEFAULTED).
+- **DRE:** `DreEntry` (evento de caixa classificado em linha/subconta/unidade/mês).
+- **Fluxo de Caixa:** `CashflowEntry` (razão de caixa agregado por filial × tipo × 6 níveis).
+- **Comercial:** `ProductPrice`, `StockItem`, `SalesAbcItem` (chave = código do produto).
+- **Compras:** `Comprador`, `PurchaseOrder`, `PurchaseCommit`, `Fornecedor`,
+  `PurchaseCategoria`, `PurchaseSetting`.
+- **Demanda:** `DemandEntry`.
+- **Brutos de import (ERP):** `Receivable`, `Payable`.
 
-**Neon PostgreSQL:** banco em `sa-east-1` (São Paulo). Free tier: 0.5 GB storage, 5h compute/mês. Com ~530 transações/mês × 12 contas ≈ 6.360 tx/mês ≈ 12.7 MB/mês → ~3 anos de capacidade.
-
-**Performance de import:** usar `createMany` em vez de loop `await create` individual — reduz 530 round-trips para 1 query SQL.
-
-**Conta neutra:** `9.9.01 — Transferência entre Contas` (type=NEUTRO) não entra no DRE (excluída em `calcDRE` + no `classify/suggest`). Aparece no topo do combobox destacada.
+Detalhamento campo a campo em [CONTEXTO_PRISM.md](CONTEXTO_PRISM.md).
 
 ---
 
-## Deploy
+## Convenções de importação XLSX
 
-Repositório: `github.com/Sav-Coelho/prism-financeiro` (branch `main`)
-Vercel auto-deploya a cada push.
-
-Build script (`package.json`):
-```
-prisma generate && prisma db push && next build
-```
-
-`prisma db push` sincroniza o schema sem migrations versionadas.
+- O tipo do relatório é detectado **pelo cabeçalho**, nunca pelo nome do arquivo.
+- Cabeçalho comparado sem acento/caixa e resistente a reordenação de colunas.
+- Formato brasileiro `1.234,56` e datas seriais do Excel tratados em cada parser.
+- Estratégias: **wipe-and-replace** (comercial, fluxo, DRE, compras), **reconciliação
+  incremental cross-snapshot** (crédito) e **substituição por período** (demanda).
+- Imports longos usam `maxDuration = 60` e inserção em lotes para caber no limite serverless.
 
 ---
 
-## Identidade visual
+## Desenvolvimento
 
-- Fonte principal do brand: **Bricolage Grotesque** (`--font-sub`)
-- Cor amarela: `#eaca2d` (`--brave-yellow`)
-- Cor escura: `var(--brave-dark)`
-- CSS global em `src/app/globals.css`
-- Sem bibliotecas de UI — estilos inline + classes CSS próprias (`.card`, `.btn`, `.metric-card`, `.form-select`, `.badge-neutro`, etc.)
-- Favicon: `src/app/icon.svg` — losango amarelo simples
+```bash
+npm run dev          # servidor local em http://localhost:3000
+npm run build        # build de produção (roda prisma generate + db push + next build)
+npm run db:studio    # Prisma Studio (editor visual do banco)
+git push             # Vercel auto-deploya (branch main)
+```
+
+Sem suíte de testes — a verificação de tipos é o próprio `npm run build`.
+
+> **Restrição do build (Vercel):** o target do compilador não suporta `for...of` em
+> `Map`/`Set` nem spread de `Set`. Sempre use `Array.from(...)`.
