@@ -135,6 +135,14 @@ export async function POST(req: Request) {
     const t = new Date(r.dueDate).getTime()
     return t > m ? t : m
   }, 0)
+  // Janela de vencimento do relatório: o ERP exporta com filtro de VECTO (hoje
+  // 01/01/26 → data da extração). Um título do DB vencido ANTES do início da
+  // janela é invisível para este arquivo — o sumiço dele não é evidência de
+  // pagamento (foi assim que a dívida 2025 da Santa Amélia "zerou" indevidamente).
+  const minDueXlsx = parsed.receivables.reduce((m, r) => {
+    const t = new Date(r.dueDate).getTime()
+    return t < m ? t : m
+  }, Number.POSITIVE_INFINITY)
   // Só títulos ainda EM ABERTO ancoram a comparação — dueDates de títulos já
   // resolvidos são história congelada e fariam o máximo do DB só crescer,
   // podendo travar para sempre a resolução de snapshots legítimos.
@@ -164,6 +172,9 @@ export async function POST(req: Request) {
       if (alreadyResolved) return
       // Só resolve se o novo snapshot é mais RECENTE (senão o título pode nem existir ainda).
       if (isOlderSnapshot) return
+      // Fora da janela de VECTO do arquivo → o relatório não enxerga este título;
+      // ausência não significa pagamento. Mantém como está (segue devendo).
+      if (s.dueDate && s.dueDate.getTime() < minDueXlsx) return
       const due = s.dueDate?.getTime() ?? importDate.getTime()
       const daysLate = (importDate.getTime() - due) / (1000 * 60 * 60 * 24)
       // Um DEFAULTED que se resolve é SEMPRE cura tardia (já era calote) — jamais vira PAID,
@@ -268,6 +279,7 @@ export async function POST(req: Request) {
     clientesTotal:      clientCountAfter,
     missingClientCount,
     snapshotAntigo:     isOlderSnapshot,  // avisa a UI que este XLSX é anterior ao estado atual
+    minDueDateXlsx:     Number.isFinite(minDueXlsx) ? new Date(minDueXlsx).toISOString().slice(0, 10) : null,
     maxDueDateXlsx:     maxDueXlsx ? new Date(maxDueXlsx).toISOString().slice(0, 10) : null,
     maxDueDateDb:       maxDueDb  ? new Date(maxDueDb).toISOString().slice(0, 10) : null,
     importDate:         importDate.toISOString(),

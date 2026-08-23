@@ -10,6 +10,7 @@
  *    por produto e alerta ano-a-ano.
  */
 import { prisma } from '@/lib/prisma'
+import { scoreClient, effectiveGrade, type SaleForCredit } from '@/lib/credit'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -23,6 +24,41 @@ async function stockCostMap(): Promise<Map<string, number>> {
   stock.forEach(s => { if (s.unitCost > 0) map.set(s.code, s.unitCost) })
   return map
 }
+
+// ── Nota de crédito por cliente (integração Risco de Cliente ↔ Demanda) ──
+// A base financeira identifica clientes por RAZÃO SOCIAL; a comercial, por nome.
+// Ambos vêm do mesmo ERP — o cruzamento é por nome normalizado.
+const normName = (s: string) =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+
+export type CredInfo = {
+  grade: string; score: number; risk: number
+  paid: number; defaulted: number; pending: number
+  openBalance: number; overdue90: number; phone: string | null
+}
+
+async function creditByName(): Promise<Map<string, CredInfo>> {
+  const clients = await prisma.client.findMany({ include: { sales: true } })
+  const now = new Date()
+  const map = new Map<string, CredInfo>()
+  clients.forEach(c => {
+    const sales = c.sales as SaleForCredit[]
+    const sc = scoreClient(sales, now)
+    let openBalance = 0, overdue90 = 0
+    sales.forEach(s => {
+      if (s.paidDate || s.paymentStatus === 'PAID') return  // resolvido
+      openBalance += s.amount
+      const ref = s.dueDate ? new Date(s.dueDate) : new Date(s.date)
+      if ((now.getTime() - ref.getTime()) / 86400000 > 90) overdue90 += s.amount
+    })
+    map.set(normName(c.name), {
+      grade: effectiveGrade(sc.risk, openBalance), score: sc.score, risk: sc.risk,
+      paid: sc.paid, defaulted: sc.defaulted, pending: sc.pending,
+      openBalance, overdue90, phone: c.phone ?? null,
+    })
+  })
+  return map
+}
 const margemOf = (valor: number, qtd: number, custo: number | undefined) =>
   custo != null && valor > 0 ? (valor - qtd * custo) / valor : null
 
@@ -32,9 +68,10 @@ export async function GET(req: NextRequest) {
 
   // ─── Detalhe de um cliente (consulta filtrada — rápida) ───
   if (cliente) {
-    const [mine, costs] = await Promise.all([
+    const [mine, costs, credMap] = await Promise.all([
       prisma.demandEntry.findMany({ where: { clienteCode: cliente } }),
       stockCostMap(),
+      creditByName(),
     ])
     if (!mine.length) return NextResponse.json({ hasData: true, cliente, notFound: true, months: [] })
     const months = Array.from(new Set(mine.map(r => ym(r.year, r.month)))).sort()
@@ -73,12 +110,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       hasData: true, cliente, nome, vendedor, months, monthly, produtos, dropped, droppedYoY,
       curYear, prevYear, margemMedia,
+      credito: credMap.get(normName(nome)) ?? null,
       total: Object.values(monthly).reduce((s, v) => s + v, 0),
     })
   }
 
   // ─── Visão geral (com filtros) ───
-  const [rows, costs] = await Promise.all([prisma.demandEntry.findMany(), stockCostMap()])
+  const [rows, costs, credMap] = await Promise.all([prisma.demandEntry.findMany(), stockCostMap(), creditByName()])
   if (!rows.length) return NextResponse.json({ hasData: false })
 
   const vendedores = Array.from(new Set(rows.map(r => r.vendedor).filter((v): v is string => !!v))).sort()
@@ -148,7 +186,8 @@ export async function GET(req: NextRequest) {
     const yoy = hasYoY && c.cmpPrev > 0 ? (c.cmpCur - c.cmpPrev) / c.cmpPrev : null
     const perdidoYoY = hasYoY && c.tPrev > 0 && c.tCur === 0
     const margem = c.valCC > 0 ? (c.valCC - c.cusCC) / c.valCC : null
-    return { code: c.code, nome: c.nome, vendedor: c.vendedor, total: c.total, qtd: c.qtd, nProd: c.prods.size, abc, share, status, byMonth: c.byMonth, tCur: c.tCur, tPrev: c.tPrev, yoy, perdidoYoY, margem }
+    const cred = credMap.get(normName(c.nome))
+    return { code: c.code, nome: c.nome, vendedor: c.vendedor, total: c.total, qtd: c.qtd, nProd: c.prods.size, abc, share, status, byMonth: c.byMonth, tCur: c.tCur, tPrev: c.tPrev, yoy, perdidoYoY, margem, nota: cred?.grade ?? null, notaAberto: cred?.openBalance ?? 0 }
   })
 
   const dist = { A: 0, B: 0, C: 0 } as Record<string, number>

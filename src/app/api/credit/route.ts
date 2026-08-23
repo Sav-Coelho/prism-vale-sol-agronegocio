@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { scoreClient, classifySale, type SaleForCredit } from '@/lib/credit'
+import { scoreClient, type SaleForCredit } from '@/lib/credit'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -19,11 +19,13 @@ export async function GET() {
     const sales = c.sales as SaleForCredit[]
     const score = scoreClient(sales, now)
 
-    // Aging buckets on open balance
+    // Aging buckets on open balance.
+    // Aberto = qualquer título não-resolvido (sem paidDate), INCLUSIVE calote:
+    // um DEFAULTED sem paidDate segue devendo — sair da janela de vencimento do
+    // relatório semanal não é pagamento (caso Santa Amélia, dívida 2025).
     let bucket0_30 = 0, bucket31_60 = 0, bucket61_90 = 0, bucket90plus = 0, openBalance = 0
     for (const s of sales) {
-      const cls = classifySale(s, now)
-      const isOpen = cls === 'PENDING' || (s.paymentStatus === 'OVERDUE' && !s.paidDate)
+      const isOpen = !s.paidDate && s.paymentStatus !== 'PAID'
       if (!isOpen) continue
       openBalance += s.amount
       const ref = s.dueDate ? new Date(s.dueDate) : new Date(s.date)
@@ -38,6 +40,7 @@ export async function GET() {
       id: c.id,
       name: c.name,
       cpf: c.cpf,
+      phone: c.phone,
       active: c.active,
       ...score,
       salesCount: sales.length,

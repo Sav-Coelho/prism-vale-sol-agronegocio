@@ -10,6 +10,7 @@ type CreditRow = {
   id: number
   name: string
   cpf?: string | null
+  phone?: string | null
   active: boolean
   alpha: number
   beta: number
@@ -135,7 +136,26 @@ export default function RiscoCliente() {
     return Object.entries(t).map(([faixa, valor]) => ({ faixa, valor }))
   }, [rows])
 
-  const sortedRows = [...rows].sort((a, b) => b.risk - a.risk)
+  // ── Fila de cobrança (Thayane): filtro por faixa de atraso + busca ──
+  const [agingF, setAgingF] = useState<'todos' | '31-60' | '61-90' | '90+'>('todos')
+  const [buscaF, setBuscaF] = useState('')
+  const bucketVal = (r: CreditRow) =>
+    agingF === '31-60' ? r.aging.bucket31_60 :
+    agingF === '61-90' ? r.aging.bucket61_90 :
+    agingF === '90+'   ? r.aging.bucket90plus : r.openBalance
+  const filteredRows = useMemo(() => {
+    const q = buscaF.trim().toUpperCase()
+    let list = rows
+    if (q) list = list.filter(r => r.name.toUpperCase().includes(q) || (r.cpf ?? '').includes(q))
+    if (agingF !== 'todos') list = list.filter(r => bucketVal(r) > 0.005)
+    // no modo cobrança ordena por dinheiro parado na faixa; no geral, por risco
+    return [...list].sort((a, b) => agingF === 'todos' ? b.risk - a.risk : bucketVal(b) - bucketVal(a))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, agingF, buscaF])
+  const filtroTotal = useMemo(() => filteredRows.reduce((s, r) => s + bucketVal(r), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredRows])
+  const sortedRows = filteredRows
 
   const uploadReceber = async (file: File) => {
     setImporting(true); setImportMsg('Lendo planilha e reconciliando…')
@@ -348,8 +368,26 @@ export default function RiscoCliente() {
           {/* Tabela detalhada */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '20px 28px', borderBottom: `1px solid ${C.line}` }}>
-              <div className="card-eyebrow">Detalhamento</div>
-              <div className="card-title">Clientes ordenados por risco</div>
+              <div className="card-eyebrow">{agingF === 'todos' ? 'Detalhamento' : 'Fila de cobrança'}</div>
+              <div className="card-title">
+                {agingF === 'todos' ? 'Clientes ordenados por risco' : `Clientes com títulos vencidos há ${agingF === '90+' ? 'mais de 90' : agingF} dias`}
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+                {([['todos', 'Todos'], ['31-60', 'Vencidos 31–60d'], ['61-90', 'Vencidos 61–90d'], ['90+', 'Vencidos +90d']] as const).map(([k, l]) => (
+                  <button key={k}
+                    className={agingF === k ? 'btn btn-primary btn-sm' : 'btn btn-sm'}
+                    onClick={() => setAgingF(k)}>{l}</button>
+                ))}
+                <input className="form-input" placeholder="Buscar cliente ou CPF/CNPJ…" value={buscaF}
+                  onChange={e => setBuscaF(e.target.value)}
+                  style={{ maxWidth: 260, marginLeft: 'auto', padding: '6px 10px', fontSize: 13 }} />
+              </div>
+              <div style={{ fontSize: 12, color: C.textSoft, marginTop: 10 }}>
+                {sortedRows.length} cliente{sortedRows.length === 1 ? '' : 's'}
+                {agingF !== 'todos' && <> · <b style={{ color: C.navy }}>{fmt(filtroTotal)}</b> vencidos na faixa — ordenados do maior valor para o menor</>}
+                {agingF === '90+' && <span style={{ color: C.textMuted }}> · tratar caso a caso / recuperação de crédito</span>}
+                {(agingF === '31-60' || agingF === '61-90') && <span style={{ color: C.textMuted }}> · prioridade da cobrança ativa (ligar / WhatsApp)</span>}
+              </div>
             </div>
             <div className="table-wrap">
               <table>
@@ -369,6 +407,7 @@ export default function RiscoCliente() {
                       <td>
                         <div style={{ fontWeight: 600, color: C.navy }}>{r.name}</div>
                         {r.cpf && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{r.cpf}</div>}
+                        {r.phone && <div style={{ fontSize: 11, color: C.textSoft, marginTop: 2 }}>☎ {r.phone}</div>}
                       </td>
                       <td style={{ fontSize: 12 }}>
                         <span style={{ color: C.green, fontWeight: 600 }}>{r.paid}</span>
@@ -416,6 +455,9 @@ export default function RiscoCliente() {
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600, color: r.openBalance > 0 ? C.amber : C.textMuted }}>
                         {fmt(r.openBalance)}
+                        {agingF !== 'todos' && bucketVal(r) < r.openBalance - 0.005 && (
+                          <div style={{ fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 2 }}>{fmt(bucketVal(r))} na faixa</div>
+                        )}
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <button className="btn btn-sm" onClick={() => openEdit(r)}>Editar</button>

@@ -55,6 +55,16 @@ export function classifySale(sale: SaleForCredit, refDate: Date = new Date()):
   return 'PENDING'
 }
 
+// Faixa base pelo risco (1 − score) e nota efetiva com a trava de negócio:
+// cliente com saldo em aberto nunca exibe AA/A — rebaixa para B.
+// (Mesma regra aplicada no front de /risco-cliente; manter em sincronia.)
+export const riskBand = (risk: number) =>
+  risk < 0.2 ? 'AA' : risk < 0.4 ? 'A' : risk < 0.6 ? 'B' : risk < 0.8 ? 'C' : 'D'
+export const effectiveGrade = (risk: number, openBalance: number) => {
+  const b = riskBand(risk)
+  return openBalance > 0 && (b === 'AA' || b === 'A') ? 'B' : b
+}
+
 export function scoreClient(sales: SaleForCredit[], refDate: Date = new Date()): CreditScore {
   let paid = 0
   let defaulted = 0

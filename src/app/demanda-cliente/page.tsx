@@ -12,7 +12,7 @@ function BodyPortal({ children }: { children: React.ReactNode }) {
 import { CommercialUploader } from '@/components/CommercialUploader'
 import { BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number>; tCur: number; tPrev: number; yoy: number | null; perdidoYoY: boolean; margem: number | null }
+interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number>; tCur: number; tPrev: number; yoy: number | null; perdidoYoY: boolean; margem: number | null; nota?: string | null; notaAberto?: number }
 interface VendRank { nome: string; total: number; tCur: number; tPrev: number; yoy: number | null; clientesAtivos: number; clientesPerdidos: number; clientesNovos: number; margem: number | null }
 interface Overview {
   hasData: boolean; months: string[]
@@ -28,11 +28,18 @@ interface Detail {
   produtos: DetailProduto[]
   dropped: { nome: string; code: string | null; total: number; ultimoMes: string | null }[]
   droppedYoY: { nome: string; code: string | null; totalPrev: number }[]
+  credito?: { grade: string; score: number; risk: number; paid: number; defaulted: number; pending: number; openBalance: number; overdue90: number; phone: string | null } | null
 }
 
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14', blue: '#2f5a96' }
 const ABC_COLOR: Record<string, string> = { A: C.green, B: C.gold, C: C.textMuted }
 const STATUS_COLOR: Record<string, string> = { Crescendo: C.green, Estável: C.blue, 'Em queda': C.amber, Sumiu: C.red, Novo: C.navy }
+// Nota de crédito (mesmas cores da aba Risco de Cliente)
+const NOTA_COLOR: Record<string, string> = { AA: C.green, A: '#5a8542', B: C.gold, C: C.amber, D: C.red }
+const NotaBadge = ({ nota, size = 11 }: { nota?: string | null; size?: number }) =>
+  nota ? (
+    <span style={{ color: NOTA_COLOR[nota] ?? C.textMuted, background: (NOTA_COLOR[nota] ?? C.textMuted) + '18', border: `1px solid ${NOTA_COLOR[nota] ?? C.textMuted}`, borderRadius: 3, padding: '1px 7px', fontSize: size, fontWeight: 700, whiteSpace: 'nowrap' }}>{nota}</span>
+  ) : <span style={{ color: C.textMuted, fontSize: size }}>—</span>
 const fmt = (n: number) => (n < 0 ? '−' : '') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0)) }
 const MONTHS = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -238,13 +245,14 @@ export default function DemandaCliente() {
             <div className="table-wrap" style={{ maxHeight: '62vh' }}>
               <table>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-                  <tr><th style={{ textAlign: 'left' }}>Cliente</th><th>ABC</th><th>Status</th><th style={{ textAlign: 'right' }}>{ov.hasYoY ? ov.curYear : 'Faturamento'}</th>{ov.hasYoY && <th style={{ textAlign: 'right' }}>{ov.prevYear}</th>}{ov.hasYoY && <th style={{ textAlign: 'right' }}>Δ a/a</th>}<th style={{ textAlign: 'right' }}>Margem</th><th style={{ textAlign: 'right' }}>Prod.</th><th></th></tr>
+                  <tr><th style={{ textAlign: 'left' }}>Cliente</th><th>ABC</th><th>Crédito</th><th>Status</th><th style={{ textAlign: 'right' }}>{ov.hasYoY ? ov.curYear : 'Faturamento'}</th>{ov.hasYoY && <th style={{ textAlign: 'right' }}>{ov.prevYear}</th>}{ov.hasYoY && <th style={{ textAlign: 'right' }}>Δ a/a</th>}<th style={{ textAlign: 'right' }}>Margem</th><th style={{ textAlign: 'right' }}>Prod.</th><th></th></tr>
                 </thead>
                 <tbody>
                   {filtered.slice(0, 200).map(c => (
                     <tr key={c.code} style={{ cursor: 'pointer' }} onClick={() => openCliente(c.code, c.nome)}>
                       <td style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{c.nome}<div style={{ fontSize: 10, color: C.textMuted }}>{c.code}{c.vendedor ? ` · ${c.vendedor}` : ''}</div></td>
                       <td style={{ textAlign: 'center' }}><span style={{ background: ABC_COLOR[c.abc], color: '#fff', borderRadius: 3, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{c.abc}</span></td>
+                      <td style={{ textAlign: 'center' }} title={c.notaAberto && c.notaAberto > 0 ? `Em aberto: ${fmt(c.notaAberto)}` : undefined}><NotaBadge nota={c.nota} /></td>
                       <td style={{ textAlign: 'center', fontSize: 11, color: STATUS_COLOR[c.status] ?? C.textSoft, fontWeight: 600, whiteSpace: 'nowrap' }}>{c.status}</td>
                       <td style={{ textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{fmt(ov.hasYoY ? c.tCur : c.total)}</td>
                       {ov.hasYoY && <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{fmtK(c.tPrev)}</td>}
@@ -258,12 +266,13 @@ export default function DemandaCliente() {
                       <td style={{ textAlign: 'center', color: C.gold }}>›</td>
                     </tr>
                   ))}
-                  {filtered.length > 200 && <tr><td colSpan={ov.hasYoY ? 10 : 8} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 200 de {filtered.length}. Use a busca para refinar.</td></tr>}
+                  {filtered.length > 200 && <tr><td colSpan={ov.hasYoY ? 11 : 9} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 200 de {filtered.length}. Use a busca para refinar.</td></tr>}
                 </tbody>
               </table>
             </div>
             <div style={{ padding: '8px 20px', fontSize: 11, color: C.textMuted, borderTop: `1px solid ${C.line}` }}>
               <b>Margem</b> = margem de venda real: (valor vendido − qtd × custo de reposição do ABC de Estoque) ÷ valor vendido, nos itens com custo conhecido.
+              {' '}<b>Crédito</b> = nota da aba Risco de Cliente (AA/A = pode conceder prazo · B = caso a caso · C/D = evitar prazo); “—” = cliente sem histórico na base financeira.
             </div>
           </div>
           )}
@@ -317,6 +326,7 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
             <tr>
               <th style={th}>Cliente</th>
               <th style={{ ...th, width: 34, textAlign: 'center' }}>ABC</th>
+              <th style={{ ...th, width: 38, textAlign: 'center' }}>Créd.</th>
               <th style={{ ...th, textAlign: 'right' }}>{ov.curYear}</th>
               {ov.hasYoY && <th style={{ ...th, textAlign: 'right' }}>{ov.prevYear}</th>}
               {ov.hasYoY && <th style={{ ...th, textAlign: 'right', width: 60 }}>Δ a/a</th>}
@@ -329,6 +339,7 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
               <tr key={c.code}>
                 <td style={{ ...td, fontWeight: 600, color: C.navy }}>{c.nome}<span style={{ color: '#888', fontWeight: 400 }}> · {c.code}</span></td>
                 <td style={{ ...td, textAlign: 'center', fontWeight: 700, color: c.abc === 'A' ? C.green : c.abc === 'B' ? C.gold : '#888' }}>{c.abc}</td>
+                <td style={{ ...td, textAlign: 'center', fontWeight: 700, color: c.nota ? (NOTA_COLOR[c.nota] ?? '#888') : '#bbb' }}>{c.nota ?? '—'}</td>
                 <td style={num}>{modo === 'perdido' ? '—' : fmt(c.tCur)}</td>
                 {ov.hasYoY && <td style={{ ...num, color: '#555' }}>{fmt(c.tPrev)}</td>}
                 {ov.hasYoY && <td style={{ ...num, fontWeight: 700, color: modo === 'perdido' ? C.red : (c.yoy ?? 0) >= 0 ? C.green : C.amber }}>{modo === 'perdido' ? 'perdido' : c.yoy == null ? 'novo' : `${c.yoy >= 0 ? '+' : ''}${(c.yoy * 100).toFixed(0)}%`}</td>}
@@ -376,6 +387,8 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
 
       <div style={{ marginTop: 10, fontSize: 8, color: '#777', borderTop: '0.5px solid #ccc', paddingTop: 6, lineHeight: 1.5 }}>
         Margem real = (valor vendido − custo de reposição) ÷ valor vendido, nos itens com custo cadastrado. Δ a/a compara o mesmo período dos dois anos.
+        <b> Créd.</b> = nota de crédito (histórico de pagamento): <b style={{ color: C.green }}>AA/A</b> pode conceder prazo (até 90d / 45–60d) ·
+        <b style={{ color: C.gold }}> B</b> caso a caso · <b style={{ color: C.amber }}>C</b> prazo curto com entrada · <b style={{ color: C.red }}>D</b> não conceder prazo · “—” sem histórico.
         Listas limitadas aos maiores casos de cada bloco. Desenvolvido por Delfos Research LTDA.
       </div>
     </div>
@@ -493,10 +506,35 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
         </div>
 
         {/* faixa de indicadores */}
-        <div style={{ background: C.navyMid, color: '#fff', padding: '8px 18px', display: 'flex', gap: 28, flexWrap: 'wrap', flexShrink: 0 }}>
+        <div style={{ background: C.navyMid, color: '#fff', padding: '8px 18px', display: 'flex', gap: 28, flexWrap: 'wrap', flexShrink: 0, alignItems: 'baseline' }}>
           <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Total no período </span><b style={{ color: C.yellow, fontSize: 14 }}>{fmt(detail.total ?? 0)}</b></div>
           <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Produtos </span><b style={{ fontSize: 14 }}>{produtos.length}</b></div>
           <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Margem média real </span><b style={{ fontSize: 14, color: detail.margemMedia == null ? '#fff' : detail.margemMedia >= 0.2 ? '#7ce3a8' : detail.margemMedia >= 0.1 ? C.yellow : '#ff9c8f' }}>{mgFmt(detail.margemMedia)}</b></div>
+          {/* nota de crédito + histórico de pagamento (integração Risco de Cliente) */}
+          {detail.credito ? (
+            <>
+              <div>
+                <span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Nota de crédito </span>
+                <b style={{ fontSize: 13, color: '#0a2540', background: NOTA_COLOR[detail.credito.grade] ?? '#fff', borderRadius: 3, padding: '1px 9px' }}>{detail.credito.grade}</b>
+                <span style={{ fontSize: 11, opacity: 0.85, marginLeft: 8 }}>{(detail.credito.score * 100).toFixed(0)}% prob. de pagar</span>
+              </div>
+              <div>
+                <span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Pagamentos </span>
+                <b style={{ fontSize: 13, color: '#7ce3a8' }}>{detail.credito.paid}</b><span style={{ fontSize: 11, opacity: 0.7 }}> pagos · </span>
+                <b style={{ fontSize: 13, color: '#ff9c8f' }}>{detail.credito.defaulted}</b><span style={{ fontSize: 11, opacity: 0.7 }}> calotes · </span>
+                <b style={{ fontSize: 13 }}>{detail.credito.pending}</b><span style={{ fontSize: 11, opacity: 0.7 }}> pendentes</span>
+              </div>
+              {detail.credito.openBalance > 0 && (
+                <div>
+                  <span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Em aberto </span>
+                  <b style={{ fontSize: 14, color: detail.credito.overdue90 > 0 ? '#ff9c8f' : C.yellow }}>{fmt(detail.credito.openBalance)}</b>
+                  {detail.credito.overdue90 > 0 && <span style={{ fontSize: 11, color: '#ff9c8f', marginLeft: 6 }}>({fmt(detail.credito.overdue90)} vencido +90d)</span>}
+                </div>
+              )}
+            </>
+          ) : (
+            <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Nota de crédito </span><span style={{ fontSize: 11, opacity: 0.75 }}>sem histórico na base financeira</span></div>
+          )}
         </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '18px 22px' }}>
