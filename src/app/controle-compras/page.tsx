@@ -92,8 +92,8 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
     : null
   return (
     <>
-      {/* Três números, mesma régua do gráfico: limite do mês, comprometido, diferença. */}
-      <div className="grid-3 mb-6">
+      {/* Mesma régua do gráfico: limite do mês, comprometido, diferença, CMV% atual. */}
+      <div className="grid-4 mb-6">
         <Kpi label={`Limite de compras · ${an.refLabel}`} value={fmt(an.limiteCmvMensal)}
           sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × ${refBaseLabel}` : 'sem receita na DRE'}
           color={C.navy} />
@@ -101,6 +101,8 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
           sub="boletos do ERP + pedidos, vencendo no mês" color={C.gold} />
         <Kpi label="Disponível" value={fmt(an.saldoMes)}
           sub="limite − comprometido" color={an.saldoMes >= 0 ? C.green : C.red} />
+        <Kpi label="CMV atual" value={pct(an.cmvRealPct)}
+          sub={`meta ${pct(an.metaCmvPct)}`} color={an.cmvRealPct <= an.metaCmvPct ? C.green : C.red} />
       </div>
 
       <div className="mb-6" style={{ maxWidth: 620 }}>
