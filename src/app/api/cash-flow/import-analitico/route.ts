@@ -109,11 +109,17 @@ export async function POST(req: Request) {
     const CHUNK = 1000
     for (let i = 0; i < receivables.length; i += CHUNK) insR += (await tx.receivable.createMany({ data: receivables.slice(i, i + CHUNK) as never, skipDuplicates: true })).count
     for (let i = 0; i < payables.length; i += CHUNK) insP += (await tx.payable.createMany({ data: payables.slice(i, i + CHUNK) as never, skipDuplicates: true })).count
-    // boletos do compras: wipe-replace junto com o fluxo (mesma fotografia do ERP)
-    const delB = await tx.purchaseCommit.deleteMany({})
-    let insB = 0
-    for (let i = 0; i < boletos.length; i += CHUNK) insB += (await tx.purchaseCommit.createMany({ data: boletos.slice(i, i + CHUNK) })).count
-    return { deletedReceivables: delR.count, deletedPayables: delP.count, insertedReceivables: insR, insertedPayables: insP, deletedBoletos: delB.count, insertedBoletos: insB }
+    // Boletos do compras: substitui SÓ a janela coberta pela fotografia
+    // (dueDate >= 1º vencimento do arquivo). Boletos vencidos ANTES dela ficam —
+    // são o histórico já pago do mês corrente; apagá-los derrubaria o
+    // comprometido/CMV de agosto a cada import semanal.
+    let delB = 0, insB = 0
+    if (boletos.length > 0) {
+      const minDueBoletos = boletos.reduce((m, b) => b.dueDate < m ? b.dueDate : m, boletos[0].dueDate)
+      delB = (await tx.purchaseCommit.deleteMany({ where: { dueDate: { gte: minDueBoletos } } })).count
+      for (let i = 0; i < boletos.length; i += CHUNK) insB += (await tx.purchaseCommit.createMany({ data: boletos.slice(i, i + CHUNK) })).count
+    }
+    return { deletedReceivables: delR.count, deletedPayables: delP.count, insertedReceivables: insR, insertedPayables: insP, deletedBoletos: delB, insertedBoletos: insB }
   }, { timeout: 120_000 })
 
   return NextResponse.json({

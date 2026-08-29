@@ -1,6 +1,9 @@
 /**
- * Import do RELATORIO DE PAGAMENTOS A EFETUAR → PurchaseCommit (wipe-and-replace).
+ * Import do RELATORIO DE PAGAMENTOS A EFETUAR → PurchaseCommit.
  * Reusa o parser de payables (VENCTO/ENTRADA/VLR LÍQ./OPERAÇÃO). Guarda VLR LÍQUIDO.
+ * Substitui SÓ a janela coberta pelo arquivo (dueDate >= 1º vencimento) —
+ * boletos vencidos antes ficam como histórico pago do mês (mesma regra do
+ * import do CashFlow Analítico, que também alimenta esta base).
  * Não toca em Payable (fluxo de caixa) nem em PurchaseOrder (pedidos manuais).
  */
 import { prisma } from '@/lib/prisma'
@@ -32,7 +35,8 @@ export async function POST(req: Request) {
     filial: p.filial || null,
   }))
 
-  const del = await prisma.purchaseCommit.deleteMany({})
+  const minDue = data.reduce((m, d) => d.dueDate < m ? d.dueDate : m, data[0].dueDate)
+  const del = await prisma.purchaseCommit.deleteMany({ where: { dueDate: { gte: minDue } } })
   const ins = await prisma.purchaseCommit.createMany({ data })
 
   const total = data.reduce((s, d) => s + d.valor, 0)
