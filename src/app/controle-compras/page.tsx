@@ -108,7 +108,7 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
       <div className="mb-6" style={{ maxWidth: 620 }}>
         <CommercialUploader
           title="Pagamentos a Efetuar (ERP)"
-          description={`Boletos já lançados — viram o comprometido real por mês. Substitui a base de boletos.${an.boletos?.count ? ` Hoje: ${an.boletos.count} boletos · ${fmtK(an.boletos.total)}.` : ''}`}
+          description={`Boletos já lançados — viram o comprometido real por mês. A base também se atualiza sozinha a cada import do CashFlow semanal no Fluxo de Caixa (saídas Fornecedor Mercadorias).${an.boletos?.count ? ` Hoje: ${an.boletos.count} boletos · ${fmtK(an.boletos.total)}.` : ''}`}
           endpoint="/api/compras/import-pagamentos"
           onDone={onReload}
         />

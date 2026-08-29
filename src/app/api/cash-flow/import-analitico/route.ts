@@ -4,6 +4,13 @@
  * FILIAL do arquivo (fallback 'CONSOLIDADO' se vier vazia).
  * Wipe TOTAL de Receivable/Payable e substitui por esta projeção (decisão do usuário).
  * A stale-rule (dueDate <= hoje não entra em análise) é aplicada pela /series na leitura.
+ *
+ * LIGAÇÃO COM O CONTROLE DE COMPRAS (pedido do Sávio, 2026-08-28): as saídas com
+ * classificação FORNECEDOR MERCADORIAS também substituem a base de boletos
+ * (PurchaseCommit) — o comprometido do /controle-compras se atualiza junto com o
+ * cash flow semanal, sem depender do "Pagamentos a Efetuar" à parte.
+ * Exclusões (coerência com a DRE/limite de 70%): MULTMUNDE (intragrupo, fora do
+ * CMV) e FCA (veículo/financiamento).
  */
 import { prisma } from '@/lib/prisma'
 import * as XLSX from 'xlsx'
@@ -52,7 +59,9 @@ export async function POST(req: Request) {
 
   const receivables: Record<string, unknown>[] = []
   const payables: Record<string, unknown>[] = []
+  const boletos: { fornecedor: string; titulo: string | null; parcela: string | null; dueDate: Date; valor: number; operacao: string | null; tipoDocto: string; filial: string }[] = []
   let skippedNoDate = 0
+  let intragrupoExcluido = 0
 
   for (let r = 1; r < m.length; r++) {
     const row = m[r]; if (!row) continue
@@ -80,6 +89,16 @@ export async function POST(req: Request) {
         supplierName: hist, supplierDoc: null, titulo, parcela,
         amount: amt, netAmount: amt, filial, operacao: classif, observation: classif, status: 'PENDING',
       })
+      // ── boletos de compras p/ o Controle de Compras ──
+      const niveis = iCs.map(i => norm(row[i])).filter(Boolean)
+      if (niveis.some(x => x.includes('FORNECEDOR MERCADORIAS'))) {
+        const h = norm(hist)
+        if (h.includes('MULTMUNDE') || h.includes('FCA FIAT')) { intragrupoExcluido += amt; continue }
+        boletos.push({
+          fornecedor: hist, titulo: titulo || null, parcela, dueDate: due, valor: amt,
+          operacao: classif, tipoDocto: 'CashFlow Analítico', filial,
+        })
+      }
     }
   }
 
@@ -90,8 +109,16 @@ export async function POST(req: Request) {
     const CHUNK = 1000
     for (let i = 0; i < receivables.length; i += CHUNK) insR += (await tx.receivable.createMany({ data: receivables.slice(i, i + CHUNK) as never, skipDuplicates: true })).count
     for (let i = 0; i < payables.length; i += CHUNK) insP += (await tx.payable.createMany({ data: payables.slice(i, i + CHUNK) as never, skipDuplicates: true })).count
-    return { deletedReceivables: delR.count, deletedPayables: delP.count, insertedReceivables: insR, insertedPayables: insP }
+    // boletos do compras: wipe-replace junto com o fluxo (mesma fotografia do ERP)
+    const delB = await tx.purchaseCommit.deleteMany({})
+    let insB = 0
+    for (let i = 0; i < boletos.length; i += CHUNK) insB += (await tx.purchaseCommit.createMany({ data: boletos.slice(i, i + CHUNK) })).count
+    return { deletedReceivables: delR.count, deletedPayables: delP.count, insertedReceivables: insR, insertedPayables: insP, deletedBoletos: delB.count, insertedBoletos: insB }
   }, { timeout: 120_000 })
 
-  return NextResponse.json({ kind: 'cashflow-analitico→fluxo', filial: FILIAL, skippedNoDate, ...result })
+  return NextResponse.json({
+    kind: 'cashflow-analitico→fluxo', filial: FILIAL, skippedNoDate, ...result,
+    boletosTotal: boletos.reduce((s, b) => s + b.valor, 0),
+    intragrupoExcluido,
+  })
 }
