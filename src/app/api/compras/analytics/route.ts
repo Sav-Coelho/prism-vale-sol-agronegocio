@@ -1,15 +1,16 @@
 /**
  * Analytics do Controle de Compras:
- *  - Dashboard: limite total, comprado no mês, saldo, CMV% atual vs meta.
- *  - Resumo por comprador (limite × comprado no mês × saldo × status).
- *  - Projeção de pagamentos por MÊS × CATEGORIA: boletos do ERP (comprometido
- *    real, PurchaseCommit) + parcelas dos pedidos manuais (PurchaseOrder).
+ *  - Dashboard: limite do mês, comprometido (só boletos), saldo, CMV real vs meta.
+ *  - Resumo por comprador (limite × lançado no mês × saldo × status).
+ *  - Projeção de pagamentos por MÊS: SOMENTE boletos do ERP (PurchaseCommit) —
+ *    pedidos manuais ficam fora do comprometido (viram boleto quando faturados;
+ *    somar os dois duplicaria — decisão da reunião de 2026-08-28).
  *  - LIMITE POR MÊS = meta% × RECEITA LÍQUIDA do MÊS ANTERIOR (regra do cliente:
  *    limite de julho = %CMV ideal × Rec. Líq. de junho). Se o mês anterior ainda
  *    não tem receita na DRE, usa o último mês disponível (fallback sinalizado).
  */
 import { prisma } from '@/lib/prisma'
-import { installments, ymKey, ymLabel, monthRange } from '@/lib/compras'
+import { ymKey, ymLabel, monthRange } from '@/lib/compras'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -85,8 +86,11 @@ export async function GET() {
   const compradoTotalMes = Array.from(compradoNoMes.values()).reduce((s, v) => s + v, 0)
   const cmvAtualPct = receitaBase > 0 ? compradoTotalMes / receitaBase : 0
 
-  // ── Projeção: boletos do ERP + parcelas dos pedidos manuais, por mês × categoria ──
-  const catOf = (p: typeof pedidos[number]) => p.categoria || 'Pedidos lançados'
+  // ── Projeção: SOMENTE boletos do ERP (decisão 2026-08-28) ──
+  // Os pedidos lançados NÃO entram no comprometido: quando o fornecedor fatura,
+  // o pedido vira boleto no ERP e chega aqui pelo "Pagamentos a Efetuar" —
+  // somar os dois duplicaria o valor. Pedido manual serve à gestão por
+  // comprador (data do lançamento), não ao limite do mês.
   const bucket = new Map<string, Map<string, number>>()
   const bump = (k: string, cat: string, v: number) => {
     if (!bucket.has(k)) bucket.set(k, new Map())
@@ -103,23 +107,12 @@ export async function GET() {
     bump(ymKey(c.dueDate), BOLETOS_CAT, c.valor)
     boletosTotal += c.valor
   })
-  // pedidos manuais (parcelas)
-  pedidos.forEach(p => {
-    installments(p).forEach(({ due, amount }) => {
-      if (due < curStart) return
-      if (due > maxDue) maxDue = due
-      bump(ymKey(due), catOf(p), amount)
-    })
-  })
 
   const monthsSpan = (maxDue.getUTCFullYear() - curStart.getUTCFullYear()) * 12 + (maxDue.getUTCMonth() - curStart.getUTCMonth()) + 1
   const horizon = Math.min(24, Math.max(6, monthsSpan))
   const months = monthRange(curStart, horizon)
 
-  const categorias = Array.from(new Set([
-    ...(boletosTotal > 0 ? [BOLETOS_CAT] : []),
-    ...pedidos.map(catOf),
-  ])).sort()
+  const categorias = boletosTotal > 0 ? [BOLETOS_CAT] : []
 
   const projecao = months.map(k => {
     const cm = bucket.get(k) ?? new Map<string, number>()
