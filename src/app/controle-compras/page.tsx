@@ -99,7 +99,7 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
           sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × ${refBaseLabel}` : 'sem receita na DRE'}
           color={C.navy} />
         <Kpi label={`Comprometido em ${an.refLabel}`} value={fmt(an.comprometidoMes)}
-          sub="boletos do ERP que vencem no mês" color={C.gold} />
+          sub="boletos + parcelas de pedidos que vencem no mês" color={C.gold} />
         <Kpi label={`Disponível p/ vencer em ${an.refLabel}`} value={fmt(an.saldoMes)}
           sub="limite − comprometido · a folga da barra do gráfico" color={an.saldoMes >= 0 ? C.green : C.red} />
         <Kpi label={`CMV real de ${an.refLabel}`} value={pct(an.cmvRealPct)}
@@ -126,12 +126,11 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
         <div className="card-header">
           <div>
             <div className="card-eyebrow">Projeção de pagamentos de compras</div>
-            <div className="card-title">Comprometido por mês (boletos do ERP) × limite de compras</div>
+            <div className="card-title">Comprometido por mês (boletos ERP + pedidos) × limite de compras</div>
           </div>
         </div>
         <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
-          Cada barra soma os <b>boletos a pagar do ERP</b> que vencem no mês — o comprometido real.
-          Pedidos lançados na aba Pedidos <b>não</b> entram aqui: quando o fornecedor fatura, o pedido vira boleto e aparece na barra pela importação do ERP.
+          Cada barra soma os <b>boletos do ERP</b> e as parcelas dos <b>pedidos lançados aqui</b> que vencem no mês.
           A linha tracejada é o limite de cada mês ({pct(an.metaCmvPct)} × receita líquida do mês anterior).
           Barra acima da linha = mês já comprometido além do saudável. Compras de imobilizado (veículo/equipamento) ficam fora{an.boletos?.imobilizadoExcluido ? ` (${fmtK(an.boletos.imobilizadoExcluido)} excluídos)` : ''}.
         </p>
@@ -242,11 +241,7 @@ function Pedidos({ cfg, pedidos, onChange, showToast }: { cfg: Config; pedidos: 
     <>
       <div className="card mb-6">
         <div className="card-eyebrow">Novo pedido</div>
-        <div className="card-title" style={{ fontSize: 14, marginBottom: 6 }}>Lançar pedido de compra</div>
-        <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 14, lineHeight: 1.5 }}>
-          Registro de gestão: alimenta o quadro <b>Comprado × limite por comprador</b>.
-          O comprometido do mês (dashboard e gráfico) vem só dos <b>boletos do ERP</b> — o pedido entra lá quando o fornecedor faturar.
-        </div>
+        <div className="card-title" style={{ fontSize: 14, marginBottom: 14 }}>Lançar pedido de compra</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
           <Field label="Fornecedor">
             <select className="form-select" value={f.fornecedor} onChange={e => set('fornecedor', e.target.value)}>
