@@ -14,6 +14,7 @@ interface Pedido { id: number; comprador: string; fornecedor: string | null; tip
 interface Config { compradores: Comprador[]; categorias: string[]; fornecedores: FornecedorReg[]; settings: Record<string, number>; receitaRef: { ym: string | null; value: number } }
 interface Analytics {
   refLabel: string; receitaRef: { ym: string | null; value: number; exato?: boolean; modo?: string }; metaCmvPct: number; limiteCmvMensal: number
+  comprometidoMes: number; saldoMes: number; cmvRealPct: number
   limiteTotal: number; compradoTotalMes: number; saldoTotal: number; cmvAtualPct: number
   resumoCompradores: { nome: string; setor: string | null; limite: number; comprado: number; saldo: number; util: number; status: string }[]
   categorias: string[]; months: string[]; projecao: Record<string, number | string>[]; porCategoria: { categoria: string; total: number }[]; comprometidoTotal: number; nPedidos: number
@@ -91,14 +92,18 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
     : null
   return (
     <>
-      <div className="grid-5 mb-6">
-        <Kpi label="Limite total (compradores)" value={fmt(an.limiteTotal)} color={C.navy} />
-        <Kpi label={`Comprado em ${an.refLabel}`} value={fmt(an.compradoTotalMes)} color={C.gold} />
-        <Kpi label="Saldo disponível" value={fmt(an.saldoTotal)} color={an.saldoTotal >= 0 ? C.green : C.red} />
-        <Kpi label="CMV atual (% rec. líq.)" value={pct(an.cmvAtualPct)} sub={`meta ${pct(an.metaCmvPct)}`} color={an.cmvAtualPct <= an.metaCmvPct ? C.green : C.red} />
+      {/* KPIs do mês — mesma régua do gráfico (reunião 28/08): o limite é sobre o
+          que VENCE no mês; pedido parcelado consome só a parcela do mês. */}
+      <div className="grid-4 mb-6">
         <Kpi label={`Limite de compras · ${an.refLabel}`} value={fmt(an.limiteCmvMensal)}
           sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × ${refBaseLabel}` : 'sem receita na DRE'}
-          color={C.navyMid} />
+          color={C.navy} />
+        <Kpi label={`Comprometido em ${an.refLabel}`} value={fmt(an.comprometidoMes)}
+          sub="boletos + parcelas de pedidos que vencem no mês" color={C.gold} />
+        <Kpi label={`Disponível p/ vencer em ${an.refLabel}`} value={fmt(an.saldoMes)}
+          sub="limite − comprometido · a folga da barra do gráfico" color={an.saldoMes >= 0 ? C.green : C.red} />
+        <Kpi label={`CMV real de ${an.refLabel}`} value={pct(an.cmvRealPct)}
+          sub={`meta ${pct(an.metaCmvPct)} · sobre a receita-base do limite`} color={an.cmvRealPct <= an.metaCmvPct ? C.green : C.red} />
       </div>
 
       <div className="mb-6" style={{ maxWidth: 620 }}>
@@ -151,7 +156,10 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
         {/* Resumo por comprador */}
         <div className="card">
           <div className="card-eyebrow">Limite por comprador</div>
-          <div className="card-title" style={{ fontSize: 14, marginBottom: 12 }}>Comprado × limite em {an.refLabel}</div>
+          <div className="card-title" style={{ fontSize: 14, marginBottom: 4 }}>Comprado × limite em {an.refLabel}</div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 12 }}>
+            Régua de gestão dos compradores: valor cheio do pedido no mês do <b>lançamento</b>. O limite do mês (quadro acima) é pelo <b>vencimento</b> das parcelas.
+          </div>
           <div className="table-wrap">
             <table>
               <thead><tr><th style={{ textAlign: 'left' }}>Comprador</th><th style={{ textAlign: 'right' }}>Limite</th><th style={{ textAlign: 'right' }}>Comprado</th><th style={{ minWidth: 120 }}>Utilização</th><th>Status</th></tr></thead>

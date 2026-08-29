@@ -140,10 +140,19 @@ export async function GET() {
 
   const comprometidoTotal = porCategoria.reduce((s, c) => s + c.total, 0)
 
+  // ── KPIs do mês corrente — MESMA fonte do gráfico (reunião 2026-08-28):
+  // limite = quanto pode VENCER no mês; um pedido parcelado consome o limite de
+  // cada mês só pela parcela que vence nele, não pelo valor cheio no lançamento.
+  const cmRef = bucket.get(refYm)
+  const comprometidoMes = cmRef ? Array.from(cmRef.values()).reduce((s, v) => s + v, 0) : 0
+  const saldoMes = refLimit.limite - comprometidoMes
+  const cmvRealPct = receitaBase > 0 ? comprometidoMes / receitaBase : 0
+
   return NextResponse.json({
     refYm, refLabel: ymLabel(refYm),
     receitaRef: { ym: refLimit.baseYm, value: receitaBase, exato: refLimit.exato, modo: refLimit.modo },
     metaCmvPct, limiteCmvMensal: refLimit.limite,
+    comprometidoMes, saldoMes, cmvRealPct,
     limiteTotal, compradoTotalMes, saldoTotal: limiteTotal - compradoTotalMes, cmvAtualPct,
     resumoCompradores,
     categorias, months, projecao, porCategoria, comprometidoTotal,
