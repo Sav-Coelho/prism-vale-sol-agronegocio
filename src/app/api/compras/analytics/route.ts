@@ -103,8 +103,10 @@ export async function GET() {
     bump(ymKey(c.dueDate), BOLETOS_CAT, c.valor)
     boletosTotal += c.valor
   })
-  // pedidos manuais (parcelas)
-  pedidos.forEach(p => {
+  // pedidos manuais (parcelas) — só os ainda NÃO faturados: quando o pedido
+  // vira boleto no ERP, o import do CashFlow marca 'Faturado' e ele sai daqui
+  // (o valor já está na barra de boletos; somar os dois duplicaria).
+  pedidos.filter(p => p.status !== 'Faturado').forEach(p => {
     installments(p).forEach(({ due, amount }) => {
       if (due < curStart) return
       if (due > maxDue) maxDue = due
@@ -118,7 +120,7 @@ export async function GET() {
 
   const categorias = Array.from(new Set([
     ...(boletosTotal > 0 ? [BOLETOS_CAT] : []),
-    ...pedidos.map(catOf),
+    ...pedidos.filter(p => p.status !== 'Faturado').map(catOf),
   ])).sort()
 
   const projecao = months.map(k => {

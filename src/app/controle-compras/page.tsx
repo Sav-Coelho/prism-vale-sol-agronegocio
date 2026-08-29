@@ -282,16 +282,25 @@ function Pedidos({ cfg, pedidos, onChange, showToast }: { cfg: Config; pedidos: 
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}><div className="card-title" style={{ fontSize: 14 }}>{pedidos.length} pedidos lançados</div></div>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
+          <div className="card-title" style={{ fontSize: 14 }}>{pedidos.length} pedidos lançados</div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+            <span className="badge" style={{ color: C.green, borderColor: C.green, background: C.green + '14', fontSize: 10, padding: '1px 7px' }}>Faturado</span>
+            {' '}= o ERP já emitiu os boletos deste pedido (detectado no import do CashFlow) — ele sai da projeção para não contar duas vezes.
+          </div>
+        </div>
         <div className="table-wrap" style={{ maxHeight: '60vh' }}>
           <table>
             <thead style={{ position: 'sticky', top: 0 }}><tr><th style={{ textAlign: 'left' }}>Data</th><th style={{ textAlign: 'left' }}>Comprador</th><th style={{ textAlign: 'left' }}>Fornecedor</th><th style={{ textAlign: 'right' }}>Valor</th><th style={{ textAlign: 'left' }}>Pagamentos</th><th></th></tr></thead>
             <tbody>
               {pedidos.map(p => (
-                <tr key={p.id}>
+                <tr key={p.id} style={p.status === 'Faturado' ? { opacity: 0.72 } : undefined}>
                   <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{new Date(p.dataPedido).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}</td>
                   <td style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{p.comprador}</td>
-                  <td style={{ fontSize: 12 }}>{p.fornecedor || '—'}</td>
+                  <td style={{ fontSize: 12 }}>
+                    {p.fornecedor || '—'}
+                    {p.status === 'Faturado' && <span className="badge" style={{ color: C.green, borderColor: C.green, background: C.green + '14', fontSize: 9, padding: '1px 6px', marginLeft: 6 }}>Faturado</span>}
+                  </td>
                   <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(p.valor)}</td>
                   <td style={{ fontSize: 11, color: C.textSoft }}>
                     {Array.isArray(p.datas) && p.datas.length
