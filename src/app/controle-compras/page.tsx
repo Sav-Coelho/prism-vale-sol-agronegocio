@@ -14,7 +14,7 @@ interface Pedido { id: number; comprador: string; fornecedor: string | null; tip
 interface Config { compradores: Comprador[]; categorias: string[]; fornecedores: FornecedorReg[]; settings: Record<string, number>; receitaRef: { ym: string | null; value: number } }
 interface Analytics {
   refLabel: string; receitaRef: { ym: string | null; value: number; exato?: boolean; modo?: string }; metaCmvPct: number; limiteCmvMensal: number
-  comprometidoMes: number; saldoMes: number; cmvRealPct: number
+  comprometidoMes: number; comprometidoMesBoletos: number; comprometidoMesPedidos: number; saldoMes: number; cmvRealPct: number; usoLimitePct: number
   limiteTotal: number; compradoTotalMes: number; saldoTotal: number; cmvAtualPct: number
   resumoCompradores: { nome: string; setor: string | null; limite: number; comprado: number; saldo: number; util: number; status: string }[]
   categorias: string[]; months: string[]; projecao: Record<string, number | string>[]; porCategoria: { categoria: string; total: number }[]; comprometidoTotal: number; nPedidos: number
@@ -92,18 +92,46 @@ function Dashboard({ an, onReload }: { an: Analytics; onReload: () => void }) {
     : null
   return (
     <>
-      {/* KPIs do mês — mesma régua do gráfico (reunião 28/08): o limite é sobre o
-          que VENCE no mês; pedido parcelado consome só a parcela do mês. */}
-      <div className="grid-4 mb-6">
-        <Kpi label={`Limite de compras · ${an.refLabel}`} value={fmt(an.limiteCmvMensal)}
-          sub={an.receitaRef.value ? `${pct(an.metaCmvPct)} × ${refBaseLabel}` : 'sem receita na DRE'}
-          color={C.navy} />
-        <Kpi label={`Comprometido em ${an.refLabel}`} value={fmt(an.comprometidoMes)}
-          sub="boletos + parcelas de pedidos que vencem no mês" color={C.gold} />
-        <Kpi label={`Disponível p/ vencer em ${an.refLabel}`} value={fmt(an.saldoMes)}
-          sub="limite − comprometido · a folga da barra do gráfico" color={an.saldoMes >= 0 ? C.green : C.red} />
-        <Kpi label={`CMV real de ${an.refLabel}`} value={pct(an.cmvRealPct)}
-          sub={`meta ${pct(an.metaCmvPct)} · sobre a receita-base do limite`} color={an.cmvRealPct <= an.metaCmvPct ? C.green : C.red} />
+      {/* Painel do mês — conta a história em sequência: teto → o que já vai
+          vencer (composição aberta) → o que ainda cabe → uso do limite.
+          Mesma régua do gráfico: tudo pelo VENCIMENTO das parcelas no mês. */}
+      <div className="card card-accent-yellow mb-6" style={{ padding: '18px 24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+          <div className="card-title" style={{ fontSize: 15 }}>Quanto pode vencer de compras em {an.refLabel}?</div>
+          <div style={{ fontSize: 11, color: C.textMuted }}>
+            teto = {pct(an.metaCmvPct)} da venda líquida ({refBaseLabel}{an.receitaRef.value ? `: ${fmt(an.receitaRef.value)}` : ''})
+          </div>
+        </div>
+        <div className="grid-4" style={{ marginBottom: 16 }}>
+          <Kpi label={`Teto do mês`} value={fmt(an.limiteCmvMensal)}
+            sub="máximo saudável de compras vencendo no mês" color={C.navy} />
+          <Kpi label={`Já vai vencer em ${an.refLabel}`} value={fmt(an.comprometidoMes)}
+            sub={`${fmt(an.comprometidoMesBoletos)} em boletos do ERP + ${fmt(an.comprometidoMesPedidos)} em pedidos lançados`} color={C.gold} />
+          <Kpi label={`Ainda cabe em ${an.refLabel}`} value={fmt(an.saldoMes)}
+            sub={an.saldoMes >= 0 ? 'espaço p/ compra à vista ou parcela vencendo no mês' : 'acima do teto — alocar novas parcelas p/ meses seguintes'}
+            color={an.saldoMes >= 0 ? C.green : C.red} />
+          <Kpi label="Uso do teto" value={pct(an.usoLimitePct)}
+            sub={`compras = ${pct(an.cmvRealPct)} da venda líquida · meta até ${pct(an.metaCmvPct)}`}
+            color={an.usoLimitePct <= 0.9 ? C.green : an.usoLimitePct <= 1 ? C.amber : C.red} />
+        </div>
+        {/* barra: quanto do teto do mês já está tomado */}
+        <div style={{ background: '#eef2f8', borderRadius: 4, height: 22, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', inset: 0, width: `${Math.min(100, (an.comprometidoMesBoletos / Math.max(1, an.limiteCmvMensal)) * 100)}%`, background: C.navy }} />
+          <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${Math.min(100, (an.comprometidoMesBoletos / Math.max(1, an.limiteCmvMensal)) * 100)}%`, width: `${Math.max(0, Math.min(100 - (an.comprometidoMesBoletos / Math.max(1, an.limiteCmvMensal)) * 100, (an.comprometidoMesPedidos / Math.max(1, an.limiteCmvMensal)) * 100))}%`, background: C.yellow }} />
+          <span style={{ position: 'relative', fontSize: 11, fontWeight: 600, color: an.usoLimitePct > 0.55 ? '#fff' : C.navy, paddingLeft: 10, lineHeight: '22px' }}>
+            {pct(an.usoLimitePct)} do teto tomado — livre {fmt(an.saldoMes)}
+          </span>
+        </div>
+        {/* onde alocar parcelas de pedidos novos: folga dos próximos meses */}
+        <div style={{ fontSize: 12, color: C.textSoft, marginTop: 12, lineHeight: 1.7 }}>
+          <b style={{ color: C.navy }}>Pedido novo? Aloque as parcelas onde há espaço:</b>{' '}
+          {an.projecao.slice(1, 5).map((p, i) => (
+            <span key={String(p.ym)} style={{ whiteSpace: 'nowrap' }}>
+              {i > 0 && ' · '}
+              {String(p.mes)}: <b style={{ color: (p.folga as number) >= 0 ? C.green : C.red }}>{fmtK(p.folga as number)}</b> livres
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="mb-6" style={{ maxWidth: 620 }}>

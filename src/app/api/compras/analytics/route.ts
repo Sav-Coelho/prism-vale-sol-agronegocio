@@ -145,14 +145,17 @@ export async function GET() {
   // cada mês só pela parcela que vence nele, não pelo valor cheio no lançamento.
   const cmRef = bucket.get(refYm)
   const comprometidoMes = cmRef ? Array.from(cmRef.values()).reduce((s, v) => s + v, 0) : 0
+  const comprometidoMesBoletos = cmRef?.get(BOLETOS_CAT) ?? 0
+  const comprometidoMesPedidos = comprometidoMes - comprometidoMesBoletos
   const saldoMes = refLimit.limite - comprometidoMes
   const cmvRealPct = receitaBase > 0 ? comprometidoMes / receitaBase : 0
+  const usoLimitePct = refLimit.limite > 0 ? comprometidoMes / refLimit.limite : 0
 
   return NextResponse.json({
     refYm, refLabel: ymLabel(refYm),
     receitaRef: { ym: refLimit.baseYm, value: receitaBase, exato: refLimit.exato, modo: refLimit.modo },
     metaCmvPct, limiteCmvMensal: refLimit.limite,
-    comprometidoMes, saldoMes, cmvRealPct,
+    comprometidoMes, comprometidoMesBoletos, comprometidoMesPedidos, saldoMes, cmvRealPct, usoLimitePct,
     limiteTotal, compradoTotalMes, saldoTotal: limiteTotal - compradoTotalMes, cmvAtualPct,
     resumoCompradores,
     categorias, months, projecao, porCategoria, comprometidoTotal,
