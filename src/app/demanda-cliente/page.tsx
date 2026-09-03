@@ -63,6 +63,11 @@ export default function DemandaCliente() {
 
   const [selNome, setSelNome] = useState('')
   const [errMsg, setErrMsg] = useState('')
+  // Vendedor (perfil comercial) consulta a análise, mas não importa base.
+  const [role, setRole] = useState<string>('')
+  useEffect(() => {
+    fetch('/api/auth/me').then(r => r.ok ? r.json() : { user: null }).then(d => setRole(d.user?.role ?? '')).catch(() => {})
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -124,9 +129,11 @@ export default function DemandaCliente() {
         </div>
       </div>
 
-      <div className="mb-6" style={{ maxWidth: 620 }}>
-        <CommercialUploader title="Relatório COMERCIAL / ABC COMERCIAL (por cliente)" description="XLSX com VENDEDOR · CLIENTE · PRODUTO · DATA · VLR TOTAL. Substitui apenas os meses presentes no arquivo (2025 e 2026 convivem)." endpoint="/api/demanda/import" onDone={load} />
-      </div>
+      {role === 'gerencial' && (
+        <div className="mb-6" style={{ maxWidth: 620 }}>
+          <CommercialUploader title="Relatório COMERCIAL / ABC COMERCIAL (por cliente)" description="XLSX com VENDEDOR · CLIENTE · PRODUTO · DATA · VLR TOTAL. Substitui apenas os meses presentes no arquivo (2025 e 2026 convivem)." endpoint="/api/demanda/import" onDone={load} />
+        </div>
+      )}
 
       {loading && !ov ? (
         <div className="empty-state"><div className="empty-state-icon">◌</div><div className="empty-state-title">Carregando…</div></div>

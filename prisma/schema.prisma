@@ -278,3 +278,17 @@ model DemandEntry {
   @@index([clienteCode])
   @@index([year, month])
 }
+
+// Acesso ao Arken. Duas contas de equipe (compartilhadas, conforme pedido do
+// cliente na reunião de 28/08): gerencial vê tudo, comercial só a Demanda.
+model User {
+  id           Int       @id @default(autoincrement())
+  login        String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("comercial") // gerencial | comercial
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
