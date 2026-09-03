@@ -85,7 +85,7 @@ function FormularioLogin() {
           </div>
         </div>
 
-        <form onSubmit={entrar} style={{
+        <form onSubmit={entrar} className="login-card" style={{
           background: 'rgba(255,255,255,0.98)',
           borderRadius: 16,
           padding: '30px 30px 26px',
