@@ -134,8 +134,8 @@ export default function DrePage() {
           <h1 className="page-title">DRE Gerencial</h1>
           <p className="page-subtitle">
             Demonstração de resultado em <b>regime de caixa</b>, consolidada e por unidade, com evolução mensal e análise vertical.
-            A receita do mês é o que <b>entrou no caixa</b> — títulos de meses anteriores mais vendas à vista —
-            e por isso não coincide com o fechamento de faturamento, que registra o que foi <b>vendido</b> no mês.
+            A receita do mês é o total <b>recebido</b> (títulos, vendas à vista e cheques) <b>antes das devoluções</b>,
+            que aparecem na linha de Deduções — para comparar com um fechamento já líquido, use a <b>Receita Líquida</b>.
           </p>
         </div>
       </div>
