@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   // Use ?escopo=tudo para forçar a reconstrução completa (arquivo do ano inteiro).
   if (isCashflowAnaliticoFile(buf)) {
     const escopoTudo = new URL(req.url).searchParams.get('escopo') === 'tudo'
-    const { entries, months, rows, totalE, totalS } = buildDreFromCashflow(buf)
+    const { entries, months, rows, totalE, totalS, naoClassificado } = buildDreFromCashflow(buf)
     const data = entries.map(e => ({ ...e }))
     const alvos = Array.from(new Set(data.map(e => `${e.year}|${e.month}`))).map(k => {
       const [year, month] = k.split('|').map(Number)
@@ -79,6 +79,13 @@ export async function POST(req: Request) {
       mesesNaBase: restantes.map(r => `${r.year}-${String(r.month).padStart(2, '0')}`).sort(),
       months, linhasBrutas: rows,
       totalEntradas: totalE, totalSaidas: totalS, buckets: data.length, ...result,
+      // Categorias sem regra caem em Administrativas. Ficam expostas aqui para
+      // que uma revisão do plano de contas não passe em silêncio.
+      naoClassificado: {
+        caminhos: naoClassificado.length,
+        total: naoClassificado.reduce((s, x) => s + x.valor, 0),
+        top: naoClassificado.slice(0, 15),
+      },
     })
   }
 

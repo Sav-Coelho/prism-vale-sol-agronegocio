@@ -33,14 +33,26 @@ export interface CfDreEntry {
   year: number; month: number; amount: number
 }
 
-/** Classifica um lançamento do CashFlow numa linha da DRE. */
-function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string; sub: string } | null {
+/**
+ * Classifica um lançamento do CashFlow numa linha da DRE.
+ *
+ * As comparações são por PALAVRA-CHAVE no caminho contábil, não por igualdade:
+ * o plano de contas do cliente é reescrito de tempos em tempos (em set/2026 foi
+ * destrinchado por loja) e os nomes variam entre filiais — "DESPESAS COM
+ * PESSOAL", "DESPESAS C PESSOAL", "DESP ADM", "DESPESAS ADM". Por isso as regras
+ * usam o radical comum. `naoClassificado` é devolvido por buildDreFromCashflow
+ * para que uma categoria nova NUNCA passe silenciosamente para Administrativas.
+ */
+function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string; sub: string; fallback?: true } | null {
   const has = (kw: string) => path.some(x => x.includes(kw))
   const W = norm(hist)
   const last = [...path].reverse().find(Boolean) ?? '—'
 
   if (tipo === 'E') {
-    if (has('REEMBOLSO PARA CLIENTE')) return { line: 'REEMBIN', sub: 'Reembolso recebido de cliente' }
+    // devolução/estorno estornado DE VOLTA para a empresa abate a dedução
+    if (has('REEMBOLSO PARA CLIENTE') || has('DEVOLUCOES') || has('ESTORNO')) {
+      return { line: 'REEMBIN', sub: 'Devolução/reembolso recebido de cliente' }
+    }
     if (has('DEPOSITO C/C') || has('TRANSFERENCIA ENTRE LOJAS')) return null
     if (has('ENTRADA POR EMPRESTIMOS') || has('RECUPERACAO')) return { line: 'NAOOP', sub: last }
     if (has('JUROS')) return { line: 'JUROS', sub: 'Juros Recebidos de Clientes' }
@@ -63,19 +75,24 @@ function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string
                                : { line: 'INVEST', sub: 'Veículo financiado (principal)' }
   }
   if (has('FORNECEDOR MERCADORIAS')) return { line: 'CMV', sub: 'Compras de Mercadoria (fornecedores)' }
-  if (has('COMPRA DE VEICULOS')) return { line: 'INVEST', sub: 'Compra de Veículos' }
-  if (has('LUCROS DISTRIBUIDOS')) return { line: 'SOCIO', sub: last }
+  // Devolução/estorno a cliente é redutor de receita, não despesa administrativa.
+  // (Categoria criada na revisão do plano de contas de set/2026, em substituição
+  // ao antigo "REEMBOLSO PARA CLIENTE".)
+  if (has('DEVOLUCOES') || has('ESTORNO')) return { line: 'DEDUCAO', sub: last }
   if (has('REEMBOLSO PARA CLIENTE')) return { line: 'DEDUCAO', sub: 'Reembolso a Cliente' }
+  if (has('COMPRA DE VEICULOS') || has('INVESTIMENTO') || has('CONSORCIO')) return { line: 'INVEST', sub: last }
+  if (has('LUCROS DISTRIBUIDOS')) return { line: 'SOCIO', sub: last }
   if (has('PAGAMENTO EMPRESTIMOS')) return { line: 'FIN', sub: 'Pagamento de Empréstimos' }
-  if (has('COM PESSOAL')) return { line: 'PESSOAL', sub: last }
+  // folha: pega "COM PESSOAL", "C PESSOAL", "DE PESSOAL" — o radical é PESSOAL
+  if (has('PESSOAL')) return { line: 'PESSOAL', sub: last }
   if (has('COMERCIAL') || has('COMISSAO')) return { line: 'COM', sub: last }
   if (has('LOGISTICA') || has('COM VEICULO')) return { line: 'LOG', sub: last }
   // impostos: cobre "TRIBUTOS E IMPOSTOS" e "PARCELAMENTO(S) DE IMPOSTOS"
   if (has('TRIBUTOS') || has('IRPJ') || has('DIFAL') || has('IMPOSTO')) return { line: 'IMPOSTOS', sub: last }
   if (has('BANCO') || has('TARIFA')) return { line: 'FIN', sub: last }
   if (has('DIFERENCA DO CAIXA') || has('DIFERENCA DE CAIXA')) return { line: 'DIFCAIXA', sub: last }
-  if (has('ADMINISTRATIV') || has('DESP ADM')) return { line: 'ADM', sub: last }
-  return { line: 'ADM', sub: last }
+  if (has('ADMINISTRATIV') || has('DESP ADM') || has('DESPESAS ADM')) return { line: 'ADM', sub: last }
+  return { line: 'ADM', sub: last, fallback: true }
 }
 
 export function isCashflowAnaliticoFile(buf: ArrayBuffer): boolean {
@@ -88,6 +105,7 @@ export function isCashflowAnaliticoFile(buf: ArrayBuffer): boolean {
 
 export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: number; month: number }): {
   entries: CfDreEntry[]; months: string[]; rows: number; totalE: number; totalS: number
+  naoClassificado: { caminho: string; valor: number; n: number }[]
 } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: false })
   const ws = wb.Sheets[wb.SheetNames[0]]
@@ -99,6 +117,7 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
 
   const map = new Map<string, CfDreEntry>()
   const months = new Set<string>()
+  const semRegra = new Map<string, { valor: number; n: number }>()
   let rows = 0, totalE = 0, totalS = 0
 
   const add = (e: Omit<CfDreEntry, 'amount'>, amount: number) => {
@@ -124,6 +143,12 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
     rows++
     if (tipo === 'E') totalE += Math.abs(val); else totalS += Math.abs(val)
     months.add(`${year}-${String(month).padStart(2, '0')}`)
+
+    if (c.fallback) {
+      const k = path.join(' > ')
+      const cur = semRegra.get(k)
+      if (cur) { cur.valor += Math.abs(val); cur.n++ } else semRegra.set(k, { valor: Math.abs(val), n: 1 })
+    }
 
     // Reembolso é lava-e-passa: a entrada abate a saída dentro de Deduções
     // (líquido). Guardamos com sinal negativo e a compensação é feita depois.
@@ -161,5 +186,9 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
   })
   void byMonth
 
-  return { entries: [...all, ...extras], months: Array.from(months).sort(), rows, totalE, totalS }
+  const naoClassificado = Array.from(semRegra.entries())
+    .map(([caminho, v]) => ({ caminho, valor: v.valor, n: v.n }))
+    .sort((a, b) => b.valor - a.valor)
+
+  return { entries: [...all, ...extras], months: Array.from(months).sort(), rows, totalE, totalS, naoClassificado }
 }
