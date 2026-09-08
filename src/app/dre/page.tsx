@@ -134,6 +134,8 @@ export default function DrePage() {
           <h1 className="page-title">DRE Gerencial</h1>
           <p className="page-subtitle">
             Demonstração de resultado em <b>regime de caixa</b>, consolidada e por unidade, com evolução mensal e análise vertical.
+            A receita do mês é o que <b>entrou no caixa</b> — títulos de meses anteriores mais vendas à vista —
+            e por isso não coincide com o fechamento de faturamento, que registra o que foi <b>vendido</b> no mês.
           </p>
         </div>
       </div>

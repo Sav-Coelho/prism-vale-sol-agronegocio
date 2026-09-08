@@ -115,7 +115,11 @@ export async function GET() {
       ({ type: 'subtotal', key, label, total: totalOf(bm), byMonth: bm })
 
     const rows: Array<Record<string, unknown>> = [
-      grp('RECEITA', 'Receita Operacional Bruta', 1, REC, 'RECEITA'),
+      // "(recebimentos)" no rótulo de propósito: o cliente comparou esta linha
+      // com o fechamento de faturamento do mês e estranhou a diferença. Em
+      // regime de caixa ela é o dinheiro que ENTROU no mês (títulos de meses
+      // anteriores + vendas à vista), não o que foi faturado no mês.
+      grp('RECEITA', 'Receita Operacional Bruta (recebimentos)', 1, REC, 'RECEITA'),
       grp('DEDUCAO', 'Deduções sobre Venda', -1, DED, 'DEDUCAO'),
       sub('RECLIQ', 'Receita Líquida', RECLIQ),
       grp('CMV', LINE_LABEL.CMV, -1, CMV, 'CMV'),
