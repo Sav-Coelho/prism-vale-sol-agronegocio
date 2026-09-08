@@ -46,12 +46,24 @@ export async function POST(req: Request) {
   }
 
   // ── CashFlow Analítico como FONTE ÚNICA da DRE (receita + despesa) ──
-  // Substitui TUDO (receita e despesa) pelos meses presentes no arquivo.
+  // Substitui APENAS os meses presentes no arquivo (receita e despesa juntas).
+  //
+  // Antes isto apagava a base inteira, o que só funcionava porque o primeiro
+  // arquivo cobria jan→jul de uma vez. No fechamento mensal chega um arquivo de
+  // um mês só (ex.: "0108 a 3108") e o wipe total levaria o ano embora.
+  // Use ?escopo=tudo para forçar a reconstrução completa (arquivo do ano inteiro).
   if (isCashflowAnaliticoFile(buf)) {
+    const escopoTudo = new URL(req.url).searchParams.get('escopo') === 'tudo'
     const { entries, months, rows, totalE, totalS } = buildDreFromCashflow(buf)
     const data = entries.map(e => ({ ...e }))
+    const alvos = Array.from(new Set(data.map(e => `${e.year}|${e.month}`))).map(k => {
+      const [year, month] = k.split('|').map(Number)
+      return { year, month }
+    })
     const result = await prisma.$transaction(async tx => {
-      const del = await tx.dreEntry.deleteMany({})     // fonte única: base inteira é substituída
+      const del = escopoTudo
+        ? await tx.dreEntry.deleteMany({})
+        : await tx.dreEntry.deleteMany({ where: { OR: alvos } })
       let ins = 0
       const CHUNK = 3000
       for (let i = 0; i < data.length; i += CHUNK) {
@@ -59,8 +71,13 @@ export async function POST(req: Request) {
       }
       return { deleted: del.count, inserted: ins }
     }, { timeout: 240_000 })
+    const restantes = await prisma.dreEntry.findMany({ select: { year: true, month: true }, distinct: ['year', 'month'] })
     return NextResponse.json({
-      kind: 'dre-from-cashflow', months, linhasBrutas: rows,
+      kind: 'dre-from-cashflow',
+      escopo: escopoTudo ? 'base inteira' : 'meses do arquivo',
+      mesesSubstituidos: alvos.map(a => `${a.year}-${String(a.month).padStart(2, '0')}`).sort(),
+      mesesNaBase: restantes.map(r => `${r.year}-${String(r.month).padStart(2, '0')}`).sort(),
+      months, linhasBrutas: rows,
       totalEntradas: totalE, totalSaidas: totalS, buckets: data.length, ...result,
     })
   }
