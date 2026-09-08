@@ -176,9 +176,16 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
   Array.from(dedByUnitMonth.entries()).forEach(([k, net]) => {
     if (net >= 0) return
     const [unit, y, mo] = k.split('|')
-    // zera as deduções negativas dessa unidade/mês e joga o excedente em NAOOP
+    // Recebido > pago nesta unidade/mês: a dedução da unidade vira ZERO e só o
+    // excedente vai para Não-Operacional.
+    //
+    // Zerar apenas os lançamentos negativos (como era antes) deixava os
+    // positivos de pé: a devolução paga continuava deduzindo a receita mesmo já
+    // tendo sido coberta pelo reembolso recebido, e a diferença evaporava da
+    // DRE — R$ 14.036,31 só em agosto/2026. Zerando os dois lados, o valor se
+    // conserva: o pago é compensado pelo recebido e o excedente aparece em NAOOP.
     all.filter(e => e.line === 'DEDUCAO' && e.unit === unit && e.year === +y && e.month === +mo)
-       .forEach(e => { if (e.amount < 0) e.amount = 0 })
+       .forEach(e => { e.amount = 0 })
     extras.push({
       unit, kind: 'EXP', line: 'NAOOP', sub: 'Reembolso recebido (excedente)',
       supplier: null, supplierCode: null, year: +y, month: +mo, amount: -net,
