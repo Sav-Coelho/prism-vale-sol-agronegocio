@@ -24,13 +24,17 @@ const prevYm = (ym: string) => {
 }
 
 export async function GET() {
-  const [pedidos, commits, compradores, settings, recRows] = await Promise.all([
+  const [pedidos, commits, compradores, settings, importadas, ajustadas] = await Promise.all([
     prisma.purchaseOrder.findMany(),
     prisma.purchaseCommit.findMany(),
     prisma.comprador.findMany({ orderBy: { nome: 'asc' } }),
     prisma.purchaseSetting.findMany(),
     prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
+    // Ajustes manuais de conciliação da DRE também valem aqui: o limite tem de
+    // sair da MESMA receita que a DRE mostra, senão as duas telas divergem.
+    prisma.dreAjuste.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
   ])
+  const recRows = [...importadas, ...ajustadas]
 
   const metaCmvPct = settings.find(s => s.key === 'metaCmvPct')?.value ?? 0.70
 

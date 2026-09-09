@@ -43,7 +43,12 @@ async function seedIfEmpty() {
 //  · senão, Rec. Líq. do mês anterior;
 //  · senão, último mês disponível.
 async function receitaRef(): Promise<{ ym: string | null; value: number; exato: boolean; modo: string }> {
-  const rows = await prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } })
+  // Inclui os ajustes manuais de conciliação, igual à /api/dre e à /api/compras/analytics.
+  const [importadas, ajustadas] = await Promise.all([
+    prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
+    prisma.dreAjuste.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
+  ])
+  const rows = [...importadas, ...ajustadas]
   if (!rows.length) return { ym: null, value: 0, exato: false, modo: 'fallback' }
   const now = new Date()
   // só meses FECHADOS: o mês corrente (parcial) não entra na base de receita
