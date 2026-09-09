@@ -292,3 +292,22 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 }
+
+// Ajuste MANUAL de conciliação da DRE.
+// Vive fora de DreEntry de propósito: o import substitui os meses do arquivo e
+// apagaria o ajuste junto. A /api/dre soma estes lançamentos aos importados na
+// leitura, então o ajuste sobrevive a qualquer reimportação até ser removido.
+model DreAjuste {
+  id        Int      @id @default(autoincrement())
+  unit      String
+  kind      String                       // RECEITA | DEDUCAO | JUROS | EXP
+  line      String                       // RECEITA, CMV, ADM, …
+  sub       String                       // rótulo visível na DRE
+  year      Int
+  month     Int
+  amount    Float
+  motivo    String?                      // por que o ajuste existe
+  createdAt DateTime @default(now())
+
+  @@index([year, month])
+}

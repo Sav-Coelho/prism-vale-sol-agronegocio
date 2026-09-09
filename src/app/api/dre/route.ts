@@ -15,7 +15,20 @@ export const revalidate = 0
 const CONS = 'CONSOLIDADO'
 
 export async function GET() {
-  const entries = await prisma.dreEntry.findMany()
+  // Ajustes manuais de conciliação entram como lançamentos normais NA LEITURA:
+  // ficam fora de DreEntry para não serem apagados pelo import mensal.
+  const [importados, ajustes] = await Promise.all([
+    prisma.dreEntry.findMany(),
+    prisma.dreAjuste.findMany(),
+  ])
+  const entries = [
+    ...importados,
+    ...ajustes.map(a => ({
+      unit: a.unit, kind: a.kind, line: a.line, sub: a.sub,
+      supplier: null as string | null, supplierCode: null as string | null,
+      year: a.year, month: a.month, amount: a.amount,
+    })),
+  ]
 
   const months = Array.from(new Set(entries.map(e => `${e.year}-${String(e.month).padStart(2, '0')}`))).sort()
   const units = Array.from(new Set(entries.map(e => e.unit))).sort()
