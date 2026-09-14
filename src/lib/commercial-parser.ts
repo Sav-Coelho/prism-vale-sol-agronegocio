@@ -109,17 +109,25 @@ export function parseStockAbc(buffer: ArrayBuffer): ParsedStock[] {
   const costIdx = idx['CUSTO UNITARIO'] ?? idx['CUSTO LIQUIDO'] ?? idx['CUSTO']
   const totalIdx = idx['VALOR TOTAL'] ?? idx['VALOR']
 
+  // Em set/2026 o ERP passou a exportar o ABC de Estoque SEM a coluna de custo
+  // (só CÓDIGO | DESCRIÇÃO | QTDE | VALOR). Como VALOR é o estoque valorizado,
+  // o custo unitário se recupera por VALOR ÷ QTDE — conferido contra o export
+  // anterior, que ainda trazia a coluna: bate ao centavo. Sem isso, a Reposição
+  // por Giro e a margem por produto ficariam sem base de custo.
   const items: ParsedStock[] = []
   for (let r = 1; r < matrix.length; r++) {
     const row = matrix[r] as unknown[]
     const code = str(row[codeIdx])
     if (!code) continue
+    const qty = num(row[qtyIdx])
+    const totalValue = num(row[totalIdx])
+    const custoDaColuna = costIdx != null ? num(row[costIdx]) : 0
     items.push({
       code,
       description: str(row[descIdx]),
-      qty: num(row[qtyIdx]),
-      unitCost: num(row[costIdx]),
-      totalValue: num(row[totalIdx]),
+      qty,
+      unitCost: custoDaColuna > 0 ? custoDaColuna : (qty > 0 ? totalValue / qty : 0),
+      totalValue,
     })
   }
   return items
