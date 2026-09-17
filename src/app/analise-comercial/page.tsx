@@ -44,7 +44,7 @@ interface MasterRow {
 interface BcgItem {
   code: string | null; nome: string
   vendaCur: number; vendaPrev: number
-  crescimento: number | null; novo: boolean
+  crescimento: number | null; yoy: number | null; ttmIni: number; ttmFim: number; novo: boolean
   margem: number | null; lucro: number | null
   estoque: number | null; capitalParado: number | null
   quadrante: Quadrante | null
@@ -52,6 +52,7 @@ interface BcgItem {
 interface Bcg {
   hasData: boolean; motivo?: string
   janela: { meses: number[]; label: string; curYear: number; prevYear: number }
+  cagr: { metodo: 'ttm12' | 'yoy'; iniLabel: string; fimLabel: string; mesesDistancia: number; mesesSobreposicao: number; anos: number }
   cortes: { crescimento: number; margem: number }
   totais: { vendaCur: number; vendaPrev: number; crescimentoCarteira: number; itens: number; comMargem: number; semCusto: number; novos: number; perdidos: number }
   resumo: Record<string, { itens: number; venda: number; lucro: number; margem: number; capitalParado: number }>
@@ -264,7 +265,7 @@ export default function AnaliseComercial() {
   /** Exporta a tabela filtrada (com o quadrante da BCG) em CSV para Excel. */
   const exportarCsv = () => {
     const cols = [
-      'Código', 'Descrição', 'Classe ABC', 'Quadrante BCG', 'Crescimento a/a %', 'Margem BCG %',
+      'Código', 'Descrição', 'Classe ABC', 'Quadrante BCG', 'CAGR a.a. %', 'Margem BCG %',
       'Preço varejo', 'Custo unitário', 'Margem tabela %', 'Qtd vendida', 'Faturamento',
       'Qtd estoque', 'Valor estoque', 'Cobertura (meses)', 'Status do giro',
     ]
@@ -473,12 +474,20 @@ export default function AnaliseComercial() {
               <div style={{ marginBottom: 14 }}>
                 <div className="page-eyebrow">Portfólio</div>
                 <h2 style={{ fontFamily: 'var(--font-serif), serif', fontSize: 24, color: C.navy, margin: '2px 0 6px' }}>Matriz BCG</h2>
-                <p style={{ fontSize: 13, color: C.textSoft, maxWidth: 780, lineHeight: 1.6 }}>
-                  Cada produto posicionado por <b>crescimento</b> — venda de {data.bcg.janela.label}/{data.bcg.janela.curYear}
-                  contra os mesmos meses de {data.bcg.janela.prevYear} — e por <b>margem realizada</b>, o preço médio praticado
-                  contra o custo de reposição. Os cortes são o crescimento da própria carteira ({fmtPct(data.bcg.cortes.crescimento * 100)})
-                  e a margem média ({fmtPct(data.bcg.cortes.margem * 100)}).
+                <p style={{ fontSize: 13, color: C.textSoft, maxWidth: 820, lineHeight: 1.6 }}>
+                  Cada produto posicionado por <b>CAGR</b> — taxa anualizada entre as janelas de 12 meses
+                  {data.bcg.cagr.metodo === 'ttm12' ? <> <b>{data.bcg.cagr.iniLabel}</b> e <b>{data.bcg.cagr.fimLabel}</b></> : <> comparáveis</>} —
+                  e por <b>margem realizada</b>, o preço médio praticado contra o custo de reposição.
+                  Como cada janela cobre um ano inteiro, a sazonalidade se anula: nenhum mês entra numa ponta sem entrar na outra.
+                  Os cortes são a CAGR da própria carteira ({fmtPct(data.bcg.cortes.crescimento * 100)}) e a margem média ({fmtPct(data.bcg.cortes.margem * 100)}).
                 </p>
+                {data.bcg.cagr.metodo === 'ttm12' && data.bcg.cagr.mesesSobreposicao > 0 && (
+                  <p style={{ fontSize: 11.5, color: C.textMuted, maxWidth: 820, lineHeight: 1.55, marginTop: 6 }}>
+                    Com {data.bcg.cagr.mesesDistancia + 12} meses de histórico as duas janelas ainda se sobrepõem em {data.bcg.cagr.mesesSobreposicao} meses
+                    ({data.bcg.cagr.mesesDistancia} de distância), e a anualização usa expoente {(12 / data.bcg.cagr.mesesDistancia).toFixed(2)} — o que
+                    amplifica quem partiu de uma base pequena. Conforme a base cresce, a sobreposição some e a taxa se estabiliza sozinha.
+                  </p>
+                )}
               </div>
 
               {/* quadrantes dispostos como na matriz */}
@@ -531,7 +540,7 @@ export default function AnaliseComercial() {
                 <div className="card-header">
                   <div>
                     <div className="card-eyebrow">Posicionamento</div>
-                    <div className="card-title">Crescimento × Margem</div>
+                    <div className="card-title">CAGR × Margem</div>
                   </div>
                 </div>
                 <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 10, lineHeight: 1.6 }}>
@@ -550,7 +559,7 @@ export default function AnaliseComercial() {
                     <YAxis type="number" dataKey="y" domain={[BY_MIN, BY_MAX]} allowDataOverflow
                       tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
                       tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line}
-                      label={{ value: 'Crescimento a/a', angle: -90, position: 'insideLeft', fontSize: 11, fill: C.textMuted }} />
+                      label={{ value: 'CAGR (crescimento anualizado)', angle: -90, position: 'insideLeft', fontSize: 11, fill: C.textMuted }} />
                     <ZAxis type="number" dataKey="z" range={[25, 900]} />
                     <ReferenceLine x={data.bcg.cortes.margem} stroke={C.navy} strokeDasharray="5 4" strokeWidth={1.5} />
                     <ReferenceLine y={data.bcg.cortes.crescimento} stroke={C.navy} strokeDasharray="5 4" strokeWidth={1.5} />
@@ -563,7 +572,11 @@ export default function AnaliseComercial() {
                           <div style={{ fontWeight: 600, marginBottom: 6 }}>{p.nome}</div>
                           <div>Venda {data.bcg.janela.curYear}: <b style={{ color: C.yellow }}>{fmt(p.vendaCur)}</b></div>
                           <div>{data.bcg.janela.prevYear}: {fmt(p.vendaPrev)}</div>
-                          <div>Crescimento: <b>{p.novo ? 'produto novo' : p.crescimento == null ? '—' : `${(p.crescimento * 100).toFixed(0)}%`}</b></div>
+                          <div>CAGR: <b>{p.novo ? 'produto novo' : p.crescimento == null ? '—' : `${(p.crescimento * 100).toFixed(0)}% a.a.`}</b></div>
+                          <div style={{ color: '#9fb0c6', fontSize: 11 }}>
+                            variação a/a: {p.yoy == null ? '—' : `${(p.yoy * 100).toFixed(0)}%`}
+                            {p.ttmIni > 0 && <> · 12m: {fmt(p.ttmIni)} → {fmt(p.ttmFim)}</>}
+                          </div>
                           <div>Margem: <b>{p.margem == null ? '—' : `${(p.margem * 100).toFixed(1)}%`}</b></div>
                           {p.estoque != null && <div style={{ color: '#9fb0c6' }}>Estoque: {fmtNum(p.estoque)} un{p.capitalParado ? ` · ${fmt(p.capitalParado)}` : ''}</div>}
                           {p.foraDeFaixa && <div style={{ color: C.yellow, marginTop: 4, fontSize: 11 }}>fora da faixa do gráfico — posição grampeada na moldura</div>}
@@ -662,7 +675,7 @@ export default function AnaliseComercial() {
                     <SortableTh field="marginPct"      sort={sort} onSort={toggleSort} align="right">Margem %</SortableTh>
                     <SortableTh field="abcClass"       sort={sort} onSort={toggleSort}>ABC</SortableTh>
                     <SortableTh field="bcgQuadrante"   sort={sort} onSort={toggleSort}>BCG</SortableTh>
-                    <SortableTh field="bcgCrescimento" sort={sort} onSort={toggleSort} align="right">Cresc. a/a</SortableTh>
+                    <SortableTh field="bcgCrescimento" sort={sort} onSort={toggleSort} align="right">CAGR a.a.</SortableTh>
                     <SortableTh field="sharePct"       sort={sort} onSort={toggleSort} align="right">Share</SortableTh>
                     <SortableTh field="qtySold"        sort={sort} onSort={toggleSort} align="right">Vendido</SortableTh>
                     <SortableTh field="salesValue"     sort={sort} onSort={toggleSort} align="right">Receita</SortableTh>

@@ -439,7 +439,7 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
             <div style={{ borderLeft: `4px solid ${C.navy}`, paddingLeft: 8, marginBottom: 6 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>④ O QUE VENDER — matriz do portfólio</div>
               <div style={{ fontSize: 9, color: '#666' }}>
-                Produtos que você vendeu em {ov.bcg.janela.label}/{ov.bcg.janela.curYear}, classificados por crescimento contra {ov.bcg.janela.prevYear} e por margem.
+                Produtos que você vendeu em {ov.bcg.janela.label}/{ov.bcg.janela.curYear}, classificados por CAGR (taxa anualizada sobre janelas de 12 meses) e por margem.
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
