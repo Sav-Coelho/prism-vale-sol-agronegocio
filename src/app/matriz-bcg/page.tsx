@@ -94,11 +94,11 @@ export default function MatrizBCG() {
         {marcas.map(m => {
           const apagado = foco !== '' && foco !== m.k
           return (
-            <g key={m.k} opacity={apagado ? 0.04 : 0.13}>
+            <g key={m.k} opacity={apagado ? 0.05 : 0.17}>
               <text x={m.x} y={m.y} textAnchor="middle" dominantBaseline="central"
-                fontSize={Math.min(96, Math.max(48, width / 9))}>{Q[m.k].icone}</text>
-              <text x={m.x} y={m.y + Math.min(96, Math.max(48, width / 9)) * 0.62} textAnchor="middle"
-                fontSize={12} fontWeight={700} letterSpacing="0.18em" fill={Q[m.k].cor}
+                fontSize={Math.min(104, Math.max(52, width / 8.5))}>{Q[m.k].icone}</text>
+              <text x={m.x} y={m.y + Math.min(104, Math.max(52, width / 8.5)) * 0.6} textAnchor="middle"
+                fontSize={12.5} fontWeight={800} letterSpacing="0.2em" fill={Q[m.k].cor}
                 style={{ textTransform: 'uppercase' }}>{Q[m.k].label.toUpperCase()}</text>
             </g>
           )
