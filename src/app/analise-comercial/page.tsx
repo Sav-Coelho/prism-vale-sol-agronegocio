@@ -70,7 +70,8 @@ interface Analytics {
 }
 
 const fmt    = (n: number | null) => n == null ? '—' : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const fmtPct = (n: number | null, digits = 1) => n == null ? '—' : `${n.toFixed(digits)}%`
+// vírgula decimal: o percentual aparece ao lado de valores em R$ formatados em pt-BR
+const fmtPct = (n: number | null, digits = 1) => n == null ? '—' : `${n.toFixed(digits).replace('.', ',')}%`
 const fmtNum = (n: number | null, digits = 0) => n == null ? '—' : n.toLocaleString('pt-BR', { maximumFractionDigits: digits })
 
 const C = {
@@ -579,7 +580,7 @@ export default function AnaliseComercial() {
                             variação a/a: {p.yoy == null ? '—' : `${(p.yoy * 100).toFixed(0)}%`}
                             {p.ttmIni > 0 && <> · 12m: {fmt(p.ttmIni)} → {fmt(p.ttmFim)}</>}
                           </div>
-                          <div>Margem: <b>{p.margem == null ? '—' : `${(p.margem * 100).toFixed(1)}%`}</b></div>
+                          <div>Margem: <b>{p.margem == null ? '—' : fmtPct(p.margem * 100)}</b></div>
                           {p.estoque != null && <div style={{ color: '#9fb0c6' }}>Estoque: {fmtNum(p.estoque)} un{p.capitalParado ? ` · ${fmt(p.capitalParado)}` : ''}</div>}
                           {p.foraDeFaixa && <div style={{ color: C.yellow, marginTop: 4, fontSize: 11 }}>fora da faixa do gráfico — posição grampeada na moldura</div>}
                         </div>

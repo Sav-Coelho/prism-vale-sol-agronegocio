@@ -61,7 +61,9 @@ const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '')
 const MONTHS = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 const mLabel = (m: string) => { const [y, mm] = m.split('-'); return `${MONTHS[+mm]}/${y.slice(2)}` }
 const mgColor = (m: number | null) => m == null ? C.textMuted : m >= 0.2 ? C.green : m >= 0.1 ? C.amber : C.red
-const mgFmt = (m: number | null) => m == null ? '—' : `${(m * 100).toFixed(1)}%`
+// vírgula decimal: o percentual convive com valores em R$ formatados em pt-BR
+const pct1 = (n: number) => n.toFixed(1).replace('.', ',')
+const mgFmt = (m: number | null) => m == null ? '—' : `${pct1(m * 100)}%`
 
 export default function DemandaCliente() {
   const [ov, setOv] = useState<Overview | null>(null)
@@ -200,7 +202,7 @@ export default function DemandaCliente() {
             <Kpi label={`Faturamento ${ov.curYear}`} value={fmt(ov.kpis.totalCur)} color={C.navy} />
             {ov.hasYoY ? (
               <Kpi label={`vs ${ov.prevYear} (mesmos meses)`}
-                value={ov.kpis.yoyGeral != null ? `${ov.kpis.yoyGeral >= 0 ? '+' : ''}${(ov.kpis.yoyGeral * 100).toFixed(1)}%` : '—'}
+                value={ov.kpis.yoyGeral != null ? `${ov.kpis.yoyGeral >= 0 ? '+' : ''}${pct1(ov.kpis.yoyGeral * 100)}%` : '—'}
                 color={(ov.kpis.yoyGeral ?? 0) >= 0 ? C.green : C.red} />
             ) : (
               <Kpi label="Clientes ativos" value={String(ov.kpis.nClientes)} color={C.gold} />
@@ -393,7 +395,7 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
       <div style={{ display: 'flex', gap: 20, marginBottom: 14, flexWrap: 'wrap', background: '#f4f7fb', padding: '8px 12px', borderRadius: 4 }}>
         <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Faturamento {ov.curYear}</div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{fmt(v?.tCur ?? ov.kpis.totalCur)}</div></div>
         {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>{ov.prevYear}</div><div style={{ fontSize: 15, color: '#555' }}>{fmt(v?.tPrev ?? ov.kpis.totalPrev)}</div></div>}
-        {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Variação a/a</div><div style={{ fontSize: 15, fontWeight: 700, color: (v?.yoy ?? 0) >= 0 ? C.green : C.red }}>{v?.yoy == null ? '—' : `${v.yoy >= 0 ? '+' : ''}${(v.yoy * 100).toFixed(1)}%`}</div></div>}
+        {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Variação a/a</div><div style={{ fontSize: 15, fontWeight: 700, color: (v?.yoy ?? 0) >= 0 ? C.green : C.red }}>{v?.yoy == null ? '—' : `${v.yoy >= 0 ? '+' : ''}${pct1(v.yoy * 100)}%`}</div></div>}
         <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Margem real</div><div style={{ fontSize: 15, fontWeight: 700, color: mgColor(v?.margem ?? null) }}>{mgFmt(v?.margem ?? null)}</div></div>
         <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Clientes ativos</div><div style={{ fontSize: 15, fontWeight: 700, color: C.navy }}>{v?.clientesAtivos ?? carteira.length}</div></div>
         {ov.hasYoY && <div><div style={{ fontSize: 8, textTransform: 'uppercase', color: '#666', fontWeight: 700 }}>Perdidos</div><div style={{ fontSize: 15, fontWeight: 700, color: C.red }}>{perdidos.length}</div></div>}
