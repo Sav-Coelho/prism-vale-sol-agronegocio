@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, Cell,
+  ResponsiveContainer, ReferenceLine, Cell, Customized,
 } from 'recharts'
 
 interface Item {
@@ -27,10 +27,10 @@ interface BCG {
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14', blue: '#2f5a96' }
 
 const Q = {
-  ESTRELA:      { label: 'Estrela',       icone: '★', cor: C.green, acao: 'Cresce e tem margem — proteger preço e nunca deixar faltar.' },
-  VACA:         { label: 'Vaca leiteira', icone: '✦', cor: C.blue,  acao: 'Margem boa sem crescer — colher; é o que financia o resto.' },
-  INTERROGACAO: { label: 'Interrogação',  icone: '?', cor: C.amber, acao: 'Cresce sem margem — reprecificar ou renegociar a compra.' },
-  ABACAXI:      { label: 'Abacaxi',       icone: '▽', cor: C.red,   acao: 'Não cresce nem rende — candidato a sair da linha.' },
+  ESTRELA:      { label: 'Estrela',       icone: '⭐', cor: C.green, acao: 'Cresce e tem margem — proteger preço e nunca deixar faltar.' },
+  VACA:         { label: 'Vaca leiteira', icone: '🐄', cor: C.blue,  acao: 'Margem boa sem crescer — colher; é o que financia o resto.' },
+  INTERROGACAO: { label: 'Interrogação',  icone: '❓', cor: C.amber, acao: 'Cresce sem margem — reprecificar ou renegociar a compra.' },
+  ABACAXI:      { label: 'Abacaxi',       icone: '🍍', cor: C.red,   acao: 'Não cresce nem rende — candidato a sair da linha.' },
 } as const
 type QKey = keyof typeof Q
 
@@ -41,7 +41,11 @@ const pct = (n: number | null, d = 1) => n == null ? '—' : `${(n * 100).toFixe
 // vendeu R$ 50 e passou a vender R$ 3.000 cresce 5.900%). O ponto é plotado no
 // teto para não achatar o gráfico; o valor real fica na tabela e no tooltip.
 const TETO = 2, PISO = -1
+const X_MIN = -0.3, X_MAX = 0.7
 const clamp = (n: number) => Math.max(PISO, Math.min(TETO, n))
+
+/** Área de plotagem que o Recharts entrega ao <Customized>. */
+interface Offset { top: number; left: number; width: number; height: number }
 
 export default function MatrizBCG() {
   const [d, setD] = useState<BCG | null>(null)
@@ -65,6 +69,43 @@ export default function MatrizBCG() {
         extrapolado: (i.crescimento ?? 0) > TETO || i.novo,
       }))
   }, [d])
+
+  /**
+   * Marca d'água de cada quadrante, desenhada DENTRO do gráfico.
+   * Posiciona pelo `offset` que o Recharts entrega (a área de plotagem real,
+   * já descontados eixos e margens) e pelas linhas de corte — os quadrantes
+   * não são quartos iguais, então não dá para ancorar em 50%.
+   */
+  const MarcasQuadrantes = (props: Record<string, unknown>) => {
+    const offset = props.offset as Offset | undefined
+    if (!offset || !d) return null
+    const { top, left, width, height } = offset
+    const px = (v: number) => left + ((v - X_MIN) / (X_MAX - X_MIN)) * width
+    const py = (v: number) => top + (1 - (v - PISO) / (TETO - PISO)) * height
+    const cx = px(d.cortes.margem), cy = py(d.cortes.crescimento)
+    const marcas: { k: QKey; x: number; y: number }[] = [
+      { k: 'INTERROGACAO', x: (left + cx) / 2,          y: (top + cy) / 2 },
+      { k: 'ESTRELA',      x: (cx + left + width) / 2,  y: (top + cy) / 2 },
+      { k: 'ABACAXI',      x: (left + cx) / 2,          y: (cy + top + height) / 2 },
+      { k: 'VACA',         x: (cx + left + width) / 2,  y: (cy + top + height) / 2 },
+    ]
+    return (
+      <g style={{ pointerEvents: 'none' }}>
+        {marcas.map(m => {
+          const apagado = foco !== '' && foco !== m.k
+          return (
+            <g key={m.k} opacity={apagado ? 0.04 : 0.13}>
+              <text x={m.x} y={m.y} textAnchor="middle" dominantBaseline="central"
+                fontSize={Math.min(96, Math.max(48, width / 9))}>{Q[m.k].icone}</text>
+              <text x={m.x} y={m.y + Math.min(96, Math.max(48, width / 9)) * 0.62} textAnchor="middle"
+                fontSize={12} fontWeight={700} letterSpacing="0.18em" fill={Q[m.k].cor}
+                style={{ textTransform: 'uppercase' }}>{Q[m.k].label.toUpperCase()}</text>
+            </g>
+          )
+        })}
+      </g>
+    )
+  }
 
   const tabela = useMemo(() => {
     if (!d?.itens) return []
@@ -121,27 +162,64 @@ export default function MatrizBCG() {
             </div>
           </div>
 
-          {/* Quadrantes */}
-          <div className="grid-4 mb-6">
-            {(Object.keys(Q) as QKey[]).map(k => {
-              const r = d.resumo[k]
-              const on = foco === k
-              return (
-                <div key={k} className="card" onClick={() => setFoco(on ? '' : k)}
-                  style={{ cursor: 'pointer', borderLeft: `3px solid ${Q[k].cor}`, background: on ? Q[k].cor + '0e' : undefined }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <span style={{ fontSize: 15, color: Q[k].cor }}>{Q[k].icone}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>{Q[k].label}</span>
-                    <span style={{ marginLeft: 'auto', fontSize: 11, color: C.textMuted }}>{r?.itens ?? 0} itens</span>
-                  </div>
-                  <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 19, color: Q[k].cor, marginTop: 8 }}>{fmt(r?.venda ?? 0)}</div>
-                  <div style={{ fontSize: 11.5, color: C.textSoft, marginTop: 3 }}>
-                    margem {pct(r?.margem ?? 0)} · lucro {fmtK(r?.lucro ?? 0)}
-                  </div>
-                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, lineHeight: 1.45 }}>{Q[k].acao}</div>
-                </div>
-              )
-            })}
+          {/* Quadrantes — dispostos como estão na matriz: crescimento em cima,
+              margem à direita. Clicar isola o quadrante no gráfico e na tabela. */}
+          <div style={{ display: 'flex', gap: 10, marginBottom: 24 }}>
+            <div style={{
+              writingMode: 'vertical-rl', transform: 'rotate(180deg)', textAlign: 'center',
+              fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
+              color: C.textMuted, fontWeight: 600, padding: '4px 0',
+            }}>
+              ← menos crescimento · mais crescimento →
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                {(['INTERROGACAO', 'ESTRELA', 'ABACAXI', 'VACA'] as QKey[]).map(k => {
+                  const r = d.resumo[k]
+                  const on = foco === k
+                  const share = d.totais.vendaCur > 0 ? (r?.venda ?? 0) / d.totais.vendaCur : 0
+                  return (
+                    <div key={k} className="card" onClick={() => setFoco(on ? '' : k)}
+                      style={{
+                        cursor: 'pointer', position: 'relative', overflow: 'hidden',
+                        borderTop: `3px solid ${Q[k].cor}`,
+                        background: on ? Q[k].cor + '0d' : undefined,
+                        boxShadow: on ? `0 0 0 1px ${Q[k].cor}55` : undefined,
+                        transition: 'background 160ms ease, box-shadow 160ms ease',
+                      }}>
+                      {/* ícone do quadrante, grande e transparente, ao fundo do card */}
+                      <span aria-hidden style={{
+                        position: 'absolute', right: 12, top: 6, fontSize: 68,
+                        opacity: on ? 0.16 : 0.09, lineHeight: 1, pointerEvents: 'none',
+                      }}>{Q[k].icone}</span>
+                      <div style={{ position: 'relative' }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: Q[k].cor, letterSpacing: '0.02em' }}>{Q[k].label}</span>
+                          <span style={{ fontSize: 11, color: C.textMuted }}>{r?.itens ?? 0} produtos</span>
+                        </div>
+                        <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 22, color: C.navy, marginTop: 10, lineHeight: 1.1 }}>
+                          {fmt(r?.venda ?? 0)}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: C.textSoft, marginTop: 4 }}>
+                          {pct(share)} da venda · margem <b style={{ color: Q[k].cor }}>{pct(r?.margem ?? 0)}</b> · lucro {fmtK(r?.lucro ?? 0)}
+                        </div>
+                        {/* barra de participação */}
+                        <div style={{ height: 4, background: '#eef2f8', borderRadius: 2, marginTop: 10, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.min(100, share * 100)}%`, background: Q[k].cor, opacity: 0.75 }} />
+                        </div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10, lineHeight: 1.5, minHeight: 32 }}>{Q[k].acao}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{
+                textAlign: 'center', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
+                color: C.textMuted, fontWeight: 600, marginTop: 10,
+              }}>
+                ← menos margem · mais margem →
+              </div>
+            </div>
           </div>
 
           {/* Dispersão */}
@@ -153,14 +231,18 @@ export default function MatrizBCG() {
               </div>
             </div>
             <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 10, lineHeight: 1.6 }}>
-              As linhas tracejadas são os cortes: crescimento da carteira ({pct(d.cortes.crescimento)}) e margem média ({pct(d.cortes.margem)}).
-              Produtos novos e os que cresceram mais de {pct(TETO, 0)} aparecem no topo do gráfico — o valor real está na tabela.
-              Clique num quadrante acima para isolá-lo.
+              Cada bolha é um produto, e o tamanho dela é o faturamento. As linhas tracejadas azuis são os cortes —
+              crescimento da carteira ({pct(d.cortes.crescimento)}) e margem média ({pct(d.cortes.margem)}) —
+              e a linha vermelha marca a margem zero: o que estiver à esquerda dela é vendido abaixo do custo.
+              Produtos novos e os que cresceram mais de {pct(TETO, 0)} aparecem no topo, com o valor real no tooltip.
+              Clique num quadrante acima para isolá-lo aqui.
             </p>
-            <ResponsiveContainer width="100%" height={430}>
-              <ScatterChart margin={{ top: 12, right: 24, bottom: 16, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-                <XAxis type="number" dataKey="x" name="Margem" domain={[-0.3, 0.7]}
+            <ResponsiveContainer width="100%" height={520}>
+              <ScatterChart margin={{ top: 16, right: 28, bottom: 24, left: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.line} vertical={false} />
+                {/* marcas d'água por quadrante — antes do Scatter, para ficarem atrás */}
+                <Customized component={MarcasQuadrantes} />
+                <XAxis type="number" dataKey="x" name="Margem" domain={[X_MIN, X_MAX]}
                   tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
                   tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line}
                   label={{ value: 'Margem realizada', position: 'insideBottom', offset: -8, fontSize: 11, fill: C.textMuted }} />
@@ -169,8 +251,9 @@ export default function MatrizBCG() {
                   tick={{ fontSize: 11, fill: C.textSoft }} stroke={C.line}
                   label={{ value: 'Crescimento a/a', angle: -90, position: 'insideLeft', fontSize: 11, fill: C.textMuted }} />
                 <ZAxis type="number" dataKey="z" range={[25, 900]} />
-                <ReferenceLine x={d.cortes.margem} stroke={C.navy} strokeDasharray="5 4" />
-                <ReferenceLine y={d.cortes.crescimento} stroke={C.navy} strokeDasharray="5 4" />
+                <ReferenceLine x={d.cortes.margem} stroke={C.navy} strokeDasharray="5 4" strokeWidth={1.5} />
+                <ReferenceLine y={d.cortes.crescimento} stroke={C.navy} strokeDasharray="5 4" strokeWidth={1.5} />
+                <ReferenceLine x={0} stroke={C.red} strokeOpacity={0.35} strokeDasharray="2 4" />
                 <Tooltip
                   cursor={{ strokeDasharray: '3 3' }}
                   contentStyle={{ background: C.navy, border: 'none', borderRadius: 5, fontSize: 12 }}
@@ -190,12 +273,19 @@ export default function MatrizBCG() {
                       </div>
                     )
                   }} />
-                <Scatter data={pontos} fillOpacity={0.62}>
-                  {pontos.map((p, i) => (
-                    <Cell key={i}
-                      fill={Q[(p.quadrante as QKey)]?.cor ?? C.textMuted}
-                      opacity={foco && p.quadrante !== foco ? 0.1 : 0.62} />
-                  ))}
+                <Scatter data={pontos} shape="circle">
+                  {pontos.map((p, i) => {
+                    const cor = Q[(p.quadrante as QKey)]?.cor ?? C.textMuted
+                    const apagado = foco !== '' && p.quadrante !== foco
+                    return (
+                      <Cell key={i}
+                        fill={cor}
+                        fillOpacity={apagado ? 0.07 : 0.55}
+                        stroke={cor}
+                        strokeOpacity={apagado ? 0.1 : 0.85}
+                        strokeWidth={1} />
+                    )
+                  })}
                 </Scatter>
               </ScatterChart>
             </ResponsiveContainer>
