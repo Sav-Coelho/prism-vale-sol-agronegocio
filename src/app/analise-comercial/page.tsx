@@ -487,7 +487,7 @@ export default function AnaliseComercial() {
                 {data.bcg.cagr && data.bcg.cagr.metodo === 'ttm12' && data.bcg.cagr.mesesSobreposicao > 0 && (
                   <p style={{ fontSize: 11.5, color: C.textMuted, maxWidth: 820, lineHeight: 1.55, marginTop: 6 }}>
                     Com {data.bcg.cagr.mesesDistancia + 12} meses de histórico as duas janelas ainda se sobrepõem em {data.bcg.cagr.mesesSobreposicao} meses
-                    ({data.bcg.cagr.mesesDistancia} de distância), e a anualização usa expoente {(12 / data.bcg.cagr.mesesDistancia).toFixed(2)} — o que
+                    ({data.bcg.cagr.mesesDistancia} de distância), e a anualização usa expoente {(12 / data.bcg.cagr.mesesDistancia).toFixed(2).replace('.', ',')} — o que
                     amplifica quem partiu de uma base pequena. Conforme a base cresce, a sobreposição some e a taxa se estabiliza sozinha.
                   </p>
                 )}
