@@ -241,7 +241,7 @@ export async function GET() {
     bcg: {
       hasData: bcg.hasData, motivo: bcg.motivo,
       janela: bcg.janela, cortes: bcg.cortes, totais: bcg.totais,
-      resumo: bcg.resumo, itens: bcg.itens,
+      cagr: bcg.cagr, resumo: bcg.resumo, itens: bcg.itens,
     },
   })
 }

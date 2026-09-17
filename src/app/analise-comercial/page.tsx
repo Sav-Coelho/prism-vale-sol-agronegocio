@@ -52,7 +52,9 @@ interface BcgItem {
 interface Bcg {
   hasData: boolean; motivo?: string
   janela: { meses: number[]; label: string; curYear: number; prevYear: number }
-  cagr: { metodo: 'ttm12' | 'yoy'; iniLabel: string; fimLabel: string; mesesDistancia: number; mesesSobreposicao: number; anos: number }
+  // opcional de propósito: resposta em cache de antes da CAGR não traz o bloco,
+  // e sem isso a página inteira cai em erro de cliente
+  cagr?: { metodo: 'ttm12' | 'yoy'; iniLabel: string; fimLabel: string; mesesDistancia: number; mesesSobreposicao: number; anos: number }
   cortes: { crescimento: number; margem: number }
   totais: { vendaCur: number; vendaPrev: number; crescimentoCarteira: number; itens: number; comMargem: number; semCusto: number; novos: number; perdidos: number }
   resumo: Record<string, { itens: number; venda: number; lucro: number; margem: number; capitalParado: number }>
@@ -476,12 +478,12 @@ export default function AnaliseComercial() {
                 <h2 style={{ fontFamily: 'var(--font-serif), serif', fontSize: 24, color: C.navy, margin: '2px 0 6px' }}>Matriz BCG</h2>
                 <p style={{ fontSize: 13, color: C.textSoft, maxWidth: 820, lineHeight: 1.6 }}>
                   Cada produto posicionado por <b>CAGR</b> — taxa anualizada entre as janelas de 12 meses
-                  {data.bcg.cagr.metodo === 'ttm12' ? <> <b>{data.bcg.cagr.iniLabel}</b> e <b>{data.bcg.cagr.fimLabel}</b></> : <> comparáveis</>} —
+                  {data.bcg.cagr && data.bcg.cagr.metodo === 'ttm12' ? <> <b>{data.bcg.cagr.iniLabel}</b> e <b>{data.bcg.cagr.fimLabel}</b></> : <> comparáveis</>} —
                   e por <b>margem realizada</b>, o preço médio praticado contra o custo de reposição.
                   Como cada janela cobre um ano inteiro, a sazonalidade se anula: nenhum mês entra numa ponta sem entrar na outra.
                   Os cortes são a CAGR da própria carteira ({fmtPct(data.bcg.cortes.crescimento * 100)}) e a margem média ({fmtPct(data.bcg.cortes.margem * 100)}).
                 </p>
-                {data.bcg.cagr.metodo === 'ttm12' && data.bcg.cagr.mesesSobreposicao > 0 && (
+                {data.bcg.cagr && data.bcg.cagr.metodo === 'ttm12' && data.bcg.cagr.mesesSobreposicao > 0 && (
                   <p style={{ fontSize: 11.5, color: C.textMuted, maxWidth: 820, lineHeight: 1.55, marginTop: 6 }}>
                     Com {data.bcg.cagr.mesesDistancia + 12} meses de histórico as duas janelas ainda se sobrepõem em {data.bcg.cagr.mesesSobreposicao} meses
                     ({data.bcg.cagr.mesesDistancia} de distância), e a anualização usa expoente {(12 / data.bcg.cagr.mesesDistancia).toFixed(2)} — o que
