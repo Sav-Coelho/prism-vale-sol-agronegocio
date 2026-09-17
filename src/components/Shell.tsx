@@ -13,7 +13,6 @@ const NAV = [
   { href: '/controle-compras',   icon: '🛒', label: 'Controle de Compras', roles: ['gerencial'] },
   { href: '/risco-cliente',      icon: '◆', label: 'Risco de Cliente',    roles: ['gerencial'] },
   { href: '/analise-comercial',  icon: '⌬', label: 'Análise Comercial',   roles: ['gerencial'] },
-  { href: '/matriz-bcg',         icon: '◱', label: 'Matriz BCG',          roles: ['gerencial'] },
   { href: '/demanda-cliente',    icon: '◉', label: 'Demanda por Cliente', roles: ['gerencial', 'comercial'] },
 ]
 

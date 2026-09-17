@@ -10,6 +10,7 @@
  * data em que o ABC foi importado no Arken — se atualiza sozinho a cada import.
  */
 import { prisma } from '@/lib/prisma'
+import { calcularBcg } from '@/lib/bcg'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -19,9 +20,12 @@ export async function GET(req: Request) {
   const url = new URL(req.url)
   const alvoDias = Math.max(5, Math.min(180, parseInt(url.searchParams.get('dias') ?? '30', 10) || 30))
 
-  const [sales, stock] = await Promise.all([
+  const [sales, stock, bcg] = await Promise.all([
     prisma.salesAbcItem.findMany(),
     prisma.stockItem.findMany({ select: { code: true, qty: true, unitCost: true } }),
+    // quadrante da BCG: repor uma Estrela é prioridade; repor um Abacaxi é
+    // enterrar capital num item que não cresce nem rende
+    calcularBcg(),
   ])
   const stockMap = new Map(stock.map(s => [s.code, s]))
 
@@ -61,6 +65,7 @@ export async function GET(req: Request) {
         qtdVendida: s.qtySold, faturamento: s.totalValue,
         giroDia, estoque, cobertura, status, sugQtd, sugCusto, custo,
         semCadastroEstoque: !st,
+        bcg: bcg.porCodigo[s.code]?.quadrante ?? null,
       }
     })
     .sort((a, b) => {

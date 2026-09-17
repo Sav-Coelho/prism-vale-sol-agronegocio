@@ -4,18 +4,23 @@
  *   1. marginRows[] — por SKU: preço, custo, margem bruta = (preço-custo)/preço
  *   2. abcRows[]    — por SKU classificado pelo ERP, com cumulativo da receita
  *   3. turnoverRows[] — por SKU: estoque, venda, giro, meses de cobertura
+ *   4. bcg           — matriz crescimento × margem (lib compartilhada) e o
+ *                      quadrante de cada SKU na tabela unificada, para sair
+ *                      junto na exportação
  */
 import { prisma } from '@/lib/prisma'
+import { calcularBcg } from '@/lib/bcg'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 export async function GET() {
-  const [prices, stock, sales] = await Promise.all([
+  const [prices, stock, sales, bcg] = await Promise.all([
     prisma.productPrice.findMany(),
     prisma.stockItem.findMany(),
     prisma.salesAbcItem.findMany(),
+    calcularBcg(),
   ])
 
   const priceMap = new Map(prices.map(p => [p.code, p]))
@@ -204,6 +209,11 @@ export async function GET() {
       turnover,
       monthsCoverage,
       turnoverStatus,
+      // matriz BCG (crescimento × margem) — vai junto na exportação da tabela
+      bcgQuadrante: bcg.porCodigo[code]?.quadrante ?? null,
+      bcgCrescimento: bcg.porCodigo[code]?.crescimento ?? null,
+      bcgMargem: bcg.porCodigo[code]?.margem ?? null,
+      bcgNovo: bcg.porCodigo[code]?.novo ?? false,
     }
   })
 
@@ -228,5 +238,10 @@ export async function GET() {
     abcRows,
     turnoverRows,
     masterRows,
+    bcg: {
+      hasData: bcg.hasData, motivo: bcg.motivo,
+      janela: bcg.janela, cortes: bcg.cortes, totais: bcg.totais,
+      resumo: bcg.resumo, itens: bcg.itens,
+    },
   })
 }

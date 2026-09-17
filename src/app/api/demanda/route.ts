@@ -11,6 +11,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { scoreClient, effectiveGrade, type SaleForCredit } from '@/lib/credit'
+import { calcularBcg } from '@/lib/bcg'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -68,10 +69,11 @@ export async function GET(req: NextRequest) {
 
   // ─── Detalhe de um cliente (consulta filtrada — rápida) ───
   if (cliente) {
-    const [mine, costs, credMap] = await Promise.all([
+    const [mine, costs, credMap, bcg] = await Promise.all([
       prisma.demandEntry.findMany({ where: { clienteCode: cliente } }),
       stockCostMap(),
       creditByName(),
+      calcularBcg(),
     ])
     if (!mine.length) return NextResponse.json({ hasData: true, cliente, notFound: true, months: [] })
     const months = Array.from(new Set(mine.map(r => ym(r.year, r.month)))).sort()
@@ -94,6 +96,8 @@ export async function GET(req: NextRequest) {
     // margem real por produto (custo do ABC de Estoque)
     const produtos = Array.from(prodMap.values()).map(p => ({
       ...p, margem: margemOf(p.total, p.qtd, p.code ? costs.get(p.code) : undefined),
+      // quadrante da matriz BCG, para o vendedor saber o que empurrar
+      bcg: p.code ? (bcg.porCodigo[p.code]?.quadrante ?? null) : null,
     })).sort((a, b) => b.total - a.total)
     let valCC = 0, cusCC = 0
     produtos.forEach(p => { if (p.margem != null && p.code) { valCC += p.total; cusCC += p.qtd * (costs.get(p.code) ?? 0) } })
@@ -116,7 +120,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ─── Visão geral (com filtros) ───
-  const [rows, costs, credMap] = await Promise.all([prisma.demandEntry.findMany(), stockCostMap(), creditByName()])
+  const [rows, costs, credMap, bcg] = await Promise.all([prisma.demandEntry.findMany(), stockCostMap(), creditByName(), calcularBcg()])
   if (!rows.length) return NextResponse.json({ hasData: false })
 
   const vendedores = Array.from(new Set(rows.map(r => r.vendedor).filter((v): v is string => !!v))).sort()
@@ -226,6 +230,35 @@ export async function GET(req: NextRequest) {
     }
   }).sort((a, b) => (hasYoY ? b.tCur - a.tCur : b.total - a.total))
 
+  // ── Produtos da janela filtrada, com o quadrante da BCG ──
+  // Alimenta o PDF do vendedor: o que empurrar (Estrela), o que não descontar
+  // (Interrogação) e o que está sendo vendido no prejuízo.
+  interface ProdAcc { code: string | null; nome: string; valor: number; qtd: number }
+  const pmap = new Map<string, ProdAcc>()
+  win.forEach(r => {
+    if (r.year !== curYear) return
+    const k = r.produtoCode ?? r.produto
+    if (!pmap.has(k)) pmap.set(k, { code: r.produtoCode, nome: r.produto, valor: 0, qtd: 0 })
+    const p = pmap.get(k)!
+    p.valor += r.valor; p.qtd += r.qtd
+  })
+  const produtosBcg = Array.from(pmap.values())
+    .map(p => {
+      const b = p.code ? bcg.porCodigo[p.code] : undefined
+      const custo = p.code ? costs.get(p.code) : undefined
+      const margem = margemOf(p.valor, p.qtd, custo)
+      return { code: p.code, nome: p.nome, valor: p.valor, qtd: p.qtd, margem, quadrante: b?.quadrante ?? null, crescimento: b?.crescimento ?? null, novo: b?.novo ?? false }
+    })
+    .filter(p => p.valor > 0)
+    .sort((a, b) => b.valor - a.valor)
+
+  const resumoBcgFiltro: Record<string, { itens: number; venda: number }> = {}
+  produtosBcg.forEach(p => {
+    if (!p.quadrante) return
+    const r = resumoBcgFiltro[p.quadrante] ?? (resumoBcgFiltro[p.quadrante] = { itens: 0, venda: 0 })
+    r.itens++; r.venda += p.valor
+  })
+
   const sumCmpCur = sorted.reduce((s, c) => s + c.cmpCur, 0)
   const sumCmpPrev = sorted.reduce((s, c) => s + c.cmpPrev, 0)
   const sumTCur = sorted.reduce((s, c) => s + c.tCur, 0)
@@ -246,5 +279,12 @@ export async function GET(req: NextRequest) {
       perdidosYoY,
     },
     monthlyTotal, clientes, distAbc: dist, statusDist, vendedoresRank,
+    // matriz BCG aplicada aos produtos desta seleção (respeita o filtro de vendedor)
+    bcg: {
+      hasData: bcg.hasData,
+      janela: bcg.janela, cortes: bcg.cortes,
+      resumo: resumoBcgFiltro,
+      produtos: produtosBcg.slice(0, 400),
+    },
   })
 }

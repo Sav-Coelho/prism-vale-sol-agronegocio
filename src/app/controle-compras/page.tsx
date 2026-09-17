@@ -407,7 +407,14 @@ function ConfigPanel({ cfg, an, onChange, showToast }: { cfg: Config; an: Analyt
 }
 
 // ─────────────────────────── REPOSIÇÃO POR GIRO ───────────────────────────
-interface RepRow { code: string; nome: string; classe: string; qtdVendida: number; faturamento: number; giroDia: number; estoque: number; cobertura: number | null; status: string; sugQtd: number; sugCusto: number | null; custo: number | null; semCadastroEstoque: boolean }
+type Quadrante = 'ESTRELA' | 'VACA' | 'INTERROGACAO' | 'ABACAXI'
+const BCG: Record<Quadrante, { label: string; icone: string; cor: string; acao: string }> = {
+  ESTRELA:      { label: 'Estrela',       icone: '⭐', cor: C.green,   acao: 'cresce e tem margem — repor é prioridade' },
+  VACA:         { label: 'Vaca leiteira', icone: '🐄', cor: '#2f5a96', acao: 'margem boa sem crescer — repor o necessário' },
+  INTERROGACAO: { label: 'Interrogação',  icone: '❓', cor: C.amber,   acao: 'cresce sem margem — renegociar a compra antes' },
+  ABACAXI:      { label: 'Abacaxi',       icone: '🍍', cor: C.red,     acao: 'não cresce nem rende — pensar duas vezes' },
+}
+interface RepRow { code: string; nome: string; classe: string; qtdVendida: number; faturamento: number; giroDia: number; estoque: number; cobertura: number | null; status: string; sugQtd: number; sugCusto: number | null; custo: number | null; semCadastroEstoque: boolean; bcg: Quadrante | null }
 interface RepData { hasData: boolean; params: { alvoDias: number; baseDias: number; baseAuto?: string | null }; kpis: { itens: number; precisaRepor: number; rupturasA: number; custoReporTudo: number; custoReporA: number; semCusto: number }; statusDist: Record<string, number>; rows: RepRow[] }
 const REP_COLOR: Record<string, string> = { RUPTURA: C.red, 'CRÍTICO': '#d3542c', REPOR: C.amber, OK: C.green, EXCESSO: '#6a5acd' }
 
@@ -472,6 +479,7 @@ function ReposicaoPanel({ an }: { an: Analytics }) {
               <tr>
                 <th style={{ textAlign: 'left' }}>Produto</th>
                 <th>Classe</th>
+                <th title="Quadrante na matriz BCG (Análise Comercial)">BCG</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Giro/dia</th>
                 <th style={{ textAlign: 'right' }}>Estoque</th>
@@ -485,6 +493,9 @@ function ReposicaoPanel({ an }: { an: Analytics }) {
                 <tr key={r.code}>
                   <td style={{ fontSize: 12, color: C.navy, fontWeight: 600, background: '#fff', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.nome}<span style={{ color: C.textMuted, fontWeight: 400, fontSize: 10 }}> · {r.code}</span></td>
                   <td style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, color: r.classe === 'A' ? C.green : r.classe === 'B' ? C.gold : C.textMuted }}>{r.classe}</td>
+                  <td style={{ textAlign: 'center', fontSize: 13 }}>
+                    {r.bcg ? <span title={`${BCG[r.bcg].label} — ${BCG[r.bcg].acao}`}>{BCG[r.bcg].icone}</span> : <span style={{ color: C.textMuted, fontSize: 11 }}>·</span>}
+                  </td>
                   <td style={{ textAlign: 'center' }}><span style={{ background: REP_COLOR[r.status] ?? C.navy, color: '#fff', borderRadius: 3, padding: '2px 8px', fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>{r.status}</span></td>
                   <td style={{ textAlign: 'right', fontSize: 12 }}>{r.giroDia >= 1 ? r.giroDia.toFixed(1) : r.giroDia.toFixed(2)}</td>
                   <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, color: r.estoque <= 0 ? C.red : C.navy }}>{r.estoque.toLocaleString('pt-BR')}{r.semCadastroEstoque ? ' *' : ''}</td>

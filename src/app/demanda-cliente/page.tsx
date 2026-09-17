@@ -20,8 +20,17 @@ interface Overview {
   filtros: { vendedores: string[]; anos: number[]; vendedor: string | null; years: number[]; months: number[] }
   kpis: { totalGeral: number; nClientes: number; nProdutos: number; ticketMedio: number; totalCur: number; totalPrev: number; yoyGeral: number | null; perdidosYoY: number }
   monthlyTotal: Record<string, number>; clientes: Cli[]; distAbc: Record<string, number>; statusDist: Record<string, number>; vendedoresRank: VendRank[]
+  bcg?: {
+    hasData: boolean
+    janela: { label: string; curYear: number; prevYear: number }
+    cortes: { crescimento: number; margem: number }
+    resumo: Record<string, { itens: number; venda: number }>
+    produtos: BcgProduto[]
+  }
 }
-interface DetailProduto { code: string | null; nome: string; total: number; qtd: number; byMonth: Record<string, number>; margem: number | null }
+type Quadrante = 'ESTRELA' | 'VACA' | 'INTERROGACAO' | 'ABACAXI'
+interface BcgProduto { code: string | null; nome: string; valor: number; qtd: number; margem: number | null; quadrante: Quadrante | null; crescimento: number | null; novo: boolean }
+interface DetailProduto { code: string | null; nome: string; total: number; qtd: number; byMonth: Record<string, number>; margem: number | null; bcg?: Quadrante | null }
 interface Detail {
   hasData: boolean; cliente: string; nome: string; vendedor: string | null; months: string[]
   monthly: Record<string, number>; total: number; curYear?: number; prevYear?: number | null; margemMedia: number | null
@@ -34,6 +43,13 @@ interface Detail {
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14', blue: '#2f5a96' }
 const ABC_COLOR: Record<string, string> = { A: C.green, B: C.gold, C: C.textMuted }
 const STATUS_COLOR: Record<string, string> = { Crescendo: C.green, Estável: C.blue, 'Em queda': C.amber, Sumiu: C.red, Novo: C.navy }
+// Matriz BCG (mesmas cores e rótulos da Análise Comercial)
+const BCG: Record<Quadrante, { label: string; icone: string; cor: string; acao: string }> = {
+  ESTRELA:      { label: 'Estrela',       icone: '⭐', cor: C.green, acao: 'empurrar — cresce e paga bem' },
+  VACA:         { label: 'Vaca leiteira', icone: '🐄', cor: C.blue,  acao: 'manter — margem boa' },
+  INTERROGACAO: { label: 'Interrogação',  icone: '❓', cor: C.amber, acao: 'não dar desconto — margem apertada' },
+  ABACAXI:      { label: 'Abacaxi',       icone: '🍍', cor: C.red,   acao: 'evitar — não cresce nem rende' },
+}
 // Nota de crédito (mesmas cores da aba Risco de Cliente)
 const NOTA_COLOR: Record<string, string> = { AA: C.green, A: '#5a8542', B: C.gold, C: C.amber, D: C.red }
 const NotaBadge = ({ nota, size = 11 }: { nota?: string | null; size?: number }) =>
@@ -392,6 +408,60 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
       <Bloco titulo="③ CARTEIRA ATIVA" cor={C.green} linhas={carteira.slice(0, 120)}
         nota="Todos os clientes que compraram no período, do maior para o menor." modo="carteira" />
 
+      {/* ④ Matriz BCG aplicada ao que ESTE vendedor vende */}
+      {ov.bcg?.hasData && ov.bcg.produtos.length > 0 && (() => {
+        const porQ = (q: Quadrante) => ov.bcg!.produtos.filter(p => p.quadrante === q).sort((a, b) => b.valor - a.valor)
+        const prejuizo = ov.bcg!.produtos.filter(p => p.margem != null && p.margem < 0).sort((a, b) => b.valor - a.valor)
+        const listinha = (q: Quadrante, n: number) => {
+          const arr = porQ(q).slice(0, n)
+          if (!arr.length) return null
+          return (
+            <div key={q} style={{ breakInside: 'avoid' }}>
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: BCG[q].cor, marginBottom: 3 }}>
+                {BCG[q].icone} {BCG[q].label.toUpperCase()} — {BCG[q].acao}
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 8 }}>
+                <tbody>
+                  {arr.map(p => (
+                    <tr key={(p.code ?? '') + p.nome}>
+                      <td style={{ ...td, fontSize: 8.5 }}>{p.nome.slice(0, 42)}</td>
+                      <td style={{ ...num, fontSize: 8.5, width: 70 }}>{fmt(p.valor)}</td>
+                      <td style={{ ...num, fontSize: 8.5, width: 46, color: mgColor(p.margem) }}>{mgFmt(p.margem)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+        return (
+          <div style={{ marginTop: 14, pageBreakInside: 'auto' }}>
+            <div style={{ borderLeft: `4px solid ${C.navy}`, paddingLeft: 8, marginBottom: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>④ O QUE VENDER — matriz do portfólio</div>
+              <div style={{ fontSize: 9, color: '#666' }}>
+                Produtos que você vendeu em {ov.bcg.janela.label}/{ov.bcg.janela.curYear}, classificados por crescimento contra {ov.bcg.janela.prevYear} e por margem.
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div>{listinha('ESTRELA', 10)}{listinha('VACA', 8)}</div>
+              <div>{listinha('INTERROGACAO', 10)}{listinha('ABACAXI', 6)}</div>
+            </div>
+            {prejuizo.length > 0 && (
+              <div style={{ marginTop: 4, border: `1px solid ${C.red}`, borderRadius: 3, padding: '6px 8px', background: '#fdf0ee' }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: C.red, marginBottom: 3 }}>
+                  ⚠ VENDIDO ABAIXO DO CUSTO — não vender sem falar com a gerência
+                </div>
+                {prejuizo.slice(0, 5).map(p => (
+                  <div key={(p.code ?? '') + p.nome} style={{ fontSize: 8.5, color: '#7a1410' }}>
+                    {p.nome.slice(0, 46)} — margem {mgFmt(p.margem)} · {fmt(p.valor)} vendidos
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       <div style={{ marginTop: 10, fontSize: 8, color: '#777', borderTop: '0.5px solid #ccc', paddingTop: 6, lineHeight: 1.5 }}>
         Margem real = (valor vendido − custo de reposição) ÷ valor vendido, nos itens com custo cadastrado. Δ a/a compara o mesmo período dos dois anos.
         <b> Créd.</b> = nota de crédito (histórico de pagamento): <b style={{ color: C.green }}>AA/A</b> pode conceder prazo (até 90d / 45–60d) ·
@@ -599,6 +669,7 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
               <thead>
                 <tr>
                   <th style={{ ...thSticky, textAlign: 'left', zIndex: 4 }}>Produto</th>
+                  <th style={{ ...thSticky, textAlign: 'center' }} title="Quadrante na matriz BCG">BCG</th>
                   <th style={{ ...thSticky, textAlign: 'right' }}>Margem</th>
                   {months.map(m => <th key={m} style={{ ...thSticky, textAlign: 'right', whiteSpace: 'nowrap' }}>{mLabel(m)}</th>)}
                   <th style={{ ...thSticky, textAlign: 'right', background: C.navyMid }}>Total</th>
@@ -608,6 +679,13 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
                 {produtos.map((p, i) => (
                   <tr key={i}>
                     <td style={{ fontSize: 12, color: C.navy, background: '#fff' }}>{p.nome}</td>
+                    <td style={{ textAlign: 'center', fontSize: 11, whiteSpace: 'nowrap' }}>
+                      {p.bcg ? (
+                        <span title={`${BCG[p.bcg].label} — ${BCG[p.bcg].acao}`} style={{ color: BCG[p.bcg].cor, fontWeight: 700 }}>
+                          {BCG[p.bcg].icone}
+                        </span>
+                      ) : <span style={{ color: '#cfd6e0' }}>·</span>}
+                    </td>
                     <td style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: mgColor(p.margem) }}>{mgFmt(p.margem)}</td>
                     {months.map(m => <td key={m} style={{ textAlign: 'right', fontSize: 11, color: (p.byMonth[m] ?? 0) > 0 ? C.textSoft : '#cfd6e0' }}>{p.byMonth[m] ? fmtK(p.byMonth[m]) : '·'}</td>)}
                     <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, background: '#f6f8fb' }}>{fmtK(p.total)}</td>
