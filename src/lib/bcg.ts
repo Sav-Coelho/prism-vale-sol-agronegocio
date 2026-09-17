@@ -136,13 +136,13 @@ export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgR
   const ttmIniIdx = usaTtm ? todosYm.slice(0, 12) : []
   const mesesDistancia = usaTtm ? todosYm[todosYm.length - 1] - todosYm[11] : 12
   const mesesSobreposicao = usaTtm ? Math.max(0, 12 - mesesDistancia) : 0
-  const anos = mesesDistancia / 12
+  const anosEntreJanelas = mesesDistancia / 12
   const setFim = new Set(ttmFimIdx)
   const setIni = new Set(ttmIniIdx)
 
   const cagrDe = (fim: number, ini: number): number | null => {
-    if (ini <= 0 || fim <= 0 || anos <= 0) return null
-    return Math.pow(fim / ini, 1 / anos) - 1
+    if (ini <= 0 || fim <= 0 || anosEntreJanelas <= 0) return null
+    return Math.pow(fim / ini, 1 / anosEntreJanelas) - 1
   }
 
   interface Acc { code: string | null; nome: string; cur: number; prev: number; qtdCur: number; ttmIni: number; ttmFim: number }
@@ -224,7 +224,7 @@ export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgR
       metodo: usaTtm ? 'ttm12' : 'yoy',
       iniLabel: usaTtm ? `${rotuloYm(ttmIniIdx[0])}–${rotuloYm(ttmIniIdx[11])}` : '',
       fimLabel: usaTtm ? `${rotuloYm(ttmFimIdx[0])}–${rotuloYm(ttmFimIdx[11])}` : '',
-      mesesDistancia, mesesSobreposicao, anos,
+      mesesDistancia, mesesSobreposicao, anos: anosEntreJanelas,
     },
     cortes: { crescimento: crescimentoCarteira, margem: margemMedia },
     totais: {
