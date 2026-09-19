@@ -80,6 +80,44 @@ export interface BcgResultado {
   porCodigo: Record<string, { quadrante: Quadrante; crescimento: number | null; margem: number; novo: boolean }>
 }
 
+// ── Comparativo entre as duas janelas de 12 meses ────────────────────────────
+// Duas fotos do portfólio na mesma régua. A base de 20 meses (Jan/25–Ago/26)
+// comporta UM único par de janelas, então o eixo de crescimento é medido uma
+// vez só e vale para as duas fotos; o que se move entre elas é a MARGEM, que é
+// justamente o que a Vale Sol trabalhou no período.
+// Os cortes ficam FIXOS nos valores de hoje nas duas fotos: com corte móvel,
+// uma melhora geral do portfólio não apareceria (todo mundo sobe, a média sobe
+// junto e ninguém "muda de quadrante").
+export interface BcgFoto {
+  venda: number
+  qtd: number
+  precoMedio: number
+  margem: number | null
+  quadrante: Quadrante | null
+}
+export interface BcgComparativoItem {
+  code: string | null
+  nome: string
+  crescimento: number | null
+  novo: boolean
+  custo: number | null
+  a: BcgFoto
+  b: BcgFoto
+}
+export interface BcgComparativo {
+  hasData: boolean
+  motivo?: string
+  janelaA: string
+  janelaB: string
+  cortes: { crescimento: number; margem: number }
+  margemPond: { a: number | null; b: number | null }
+  itens: BcgComparativoItem[]
+  resumo: { a: Record<string, { itens: number; venda: number }>; b: Record<string, { itens: number; venda: number }> }
+  /** "ABACAXI→VACA" → nº de produtos que fizeram esse caminho */
+  migracao: Record<string, number>
+  totais: { vendaA: number; vendaB: number; itens: number; semCusto: number; soA: number; soB: number; nosDois: number }
+}
+
 export const QUADRANTE_LABEL: Record<Quadrante, string> = {
   ESTRELA: 'Estrela',
   VACA: 'Vaca leiteira',
@@ -238,5 +276,132 @@ export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgR
     resumo,
     itens: itens.sort((a, b) => b.vendaCur - a.vendaCur),
     porCodigo,
+  }
+}
+
+const VAZIO_CMP: BcgComparativo = {
+  hasData: false, janelaA: '', janelaB: '',
+  cortes: { crescimento: 0, margem: 0 },
+  margemPond: { a: null, b: null },
+  itens: [], resumo: { a: {}, b: {} }, migracao: {},
+  totais: { vendaA: 0, vendaB: 0, itens: 0, semCusto: 0, soA: 0, soB: 0, nosDois: 0 },
+}
+
+/** Portfólio na janela inicial × na janela final, para o comparativo visual. */
+export async function compararJanelas(): Promise<BcgComparativo> {
+  const [entries, stock] = await Promise.all([
+    prisma.demandEntry.findMany({ select: { produtoCode: true, produto: true, year: true, month: true, qtd: true, valor: true } }),
+    prisma.stockItem.findMany({ select: { code: true, unitCost: true } }),
+  ])
+  if (!entries.length) return { ...VAZIO_CMP, motivo: 'Sem base de Demanda por Cliente importada.' }
+
+  const hoje = new Date()
+  const ymDe = (y: number, m: number) => y * 12 + (m - 1)
+  const ymAtual = ymDe(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1)
+  const todosYm = Array.from(new Set(entries.map(e => ymDe(e.year, e.month))))
+    .filter(v => v < ymAtual).sort((a, b) => a - b)
+  if (todosYm.length < 13) {
+    return { ...VAZIO_CMP, motivo: `São precisos 13 meses fechados para formar duas janelas; a base tem ${todosYm.length}.` }
+  }
+  const rotuloYm = (v: number) => `${MESES[(v % 12) + 1]}/${String(Math.floor(v / 12)).slice(-2)}`
+  const idxA = todosYm.slice(0, 12)
+  const idxB = todosYm.slice(-12)
+  const setA = new Set(idxA), setB = new Set(idxB)
+  const anosEntre = (todosYm[todosYm.length - 1] - todosYm[11]) / 12
+
+  const custoDe = new Map<string, number>()
+  stock.forEach(s => { if (s.unitCost > 0) custoDe.set(s.code, s.unitCost) })
+
+  interface Acc { code: string | null; nome: string; vA: number; qA: number; vB: number; qB: number }
+  const map = new Map<string, Acc>()
+  entries.forEach(e => {
+    const k = e.produtoCode ?? e.produto
+    if (!map.has(k)) map.set(k, { code: e.produtoCode, nome: e.produto, vA: 0, qA: 0, vB: 0, qB: 0 })
+    const a = map.get(k)!
+    const v = ymDe(e.year, e.month)
+    if (setA.has(v)) { a.vA += e.valor; a.qA += e.qtd }
+    if (setB.has(v)) { a.vB += e.valor; a.qB += e.qtd }
+  })
+
+  const todos = Array.from(map.values()).filter(a => a.vA > 0 || a.vB > 0)
+  const totA = todos.reduce((s, a) => s + a.vA, 0)
+  const totB = todos.reduce((s, a) => s + a.vB, 0)
+  // mesmo corte de crescimento da matriz viva: a CAGR da própria carteira
+  const crescimentoCarteira = totA > 0 && totB > 0 ? Math.pow(totB / totA, 1 / anosEntre) - 1 : 0
+
+  const foto = (venda: number, qtd: number, custo: number | undefined): Omit<BcgFoto, 'quadrante'> => {
+    const precoMedio = qtd > 0 ? venda / qtd : 0
+    return { venda, qtd, precoMedio, margem: custo != null && precoMedio > 0 ? (precoMedio - custo) / precoMedio : null }
+  }
+
+  const parciais = todos.map(a => {
+    const custo = a.code ? custoDe.get(a.code) : undefined
+    const fa = foto(a.vA, a.qA, custo)
+    const fb = foto(a.vB, a.qB, custo)
+    return {
+      code: a.code, nome: a.nome, custo: custo ?? null,
+      crescimento: a.vA > 0 && a.vB > 0 ? Math.pow(a.vB / a.vA, 1 / anosEntre) - 1 : null,
+      novo: a.vA === 0 && a.vB > 0,
+      a: fa, b: fb,
+    }
+  })
+
+  // corte de margem: média ponderada da janela ATUAL, aplicada às duas fotos
+  const comMargemB = parciais.filter(p => p.b.margem != null && p.b.venda > 0)
+  const baseVendaB = comMargemB.reduce((s, p) => s + p.b.venda, 0)
+  const margemPondB = baseVendaB > 0
+    ? comMargemB.reduce((s, p) => s + p.b.venda * (p.b.margem as number), 0) / baseVendaB : null
+  const comMargemA = parciais.filter(p => p.a.margem != null && p.a.venda > 0)
+  const baseVendaA = comMargemA.reduce((s, p) => s + p.a.venda, 0)
+  const margemPondA = baseVendaA > 0
+    ? comMargemA.reduce((s, p) => s + p.a.venda * (p.a.margem as number), 0) / baseVendaA : null
+  const corteMargem = margemPondB ?? 0
+
+  const quadrarA = (p: typeof parciais[number]): Quadrante | null => {
+    if (p.a.margem == null || p.a.venda <= 0) return null
+    // na foto antiga o produto ainda não podia ser "novo": ele já vendia
+    const cresce = p.crescimento != null && p.crescimento >= crescimentoCarteira
+    return cresce ? (p.a.margem >= corteMargem ? 'ESTRELA' : 'INTERROGACAO')
+      : (p.a.margem >= corteMargem ? 'VACA' : 'ABACAXI')
+  }
+  const quadrarB = (p: typeof parciais[number]): Quadrante | null => {
+    if (p.b.margem == null || p.b.venda <= 0) return null
+    const cresce = p.novo || (p.crescimento != null && p.crescimento >= crescimentoCarteira)
+    return cresce ? (p.b.margem >= corteMargem ? 'ESTRELA' : 'INTERROGACAO')
+      : (p.b.margem >= corteMargem ? 'VACA' : 'ABACAXI')
+  }
+
+  const itens: BcgComparativoItem[] = parciais.map(p => ({
+    code: p.code, nome: p.nome, crescimento: p.crescimento, novo: p.novo, custo: p.custo,
+    a: { ...p.a, quadrante: quadrarA(p) },
+    b: { ...p.b, quadrante: quadrarB(p) },
+  }))
+
+  const resumo = { a: {} as Record<string, { itens: number; venda: number }>, b: {} as Record<string, { itens: number; venda: number }> }
+  const migracao: Record<string, number> = {}
+  itens.forEach(i => {
+    if (i.a.quadrante) { const r = resumo.a[i.a.quadrante] ?? (resumo.a[i.a.quadrante] = { itens: 0, venda: 0 }); r.itens++; r.venda += i.a.venda }
+    if (i.b.quadrante) { const r = resumo.b[i.b.quadrante] ?? (resumo.b[i.b.quadrante] = { itens: 0, venda: 0 }); r.itens++; r.venda += i.b.venda }
+    if (i.a.quadrante && i.b.quadrante) {
+      const k = `${i.a.quadrante}→${i.b.quadrante}`
+      migracao[k] = (migracao[k] ?? 0) + 1
+    }
+  })
+
+  return {
+    hasData: true,
+    janelaA: `${rotuloYm(idxA[0])}–${rotuloYm(idxA[11])}`,
+    janelaB: `${rotuloYm(idxB[0])}–${rotuloYm(idxB[11])}`,
+    cortes: { crescimento: crescimentoCarteira, margem: corteMargem },
+    margemPond: { a: margemPondA, b: margemPondB },
+    itens: itens.sort((a, b) => b.b.venda - a.b.venda),
+    resumo, migracao,
+    totais: {
+      vendaA: totA, vendaB: totB, itens: itens.length,
+      semCusto: itens.filter(i => i.custo == null).length,
+      soA: itens.filter(i => i.a.venda > 0 && i.b.venda === 0).length,
+      soB: itens.filter(i => i.b.venda > 0 && i.a.venda === 0).length,
+      nosDois: itens.filter(i => i.a.venda > 0 && i.b.venda > 0).length,
+    },
   }
 }
