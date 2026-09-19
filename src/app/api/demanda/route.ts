@@ -63,6 +63,42 @@ async function creditByName(): Promise<Map<string, CredInfo>> {
 const margemOf = (valor: number, qtd: number, custo: number | undefined) =>
   custo != null && valor > 0 ? (valor - qtd * custo) / valor : null
 
+// ── Perfil BCG do cliente (reunião de 2026-09-18) ────────────────────────────
+// O quadrante do PRODUTO já existe; o vendedor precisa saber o que o cliente
+// dele compra. "Cliente abacaxi" é quem concentra a cesta em item que não
+// cresce nem rende — o oportunista que só leva o que tem margem espremida.
+type Quad = 'ESTRELA' | 'VACA' | 'INTERROGACAO' | 'ABACAXI'
+// ordem de desempate: o quadrante mais problemático vence. A tela existe para
+// achar cliente a retrabalhar, não para dar o benefício da dúvida.
+const QUADS: Quad[] = ['ABACAXI', 'INTERROGACAO', 'VACA', 'ESTRELA']
+const mixVazio = (): Record<Quad, number> => ({ ESTRELA: 0, VACA: 0, INTERROGACAO: 0, ABACAXI: 0 })
+
+interface PerfilCesta {
+  bcgPerfil: Quad | null
+  bcgMix: Record<Quad, number>
+  bcgShare: number | null
+  bcgMargemAlta: number | null
+  bcgCobertura: number | null
+}
+
+function perfilDaCesta(mix: Record<Quad, number>, base: number): PerfilCesta {
+  const classificado = QUADS.reduce((s, q) => s + mix[q], 0)
+  if (classificado <= 0) {
+    return { bcgPerfil: null, bcgMix: mix, bcgShare: null, bcgMargemAlta: null, bcgCobertura: null }
+  }
+  const bcgPerfil = QUADS.reduce((topo, q) => (mix[q] > mix[topo] ? q : topo), QUADS[0])
+  return {
+    bcgPerfil,
+    bcgMix: mix,
+    // quanto o quadrante dominante pesa: 90% é um perfil nítido, 30% é empate
+    bcgShare: mix[bcgPerfil] / classificado,
+    // o que move a conversa comercial: fatia da cesta com margem acima da média
+    bcgMargemAlta: (mix.ESTRELA + mix.VACA) / classificado,
+    // sem isso o perfil mente: cesta 20% classificada não descreve o cliente
+    bcgCobertura: base > 0 ? classificado / base : null,
+  }
+}
+
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams
   const cliente = q.get('cliente')?.trim() || null
@@ -111,11 +147,22 @@ export async function GET(req: NextRequest) {
       .map(p => ({ nome: p.nome, code: p.code, totalPrev: p.tPrev }))
       .sort((a, b) => b.totalPrev - a.totalPrev) : []
 
+    // perfil da cesta — mesma regra da lista, sobre as compras do ano corrente
+    const mix = mixVazio()
+    let base = 0
+    mine.forEach(r => {
+      if (r.year !== curYear) return
+      base += r.valor
+      const quad = r.produtoCode ? bcg.porCodigo[r.produtoCode]?.quadrante : undefined
+      if (quad) mix[quad as Quad] += r.valor
+    })
+
     return NextResponse.json({
       hasData: true, cliente, nome, vendedor, months, monthly, produtos, dropped, droppedYoY,
       curYear, prevYear, margemMedia,
       credito: credMap.get(normName(nome)) ?? null,
       total: Object.values(monthly).reduce((s, v) => s + v, 0),
+      ...perfilDaCesta(mix, base),
     })
   }
 
@@ -153,15 +200,22 @@ export async function GET(req: NextRequest) {
     cmpMonths = Array.from({ length: upTo }, (_, i) => i + 1)
   }
 
-  interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; byMonth: Record<string, number>; prods: Set<string>; cmpCur: number; cmpPrev: number; tCur: number; tPrev: number; valCC: number; cusCC: number }
+  interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; byMonth: Record<string, number>; prods: Set<string>; cmpCur: number; cmpPrev: number; tCur: number; tPrev: number; valCC: number; cusCC: number; bcgMix: Record<Quad, number>; bcgBase: number }
   const cmap = new Map<string, Cli>()
   const monthlyTotal = empty()
   win.forEach(r => {
-    if (!cmap.has(r.clienteCode)) cmap.set(r.clienteCode, { code: r.clienteCode, nome: r.cliente, vendedor: r.vendedor, total: 0, qtd: 0, byMonth: empty(), prods: new Set(), cmpCur: 0, cmpPrev: 0, tCur: 0, tPrev: 0, valCC: 0, cusCC: 0 })
+    if (!cmap.has(r.clienteCode)) cmap.set(r.clienteCode, { code: r.clienteCode, nome: r.cliente, vendedor: r.vendedor, total: 0, qtd: 0, byMonth: empty(), prods: new Set(), cmpCur: 0, cmpPrev: 0, tCur: 0, tPrev: 0, valCC: 0, cusCC: 0, bcgMix: mixVazio(), bcgBase: 0 })
     const c = cmap.get(r.clienteCode)!
     c.total += r.valor; c.qtd += r.qtd; c.byMonth[ym(r.year, r.month)] += r.valor; c.prods.add(r.produtoCode ?? r.produto)
     monthlyTotal[ym(r.year, r.month)] += r.valor
-    if (r.year === curYear) { c.tCur += r.valor; if (cmpMonths.includes(r.month)) c.cmpCur += r.valor }
+    if (r.year === curYear) {
+      c.tCur += r.valor; if (cmpMonths.includes(r.month)) c.cmpCur += r.valor
+      // cesta só do ano corrente: misturar o ano anterior descreveria um
+      // cliente que já mudou o que compra
+      c.bcgBase += r.valor
+      const quad = r.produtoCode ? bcg.porCodigo[r.produtoCode]?.quadrante : undefined
+      if (quad) c.bcgMix[quad as Quad] += r.valor
+    }
     if (prevYear && r.year === prevYear) { c.tPrev += r.valor; if (cmpMonths.includes(r.month)) c.cmpPrev += r.valor }
     // margem vendida real (itens com custo conhecido)
     const custo = r.produtoCode ? costs.get(r.produtoCode) : undefined
@@ -191,13 +245,20 @@ export async function GET(req: NextRequest) {
     const perdidoYoY = hasYoY && c.tPrev > 0 && c.tCur === 0
     const margem = c.valCC > 0 ? (c.valCC - c.cusCC) / c.valCC : null
     const cred = credMap.get(normName(c.nome))
-    return { code: c.code, nome: c.nome, vendedor: c.vendedor, total: c.total, qtd: c.qtd, nProd: c.prods.size, abc, share, status, byMonth: c.byMonth, tCur: c.tCur, tPrev: c.tPrev, yoy, perdidoYoY, margem, nota: cred?.grade ?? null, notaAberto: cred?.openBalance ?? 0 }
+    return { code: c.code, nome: c.nome, vendedor: c.vendedor, total: c.total, qtd: c.qtd, nProd: c.prods.size, abc, share, status, byMonth: c.byMonth, tCur: c.tCur, tPrev: c.tPrev, yoy, perdidoYoY, margem, nota: cred?.grade ?? null, notaAberto: cred?.openBalance ?? 0, ...perfilDaCesta(c.bcgMix, c.bcgBase) }
   })
 
   const dist = { A: 0, B: 0, C: 0 } as Record<string, number>
   clientes.forEach(c => dist[c.abc]++)
   const statusDist: Record<string, number> = {}
   clientes.forEach(c => statusDist[c.status] = (statusDist[c.status] ?? 0) + 1)
+  // quantos clientes e quanto faturamento em cada perfil de cesta
+  const perfilDist: Record<string, { clientes: number; venda: number }> = {}
+  clientes.forEach(c => {
+    if (!c.bcgPerfil) return
+    const p = perfilDist[c.bcgPerfil] ?? (perfilDist[c.bcgPerfil] = { clientes: 0, venda: 0 })
+    p.clientes++; p.venda += c.tCur
+  })
 
   // ── Ranking de VENDEDORES (mesma janela filtrada) ──
   interface VendCli { tCur: number; tPrev: number }
@@ -282,9 +343,11 @@ export async function GET(req: NextRequest) {
     // matriz BCG aplicada aos produtos desta seleção (respeita o filtro de vendedor)
     bcg: {
       hasData: bcg.hasData,
-      janela: bcg.janela, cortes: bcg.cortes,
+      janela: bcg.janela, cortes: bcg.cortes, cagr: bcg.cagr,
       resumo: resumoBcgFiltro,
       produtos: produtosBcg.slice(0, 400),
+      // perfil da CARTEIRA de clientes, não dos produtos
+      perfilDist,
     },
   })
 }

@@ -12,7 +12,14 @@ function BodyPortal({ children }: { children: React.ReactNode }) {
 import { CommercialUploader } from '@/components/CommercialUploader'
 import { BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number>; tCur: number; tPrev: number; yoy: number | null; perdidoYoY: boolean; margem: number | null; nota?: string | null; notaAberto?: number }
+interface PerfilCesta {
+  bcgPerfil?: Quadrante | null
+  bcgMix?: Record<Quadrante, number>
+  bcgShare?: number | null
+  bcgMargemAlta?: number | null
+  bcgCobertura?: number | null
+}
+interface Cli extends PerfilCesta { code: string; nome: string; vendedor: string | null; total: number; qtd: number; nProd: number; abc: string; share: number; status: string; byMonth: Record<string, number>; tCur: number; tPrev: number; yoy: number | null; perdidoYoY: boolean; margem: number | null; nota?: string | null; notaAberto?: number }
 interface VendRank { nome: string; total: number; tCur: number; tPrev: number; yoy: number | null; clientesAtivos: number; clientesPerdidos: number; clientesNovos: number; margem: number | null }
 interface Overview {
   hasData: boolean; months: string[]
@@ -26,12 +33,14 @@ interface Overview {
     cortes: { crescimento: number; margem: number }
     resumo: Record<string, { itens: number; venda: number }>
     produtos: BcgProduto[]
+    // perfil da CARTEIRA de clientes (o que cada um compra), não dos produtos
+    perfilDist?: Record<string, { clientes: number; venda: number }>
   }
 }
 type Quadrante = 'ESTRELA' | 'VACA' | 'INTERROGACAO' | 'ABACAXI'
 interface BcgProduto { code: string | null; nome: string; valor: number; qtd: number; margem: number | null; quadrante: Quadrante | null; crescimento: number | null; novo: boolean }
 interface DetailProduto { code: string | null; nome: string; total: number; qtd: number; byMonth: Record<string, number>; margem: number | null; bcg?: Quadrante | null }
-interface Detail {
+interface Detail extends PerfilCesta {
   hasData: boolean; cliente: string; nome: string; vendedor: string | null; months: string[]
   monthly: Record<string, number>; total: number; curYear?: number; prevYear?: number | null; margemMedia: number | null
   produtos: DetailProduto[]
@@ -50,6 +59,32 @@ const BCG: Record<Quadrante, { label: string; icone: string; cor: string; acao: 
   INTERROGACAO: { label: 'Interrogação',  icone: '❓', cor: C.amber, acao: 'não dar desconto — margem apertada' },
   ABACAXI:      { label: 'Abacaxi',       icone: '🍍', cor: C.red,   acao: 'evitar — não cresce nem rende' },
 }
+// Perfil BCG do CLIENTE: o quadrante onde ele concentra a cesta. A ação é
+// outra que a do produto — aqui se retrabalha o mix vendido, não o preço de
+// tabela (reunião de 2026-09-18).
+const PERFIL: Record<Quadrante, { label: string; acao: string }> = {
+  ESTRELA:      { label: 'Cliente estrela',       acao: 'leva o que cresce e paga bem — proteger atendimento e disponibilidade' },
+  VACA:         { label: 'Cliente vaca leiteira', acao: 'compra de boa margem, mas sem constância — trabalhar recorrência' },
+  INTERROGACAO: { label: 'Cliente interrogação',  acao: 'leva o que cresce mas rende pouco — rever preço antes de ampliar' },
+  ABACAXI:      { label: 'Cliente abacaxi',       acao: 'concentra o que não cresce nem rende — retrabalhar o mix vendido' },
+}
+const QUAD_ORDER: Quadrante[] = ['ESTRELA', 'VACA', 'INTERROGACAO', 'ABACAXI']
+
+/** Barra empilhada da cesta: mostra se o perfil é nítido ou um quase-empate. */
+function MixBar({ mix, altura = 6, largura }: { mix?: Record<Quadrante, number>; altura?: number; largura?: number }) {
+  const total = mix ? QUAD_ORDER.reduce((s, q) => s + (mix[q] ?? 0), 0) : 0
+  if (!total) return <span style={{ color: '#cfd6e0', fontSize: 11 }}>·</span>
+  return (
+    <div style={{ display: 'flex', height: altura, width: largura ?? '100%', borderRadius: altura / 2, overflow: 'hidden', background: '#eef2f8' }}>
+      {QUAD_ORDER.map(q => {
+        const v = mix![q] ?? 0
+        if (v <= 0) return null
+        return <div key={q} title={`${BCG[q].label}: ${((v / total) * 100).toFixed(0)}%`} style={{ width: `${(v / total) * 100}%`, background: BCG[q].cor }} />
+      })}
+    </div>
+  )
+}
+
 // Nota de crédito (mesmas cores da aba Risco de Cliente)
 const NOTA_COLOR: Record<string, string> = { AA: C.green, A: '#5a8542', B: C.gold, C: C.amber, D: C.red }
 const NotaBadge = ({ nota, size = 11 }: { nota?: string | null; size?: number }) =>
@@ -72,6 +107,7 @@ export default function DemandaCliente() {
   const [sel, setSel] = useState<string | null>(null)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [statusF, setStatusF] = useState<string>('')
+  const [perfilF, setPerfilF] = useState<string>('')
   const [soPerdidos, setSoPerdidos] = useState(false)
   // filtros (pedido do Felipe): vendedor × anos × meses
   const [vendF, setVendF] = useState('')
@@ -128,8 +164,8 @@ export default function DemandaCliente() {
   const filtered = useMemo(() => {
     if (!ov?.clientes) return []
     const q = search.trim().toUpperCase()
-    return ov.clientes.filter(c => (!statusF || c.status === statusF) && (!soPerdidos || c.perdidoYoY) && (!q || c.nome.toUpperCase().includes(q) || c.code.includes(q)))
-  }, [ov, search, statusF, soPerdidos])
+    return ov.clientes.filter(c => (!statusF || c.status === statusF) && (!perfilF || c.bcgPerfil === perfilF) && (!soPerdidos || c.perdidoYoY) && (!q || c.nome.toUpperCase().includes(q) || c.code.includes(q)))
+  }, [ov, search, statusF, perfilF, soPerdidos])
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
   const toggle = (arr: number[], v: number, set: (a: number[]) => void) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v].sort((a, b) => a - b))
   const chip = (active: boolean, color = C.navy): React.CSSProperties => ({ border: `1px solid ${active ? color : C.line}`, background: active ? color : '#fff', color: active ? '#fff' : C.textSoft, borderRadius: 20, padding: '4px 12px', fontSize: 12, cursor: 'pointer' })
@@ -246,7 +282,31 @@ export default function DemandaCliente() {
                   </button>
                 )}
               </div>
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>Clique num status para filtrar. Janela de 2 meses (últimos 2 × 2 anteriores) — o último mês da base pode estar parcial.</div>
+              {/* Perfil BCG da cesta — quem compra o quê (reunião de 18/09) */}
+              {ov.bcg?.perfilDist && Object.keys(ov.bcg.perfilDist).length > 0 && (
+                <div style={{ marginTop: 14, borderTop: `1px solid ${C.line}`, paddingTop: 12 }}>
+                  <div style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 8 }}>
+                    Perfil de cesta · o que o cliente compra
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {QUAD_ORDER.map(q => {
+                      const d = ov.bcg!.perfilDist![q]
+                      if (!d) return null
+                      return (
+                        <button key={q} onClick={() => setPerfilF(perfilF === q ? '' : q)}
+                          title={`${PERFIL[q].label} — ${PERFIL[q].acao} · ${fmt(d.venda)} em ${ov.curYear}`}
+                          style={chip(perfilF === q, BCG[q].cor)}>
+                          {BCG[q].icone} {BCG[q].label} · {d.clientes}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>
+                Clique num status ou perfil para filtrar. Janela de 2 meses (últimos 2 × 2 anteriores) — o último mês da base pode estar parcial.
+                {' '}<b>Perfil de cesta</b> = quadrante onde o cliente concentra o que comprou em {ov.curYear}.
+              </div>
             </div>
           </div>
 
@@ -264,13 +324,13 @@ export default function DemandaCliente() {
           {view === 'clientes' && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <div className="card-title" style={{ fontSize: 14 }}>Clientes {statusF && `· ${statusF}`} <span style={{ color: C.textMuted, fontWeight: 400 }}>({filtered.length})</span></div>
+              <div className="card-title" style={{ fontSize: 14 }}>Clientes {statusF && `· ${statusF}`}{perfilF && ` · ${BCG[perfilF as Quadrante].icone} ${BCG[perfilF as Quadrante].label}`} <span style={{ color: C.textMuted, fontWeight: 400 }}>({filtered.length})</span></div>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar cliente ou código…" style={{ marginLeft: 'auto', padding: '7px 10px', border: `1px solid ${C.line}`, borderRadius: 4, fontSize: 13, minWidth: 240 }} />
             </div>
             <div className="table-wrap" style={{ maxHeight: '62vh' }}>
               <table>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-                  <tr><th style={{ textAlign: 'left' }}>Cliente</th><th>ABC</th><th>Crédito</th><th>Status</th><th style={{ textAlign: 'right' }}>{ov.hasYoY ? ov.curYear : 'Faturamento'}</th>{ov.hasYoY && <th style={{ textAlign: 'right' }}>{ov.prevYear}</th>}{ov.hasYoY && <th style={{ textAlign: 'right' }}>Δ a/a</th>}<th style={{ textAlign: 'right' }}>Margem</th><th style={{ textAlign: 'right' }}>Prod.</th><th></th></tr>
+                  <tr><th style={{ textAlign: 'left' }}>Cliente</th><th>ABC</th><th>Crédito</th><th title="Quadrante onde o cliente concentra a cesta">Perfil</th><th>Status</th><th style={{ textAlign: 'right' }}>{ov.hasYoY ? ov.curYear : 'Faturamento'}</th>{ov.hasYoY && <th style={{ textAlign: 'right' }}>{ov.prevYear}</th>}{ov.hasYoY && <th style={{ textAlign: 'right' }}>Δ a/a</th>}<th style={{ textAlign: 'right' }}>Margem</th><th style={{ textAlign: 'right' }}>Prod.</th><th></th></tr>
                 </thead>
                 <tbody>
                   {filtered.slice(0, 200).map(c => (
@@ -278,6 +338,15 @@ export default function DemandaCliente() {
                       <td style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>{c.nome}<div style={{ fontSize: 10, color: C.textMuted }}>{c.code}{c.vendedor ? ` · ${c.vendedor}` : ''}</div></td>
                       <td style={{ textAlign: 'center' }}><span style={{ background: ABC_COLOR[c.abc], color: '#fff', borderRadius: 3, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{c.abc}</span></td>
                       <td style={{ textAlign: 'center' }} title={c.notaAberto && c.notaAberto > 0 ? `Em aberto: ${fmt(c.notaAberto)}` : undefined}><NotaBadge nota={c.nota} /></td>
+                      <td style={{ textAlign: 'center', minWidth: 78 }}
+                        title={c.bcgPerfil ? `${PERFIL[c.bcgPerfil].label} — ${PERFIL[c.bcgPerfil].acao}. ${((c.bcgShare ?? 0) * 100).toFixed(0)}% da cesta neste quadrante; ${((c.bcgMargemAlta ?? 0) * 100).toFixed(0)}% em itens de margem acima da média.` : 'Sem produto classificado na cesta'}>
+                        {c.bcgPerfil ? (
+                          <>
+                            <div style={{ fontSize: 11, color: BCG[c.bcgPerfil].cor, fontWeight: 700, whiteSpace: 'nowrap' }}>{BCG[c.bcgPerfil].icone} {BCG[c.bcgPerfil].label.split(' ')[0]}</div>
+                            <div style={{ marginTop: 3 }}><MixBar mix={c.bcgMix} altura={4} /></div>
+                          </>
+                        ) : <span style={{ color: '#cfd6e0', fontSize: 11 }}>·</span>}
+                      </td>
                       <td style={{ textAlign: 'center', fontSize: 11, color: STATUS_COLOR[c.status] ?? C.textSoft, fontWeight: 600, whiteSpace: 'nowrap' }}>{c.status}</td>
                       <td style={{ textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{fmt(ov.hasYoY ? c.tCur : c.total)}</td>
                       {ov.hasYoY && <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>{fmtK(c.tPrev)}</td>}
@@ -291,13 +360,15 @@ export default function DemandaCliente() {
                       <td style={{ textAlign: 'center', color: C.gold }}>›</td>
                     </tr>
                   ))}
-                  {filtered.length > 200 && <tr><td colSpan={ov.hasYoY ? 11 : 9} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 200 de {filtered.length}. Use a busca para refinar.</td></tr>}
+                  {filtered.length > 200 && <tr><td colSpan={ov.hasYoY ? 12 : 10} style={{ textAlign: 'center', padding: 12, fontSize: 11, color: C.textMuted }}>Mostrando 200 de {filtered.length}. Use a busca para refinar.</td></tr>}
                 </tbody>
               </table>
             </div>
             <div style={{ padding: '8px 20px', fontSize: 11, color: C.textMuted, borderTop: `1px solid ${C.line}` }}>
               <b>Margem</b> = margem de venda real: (valor vendido − qtd × custo de reposição do ABC de Estoque) ÷ valor vendido, nos itens com custo conhecido.
               {' '}<b>Crédito</b> = nota da aba Risco de Cliente (AA/A = pode conceder prazo · B = caso a caso · C/D = evitar prazo); “—” = cliente sem histórico na base financeira.
+              {' '}<b>Perfil</b> = quadrante da matriz BCG onde o cliente concentra o que comprou em {ov.curYear}; a barrinha é a cesta inteira, e serve para ver se o perfil é nítido ou um quase-empate.
+              Passe o mouse para a leitura completa. Itens sem custo cadastrado ficam fora da conta.
             </div>
           </div>
           )}
@@ -356,6 +427,7 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
               {ov.hasYoY && <th style={{ ...th, textAlign: 'right' }}>{ov.prevYear}</th>}
               {ov.hasYoY && <th style={{ ...th, textAlign: 'right', width: 60 }}>Δ a/a</th>}
               <th style={{ ...th, textAlign: 'right', width: 54 }}>Margem</th>
+              <th style={{ ...th, width: 26, textAlign: 'center' }} title="Perfil de cesta">Cesta</th>
               <th style={{ ...th, width: 150 }}>Anotações da visita</th>
             </tr>
           </thead>
@@ -369,6 +441,7 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
                 {ov.hasYoY && <td style={{ ...num, color: '#555' }}>{fmt(c.tPrev)}</td>}
                 {ov.hasYoY && <td style={{ ...num, fontWeight: 700, color: modo === 'perdido' ? C.red : (c.yoy ?? 0) >= 0 ? C.green : C.amber }}>{modo === 'perdido' ? 'perdido' : c.yoy == null ? 'novo' : `${c.yoy >= 0 ? '+' : ''}${(c.yoy * 100).toFixed(0)}%`}</td>}
                 <td style={{ ...num, color: mgColor(c.margem) }}>{mgFmt(c.margem)}</td>
+                <td style={{ ...td, textAlign: 'center' }} title={c.bcgPerfil ? PERFIL[c.bcgPerfil].label : ''}>{c.bcgPerfil ? BCG[c.bcgPerfil].icone : ''}</td>
                 <td style={{ ...td, borderBottom: '0.5px solid #c8d0dc' }}></td>
               </tr>
             ))}
@@ -464,8 +537,62 @@ function VendedorPrint({ ov, vendedor }: { ov: Overview; vendedor: string }) {
         )
       })()}
 
+      {/* ⑤ Quem da carteira concentra cesta ruim — base das reuniões individuais */}
+      {(() => {
+        const retrabalhar = carteira
+          .filter(c => c.bcgPerfil === 'ABACAXI' || c.bcgPerfil === 'INTERROGACAO')
+          .sort((a, b) => b.tCur - a.tCur)
+        if (!retrabalhar.length) return null
+        const pctTxt = (n: number | null | undefined) => n == null ? '—' : `${(n * 100).toFixed(0)}%`
+        return (
+          <div style={{ marginTop: 14, pageBreakInside: 'auto' }}>
+            <div style={{ borderLeft: `4px solid ${C.amber}`, paddingLeft: 8, marginBottom: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.navy }}>⑤ CLIENTES A RETRABALHAR — perfil da cesta <span style={{ color: C.amber }}>({retrabalhar.length})</span></div>
+              <div style={{ fontSize: 9, color: '#666' }}>
+                Concentram a compra em itens que rendem pouco. Não é para deixar de atender — é para mudar <b>o que</b> se oferece:
+                entrar com estrela e vaca leiteira no mesmo pedido. Ordem: maior faturamento primeiro, que é onde a troca de mix rende mais.
+              </div>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={th}>Cliente</th>
+                  <th style={{ ...th, width: 34, textAlign: 'center' }}>ABC</th>
+                  <th style={{ ...th, width: 96 }}>Perfil</th>
+                  <th style={{ ...th, textAlign: 'right', width: 50 }}>Peso</th>
+                  <th style={{ ...th, textAlign: 'right', width: 62 }}>Margem alta</th>
+                  <th style={{ ...th, textAlign: 'right' }}>{ov.curYear}</th>
+                  <th style={{ ...th, textAlign: 'right', width: 54 }}>Margem</th>
+                  <th style={{ ...th, width: 130 }}>O que oferecer na visita</th>
+                </tr>
+              </thead>
+              <tbody>
+                {retrabalhar.slice(0, 40).map(c => (
+                  <tr key={c.code}>
+                    <td style={{ ...td, fontWeight: 600, color: C.navy }}>{c.nome}<span style={{ color: '#888', fontWeight: 400 }}> · {c.code}</span></td>
+                    <td style={{ ...td, textAlign: 'center', fontWeight: 700, color: c.abc === 'A' ? C.green : c.abc === 'B' ? C.gold : '#888' }}>{c.abc}</td>
+                    <td style={{ ...td, color: BCG[c.bcgPerfil!].cor, fontWeight: 700 }}>{BCG[c.bcgPerfil!].icone} {BCG[c.bcgPerfil!].label}</td>
+                    <td style={num}>{pctTxt(c.bcgShare)}</td>
+                    <td style={{ ...num, color: (c.bcgMargemAlta ?? 0) < 0.3 ? C.red : '#555' }}>{pctTxt(c.bcgMargemAlta)}</td>
+                    <td style={num}>{fmt(c.tCur)}</td>
+                    <td style={{ ...num, color: mgColor(c.margem) }}>{mgFmt(c.margem)}</td>
+                    <td style={{ ...td, borderBottom: '0.5px solid #c8d0dc' }}></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 8, color: '#777', marginTop: 4 }}>
+              <b>Peso</b> = quanto o perfil dominante representa da cesta do cliente (90% é um perfil nítido; 30% é quase-empate).
+              <b> Margem alta</b> = fatia da cesta em estrela + vaca leiteira; abaixo de 30% é o sinal de cliente oportunista.
+              As listas do bloco ④ dizem o que entrar no lugar.
+            </div>
+          </div>
+        )
+      })()}
+
       <div style={{ marginTop: 10, fontSize: 8, color: '#777', borderTop: '0.5px solid #ccc', paddingTop: 6, lineHeight: 1.5 }}>
         Margem real = (valor vendido − custo de reposição) ÷ valor vendido, nos itens com custo cadastrado. Δ a/a compara o mesmo período dos dois anos.
+        <b> Cesta</b> = perfil BCG do cliente: {QUAD_ORDER.map(q => `${BCG[q].icone} ${BCG[q].label}`).join(' · ')}.
         <b> Créd.</b> = nota de crédito (histórico de pagamento): <b style={{ color: C.green }}>AA/A</b> pode conceder prazo (até 90d / 45–60d) ·
         <b style={{ color: C.gold }}> B</b> caso a caso · <b style={{ color: C.amber }}>C</b> prazo curto com entrada · <b style={{ color: C.red }}>D</b> não conceder prazo · “—” sem histórico.
         Listas limitadas aos maiores casos de cada bloco. Desenvolvido por Delfos Research LTDA.
@@ -589,6 +716,14 @@ function ClienteDetail({ detail, nomeFallback, onClose }: { detail: Detail; nome
           <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Total no período </span><b style={{ color: C.yellow, fontSize: 14 }}>{fmt(detail.total ?? 0)}</b></div>
           <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Produtos </span><b style={{ fontSize: 14 }}>{produtos.length}</b></div>
           <div><span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Margem média real </span><b style={{ fontSize: 14, color: detail.margemMedia == null ? '#fff' : detail.margemMedia >= 0.2 ? '#7ce3a8' : detail.margemMedia >= 0.1 ? C.yellow : '#ff9c8f' }}>{mgFmt(detail.margemMedia)}</b></div>
+          {detail.bcgPerfil && (
+            <div title={PERFIL[detail.bcgPerfil].acao}>
+              <span style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.7 }}>Perfil de cesta </span>
+              <b style={{ fontSize: 13 }}>{BCG[detail.bcgPerfil].icone} {BCG[detail.bcgPerfil].label}</b>
+              <span style={{ fontSize: 11, opacity: 0.85, marginLeft: 6 }}>{((detail.bcgShare ?? 0) * 100).toFixed(0)}% da cesta</span>
+              <div style={{ marginTop: 4, width: 190 }}><MixBar mix={detail.bcgMix} altura={5} /></div>
+            </div>
+          )}
           {/* nota de crédito + histórico de pagamento (integração Risco de Cliente) */}
           {detail.credito ? (
             <>
