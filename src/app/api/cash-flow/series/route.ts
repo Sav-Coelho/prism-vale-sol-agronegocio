@@ -212,6 +212,12 @@ export async function GET(req: NextRequest) {
   const totalPagar   = payables.reduce((s, p) => s + p.netAmount, 0)
   const totalReceberPending = receivables.filter(r => r.status === 'PENDING').reduce((s, r) => s + r.netAmount, 0)
   const totalPagarPending   = payables.filter(p => p.status === 'PENDING').reduce((s, p) => s + p.netAmount, 0)
+  // Quanto dos totais já venceu. NÃO muda os totais (decisão de 05/08: sem
+  // recorte) — serve para a tela dizer o que está somando: a base é uma
+  // fotografia, e o que venceu depois dela segue na conta até o próximo import.
+  const recVenc = receivables.filter(r => r.dueDate < today)
+  const payVenc = payables.filter(p => p.dueDate < today)
+  const todasDatas = [...receivables.map(r => r.dueDate.getTime()), ...payables.map(p => p.dueDate.getTime())]
 
   return NextResponse.json({
     filiais,
@@ -222,6 +228,12 @@ export async function GET(req: NextRequest) {
       totalReceber, totalPagar,
       totalReceberPending, totalPagarPending,
       netPosition: totalReceberPending - totalPagarPending,
+      vencidos: {
+        nReceber: recVenc.length, receber: recVenc.reduce((s, r) => s + r.netAmount, 0),
+        nPagar: payVenc.length, pagar: payVenc.reduce((s, p) => s + p.netAmount, 0),
+      },
+      primeiroVencimento: todasDatas.length ? new Date(Math.min(...todasDatas)).toISOString().slice(0, 10) : null,
+      hoje: today.toISOString().slice(0, 10),
     },
     monthlyFlow,
     cumulativeBalance,

@@ -9,8 +9,8 @@ export const dynamic = 'force-dynamic'
 // garante que títulos cancelados/excluídos no ERP entre importações
 // desapareçam também aqui — evita inconsistência entre as duas bases.
 //
-// O servidor ignora qualquer item com dueDate <= hoje (vencido ou do mesmo
-// dia) — esses não entram em análise.
+// Desde 05/08 (commit f6618b3) TODOS os itens entram, inclusive os vencidos:
+// isStale abaixo sempre devolve false e staleIgnored sai 0.
 export async function POST(req: Request) {
   const body = await req.json() as
     | { kind: 'receivable'; filial: string; items: ParsedReceivable[] }

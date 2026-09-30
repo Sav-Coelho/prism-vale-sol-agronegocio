@@ -2,7 +2,9 @@
  * Fluxo de caixa POR DIA (pedido do cliente): para cada dia com movimento,
  * o total a receber, a pagar, o saldo do dia, o acumulado e as CONTAS
  * COMPONENTES (título a título: quem, parcela, classificação, valor).
- * Considera vencimentos de hoje em diante.
+ * Considera TODOS os vencimentos da base, inclusive os já passados (decisão de
+ * 05/08, commit f6618b3). `resumo.vencidos` diz quanto dos totais já venceu,
+ * para a tela não chamar de "futuro" o que é fotografia antiga.
  */
 import { prisma } from '@/lib/prisma'
 import { NextResponse } from 'next/server'
@@ -59,11 +61,20 @@ export async function GET() {
 
   const totReceber = out.reduce((s, d) => s + d.receber, 0)
   const totPagar = out.reduce((s, d) => s + d.pagar, 0)
+  const hoje = dayOf(today)
+  const passados = out.filter(d => d.date < hoje)
 
   return NextResponse.json({
     hasData: out.length > 0,
-    hoje: dayOf(today),
-    resumo: { totReceber, totPagar, saldo: totReceber - totPagar, nDias: out.length },
+    hoje,
+    resumo: {
+      totReceber, totPagar, saldo: totReceber - totPagar, nDias: out.length,
+      vencidos: {
+        receber: passados.reduce((s, d) => s + d.receber, 0), nReceber: passados.reduce((s, d) => s + d.nReceber, 0),
+        pagar: passados.reduce((s, d) => s + d.pagar, 0), nPagar: passados.reduce((s, d) => s + d.nPagar, 0),
+      },
+      primeiroDia: out[0]?.date ?? null,
+    },
     dias: out,
   })
 }

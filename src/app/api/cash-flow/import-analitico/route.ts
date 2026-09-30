@@ -3,7 +3,8 @@
  * Mapeia TIPO E (entrada) → Receivable e TIPO S (saída) → Payable, preservando a
  * FILIAL do arquivo (fallback 'CONSOLIDADO' se vier vazia).
  * Wipe TOTAL de Receivable/Payable e substitui por esta projeção (decisão do usuário).
- * A stale-rule (dueDate <= hoje não entra em análise) é aplicada pela /series na leitura.
+ * Não há recorte de vencidos em lugar nenhum (decisão de 05/08, commit f6618b3):
+ * /series e /daily somam tudo e só INFORMAM quanto já venceu (`vencidos`).
  *
  * LIGAÇÃO COM O CONTROLE DE COMPRAS (pedido do Sávio, 2026-08-28): as saídas com
  * classificação FORNECEDOR MERCADORIAS também substituem a base de boletos

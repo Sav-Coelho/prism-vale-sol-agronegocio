@@ -12,7 +12,8 @@ type Kind = 'receivable' | 'payable'
 
 interface DailyItem { nome: string; titulo: string | null; parcela: string | null; classif: string | null; valor: number }
 interface DailyDay { date: string; receber: number; pagar: number; saldoDia: number; acumulado: number; nReceber: number; nPagar: number; recebimentos: DailyItem[]; pagamentos: DailyItem[] }
-interface DailyResponse { hasData: boolean; hoje: string; resumo: { totReceber: number; totPagar: number; saldo: number; nDias: number }; dias: DailyDay[] }
+interface Vencidos { receber: number; nReceber: number; pagar: number; nPagar: number }
+interface DailyResponse { hasData: boolean; hoje: string; resumo: { totReceber: number; totPagar: number; saldo: number; nDias: number; vencidos?: Vencidos; primeiroDia?: string | null }; dias: DailyDay[] }
 
 interface ItemRow {
   fitid: string
@@ -57,6 +58,10 @@ interface SeriesResponse {
     totalReceberPending: number
     totalPagarPending: number
     netPosition: number
+    /** quanto dos totais já venceu — os totais incluem tudo (decisão de 05/08) */
+    vencidos?: Vencidos
+    primeiroVencimento?: string | null
+    hoje?: string
   }
   monthlyFlow: { key: string; label: string; receber: number; pagar: number; gap: number }[]
   cumulativeBalance: { date: string; label: string; balance: number }[]
@@ -335,7 +340,7 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
 
         <div style={{ marginBottom: 14, padding: '10px 14px', background: '#fff8e1', border: `1px solid ${C.gold}`, borderRadius: 4, fontSize: 12, color: '#7a5c00', lineHeight: 1.5 }}>
           ⚠ <b>Substituição completa.</b> Ao salvar, todos os {isRecv ? 'títulos a receber' : 'pagamentos a efetuar'} atualmente
-          no banco serão <b>apagados</b> e substituídos pelos {preview.validCount} desta planilha. Isso garante
+          no banco serão <b>apagados</b> e substituídos pelos {preview.total} desta planilha. Isso garante
           que títulos cancelados no ERP entre importações também sumam aqui. <b>Todos</b> os títulos entram,
           inclusive os já vencidos ({preview.staleCount} com vencimento até hoje).
         </div>
@@ -361,10 +366,10 @@ function ImportPanel({ showToast, onSaved }: { showToast: (m: string) => void; o
             </thead>
             <tbody>
               {preview.items.slice(0, 500).map(i => (
-                <tr key={i.fitid} style={{ opacity: i.isStale ? 0.45 : 1 }}>
+                <tr key={i.fitid}>
                   <td>
                     {i.isStale
-                      ? <span title="Vencido ou do dia — não entra em análise" style={{ color: C.amber, fontSize: 14 }}>⊘</span>
+                      ? <span title="Vencido ou do dia — entra na base mesmo assim (sem recorte de vencidos, decisão de 05/08)" style={{ color: C.amber, fontSize: 14 }}>⊘</span>
                       : <span title="Vencimento futuro — válido" style={{ color: C.green, fontSize: 14, fontWeight: 700 }}>+</span>}
                   </td>
                   <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(i.dueDate)}</td>
@@ -437,11 +442,15 @@ function ViewPanel({ series }: { series: SeriesResponse }) {
           </div>
         </div>
         <div className="grid-4" style={{ gap: 28 }}>
-          <KpiBig label="A receber em aberto" value={fmt(s.totalReceberPending)} sub={`${s.countReceivables} títulos`} color={C.green} />
-          <KpiBig label="A pagar em aberto"   value={fmt(s.totalPagarPending)}   sub={`${s.countPayables} títulos`}   color={C.red} />
+          <KpiBig label="A receber em aberto" value={fmt(s.totalReceberPending)}
+            sub={`${s.countReceivables} títulos${s.vencidos?.nReceber ? ` · ${s.vencidos.nReceber} já vencidos (${fmt(s.vencidos.receber)})` : ''}`} color={C.green} />
+          <KpiBig label="A pagar em aberto"   value={fmt(s.totalPagarPending)}
+            sub={`${s.countPayables} títulos${s.vencidos?.nPagar ? ` · ${s.vencidos.nPagar} já vencidos (${fmt(s.vencidos.pagar)})` : ''}`} color={C.red} />
           <KpiBig label="Posição líquida"      value={fmt(s.netPosition)} sub="A receber - A pagar"          color={positionColor} />
-          <KpiBig label="Volume total"         value={fmt(s.totalReceber + s.totalPagar)} sub="Recebido + pago"   color={C.navy} />
+          {/* títulos da projeção importada: nada aqui foi recebido nem pago ainda */}
+          <KpiBig label="Volume total"         value={fmt(s.totalReceber + s.totalPagar)} sub="A receber + a pagar"   color={C.navy} />
         </div>
+        <AvisoVencidos v={s.vencidos} desde={s.primeiroVencimento} />
       </div>
 
       {/* 1. Fluxo mensal */}
@@ -773,11 +782,16 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
     <>
       <div className="card mb-6">
         <div className="grid-4" style={{ gap: 28 }}>
-          <KpiBig label="A receber (futuro)" value={fmt(daily.resumo.totReceber)} sub={`${daily.resumo.nDias} dias com movimento`} color={C.green} />
-          <KpiBig label="A pagar (futuro)" value={fmt(daily.resumo.totPagar)} sub="vencimentos de hoje em diante" color={C.red} />
+          {/* todos os vencimentos da base, inclusive os já passados (decisão de 05/08) —
+              "futuro"/"de hoje em diante" descrevia uma regra que não existe mais */}
+          <KpiBig label="A receber" value={fmt(daily.resumo.totReceber)}
+            sub={daily.resumo.vencidos?.nReceber ? `inclui ${fmt(daily.resumo.vencidos.receber)} já vencidos` : `${daily.resumo.nDias} dias com movimento`} color={C.green} />
+          <KpiBig label="A pagar" value={fmt(daily.resumo.totPagar)}
+            sub={daily.resumo.vencidos?.nPagar ? `inclui ${fmt(daily.resumo.vencidos.pagar)} já vencidos` : 'todos os vencimentos da base'} color={C.red} />
           <KpiBig label="Saldo projetado" value={fmt(daily.resumo.saldo)} sub="a receber − a pagar" color={daily.resumo.saldo >= 0 ? C.green : C.red} />
           <KpiBig label="Hoje" value={dayLabel(daily.hoje)} sub={weekdayOf(daily.hoje)} color={C.navy} />
         </div>
+        <AvisoVencidos v={daily.resumo.vencidos} desde={daily.resumo.primeiroDia} />
       </div>
 
       <div className="card mb-6 card-accent-yellow">
@@ -851,9 +865,26 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
         </div>
       </div>
       <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
-        Vencimentos de hoje em diante, um dia por linha. O acumulado soma os saldos diários na ordem — assume liquidação no vencimento.
+        Todos os vencimentos da base importada, inclusive os já passados, um dia por linha. O acumulado soma os saldos diários na ordem — assume liquidação no vencimento.
       </p>
     </>
+  )
+}
+
+/**
+ * A base do fluxo é uma FOTOGRAFIA do CashFlow Analítico e, por decisão de
+ * 05/08, inclui tudo o que o arquivo trouxe. Quando o import envelhece, títulos
+ * que eram futuros viram passados e continuam nos totais — o aviso diz quanto,
+ * para a tela não apresentar isso como a receber/a pagar à frente.
+ */
+function AvisoVencidos({ v, desde }: { v?: Vencidos; desde?: string | null }) {
+  if (!v || (v.nReceber === 0 && v.nPagar === 0)) return null
+  return (
+    <div style={{ marginTop: 18, padding: '10px 14px', borderLeft: `3px solid ${C.amber}`, background: '#fff8e6', fontSize: 12, color: C.navy, lineHeight: 1.6 }}>
+      <b>Base com vencimentos a partir de {desde ? dayLabel(desde) : '—'}:</b>{' '}
+      {v.nReceber} títulos a receber ({fmt(v.receber)}) e {v.nPagar} a pagar ({fmt(v.pagar)}) já venceram e seguem nos totais,
+      porque o fluxo inclui tudo o que o arquivo trouxe. Importe o CashFlow Analítico mais recente para atualizar.
+    </div>
   )
 }
 
