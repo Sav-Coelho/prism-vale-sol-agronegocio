@@ -442,13 +442,22 @@ function ReposicaoPanel({ an }: { an: Analytics }) {
 
   if (!rep) return <div className="empty-state"><div className="empty-state-icon">◌</div><div className="empty-state-title">Calculando giro…</div></div>
   if (!rep.hasData) return <div className="card"><div className="empty-state"><div className="empty-state-icon">♻</div><div className="empty-state-title">Sem dados de vendas/estoque</div><div className="empty-state-sub">Atualize o ABC de Vendas e o Estoque na Análise Comercial.</div></div></div>
+  const rupAForaRel = rep.rows.filter(r => r.classe === 'A' && r.status === 'RUPTURA' && r.semCadastroEstoque).length
+  const aSemCusto = rep.rows.filter(r => r.classe === 'A' && r.sugQtd > 0 && r.sugCusto == null).length
 
   return (
     <>
       <div className="grid-5 mb-6">
-        <Kpi label="Rupturas curva A" value={String(rep.kpis.rupturasA)} sub="vendem muito, estoque zero" color={C.red} />
+        {/* item vendido que não aparece no relatório de estoque entra como ruptura
+            (o ERP parece listar só saldo ≠ 0), mas o saldo dele não é conhecido — o
+            texto diz qual das duas coisas o número é, e o custo desses itens também
+            não existe, então eles ficam fora dos cartões de custo */}
+        <Kpi label="Rupturas curva A" value={String(rep.kpis.rupturasA)}
+          sub={rupAForaRel === 0 ? 'vendem muito, estoque zero'
+            : rupAForaRel === rep.kpis.rupturasA ? 'vendem muito e não aparecem no relatório de estoque'
+            : `${rep.kpis.rupturasA - rupAForaRel} com estoque zero · ${rupAForaRel} fora do relatório de estoque`} color={C.red} />
         <Kpi label="Itens a repor" value={String(rep.kpis.precisaRepor)} sub={`p/ cobertura de ${rep.params.alvoDias} dias`} color={C.amber} />
-        <Kpi label="Custo repor SÓ curva A" value={fmt(rep.kpis.custoReporA)} color={C.navy} />
+        <Kpi label="Custo repor SÓ curva A" value={fmt(rep.kpis.custoReporA)} sub={aSemCusto ? `${aSemCusto} itens sem custo fora` : undefined} color={C.navy} />
         <Kpi label="Custo repor tudo" value={fmt(rep.kpis.custoReporTudo)} sub={rep.kpis.semCusto ? `${rep.kpis.semCusto} itens sem custo fora` : undefined} color={C.navyMid} />
         {folgaProx && <Kpi label={`Folga do limite · ${folgaProx.mes}`} value={fmt(folgaProx.folga)} sub="o que cabe sem estourar" color={folgaProx.folga >= rep.kpis.custoReporA ? C.green : C.red} />}
       </div>
