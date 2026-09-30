@@ -22,7 +22,7 @@ interface MesOrcado { mes: string; receita: { p: number; lo: number; hi: number 
 interface BacktestPonto { mes: string; nTreino: number; previsto: number; real: number; erro: number; lo: number; hi: number; dentroIC: boolean; resultadoPrevisto: number; resultadoReal: number }
 interface Orc {
   hasData: boolean; motivo?: string
-  base: { mesesRealizados: string[]; ultimoFechado: string; serieLonga: { n: number; de: string; ate: string } }
+  base: { mesesRealizados: string[]; ultimoFechado: string; serieLonga: { n: number; de: string; ate: string }; descartados: { mes: string; lancamentos: number }[]; corteDensidade: number }
   historico: { mes: string; receita: number; cmv: number; despesas: number; resultado: number }[]
   params: { ancora: number; phi: number; horizonte: number; crescimento: number | null }
   tendencia: { mensalEstimada: number; mensalUsada: number; phi: number; fonte: string }
@@ -114,6 +114,14 @@ export function Orcamento() {
           previsto e as premissas se confirmarem, sobra isto”. O backtest ao lado mostra por que essa distinção
           existe — a receita acerta, o resultado não.
         </p>
+        {d.base.descartados.length > 0 && (
+          <p style={{ fontSize: 12, color: C.amber, lineHeight: 1.6, margin: '10px 0 0', maxWidth: 900 }}>
+            <b>Fora do treino:</b> {d.base.descartados.map(x => `${x.mes} (${x.lancamentos} lançamentos)`).join(', ')}.
+            O import do CashFlow traz títulos futuros, a receber e a pagar, então esses meses já aparecem na base
+            sem serem realizados — um mês fechado tem o razão inteiro, acima de {d.base.corteDensidade} lançamentos.
+            Treinar com eles puxaria a projeção para baixo.
+          </p>
+        )}
       </div>
 
       {/* ── parametrizações ── */}

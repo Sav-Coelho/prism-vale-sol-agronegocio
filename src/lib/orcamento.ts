@@ -106,6 +106,9 @@ export interface OrcamentoResultado {
     mesesRealizados: string[]
     ultimoFechado: string
     serieLonga: { n: number; de: string; ate: string }
+    /** meses do DreEntry deixados de fora por densidade — título futuro, não realizado */
+    descartados: { mes: string; lancamentos: number }[]
+    corteDensidade: number
   }
   /** realizado, para o gráfico emendar história e projeção */
   historico: { mes: string; receita: number; cmv: number; despesas: number; resultado: number }[]
@@ -138,7 +141,7 @@ const tcrit = (gl: number) => TCRIT[gl] ?? (gl > 30 ? 1.96 : 12.706)
 
 const VAZIO: OrcamentoResultado = {
   hasData: false,
-  base: { mesesRealizados: [], ultimoFechado: '', serieLonga: { n: 0, de: '', ate: '' } },
+  base: { mesesRealizados: [], ultimoFechado: '', serieLonga: { n: 0, de: '', ate: '' }, descartados: [], corteDensidade: 0 },
   historico: [],
   params: { ancora: 3, phi: 0.85, horizonte: 7, crescimento: null },
   tendencia: { mensalEstimada: 0, mensalUsada: 0, phi: 0.85, fonte: '' },
@@ -153,10 +156,11 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   const horizonte = Math.max(1, Math.min(12, Math.round(opts.horizonte ?? 7)))
   const params = { ancora, phi, horizonte, crescimento: opts.crescimento ?? null }
 
-  const [dreRows, ajustes, demRows] = await Promise.all([
+  const [dreRows, ajustes, demRows, densidade] = await Promise.all([
     prisma.dreEntry.groupBy({ by: ['year', 'month', 'line'], _sum: { amount: true } }),
     prisma.dreAjuste.groupBy({ by: ['year', 'month', 'line'], _sum: { amount: true } }),
     prisma.demandEntry.groupBy({ by: ['year', 'month'], _sum: { valor: true } }),
+    prisma.dreEntry.groupBy({ by: ['year', 'month'], _count: { _all: true } }),
   ])
   if (!dreRows.length) return { ...VAZIO, params, motivo: 'Sem DRE importada.' }
 
@@ -170,16 +174,26 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   dreRows.forEach(r => somar(r.year, r.month, r.line, r._sum.amount ?? 0))
   ajustes.forEach(r => somar(r.year, r.month, r.line, r._sum.amount ?? 0))
 
-  // ── mês fechado: o corrente entra pela metade, e de set/26 em diante o
-  // DreEntry carrega recebível futuro do CashFlow. Só entra mês ANTERIOR ao
-  // corrente E que tenha despesa lançada (o futuro só traz receita a receber).
+  // ── quais meses estão FECHADOS ──────────────────────────────────────────
+  // Duas armadilhas aqui, e as duas já morderam:
+  //  1. o mês corrente entra pela metade;
+  //  2. o import do CashFlow traz TÍTULOS FUTUROS — a receber e a pagar — então
+  //     meses à frente aparecem no DreEntry com receita E despesa. Testar
+  //     "tem despesa lançada" não os separa.
+  // O que separa é a DENSIDADE: um mês realizado tem o razão inteiro (~1.500
+  // lançamentos aqui), um mês futuro tem só os títulos já emitidos (~400).
   const hoje = new Date()
   const kAtual = key(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1)
-  const temDespesa = (o: Record<string, number>) =>
-    Object.keys(o).some(l => l !== 'RECEITA' && l !== 'DEDUCAO' && Math.abs(o[l]) > 0)
-  const meses = Array.from(dre.keys())
-    .filter(k => k < kAtual && temDespesa(dre.get(k)!))
-    .sort((a, b) => a - b)
+  const contaDe = new Map<number, number>()
+  densidade.forEach(r => contaDe.set(key(r.year, r.month), r._count._all))
+  const candidatos = Array.from(dre.keys()).filter(k => k < kAtual).sort((a, b) => a - b)
+  const contagens = candidatos.map(k => contaDe.get(k) ?? 0).sort((a, b) => a - b)
+  const mediana = contagens.length ? contagens[Math.floor(contagens.length / 2)] : 0
+  const corteDensidade = mediana * 0.6
+  const meses = candidatos.filter(k => (contaDe.get(k) ?? 0) >= corteDensidade)
+  const descartados = candidatos
+    .filter(k => (contaDe.get(k) ?? 0) < corteDensidade)
+    .map(k => ({ mes: rotulo(k), lancamentos: contaDe.get(k) ?? 0 }))
   if (meses.length < 4) {
     return { ...VAZIO, params, motivo: `São precisos ao menos 4 meses fechados de DRE; há ${meses.length}.` }
   }
@@ -328,6 +342,7 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
       mesesRealizados: meses.map(rotulo),
       ultimoFechado: rotulo(ultimoFechado),
       serieLonga: { n: dem.length, de: dem.length ? rotulo(dem[0].k) : '', ate: dem.length ? rotulo(dem[dem.length - 1].k) : '' },
+      descartados, corteDensidade: Math.round(corteDensidade),
     },
     historico: meses.map(k => {
       const o = dre.get(k)!
