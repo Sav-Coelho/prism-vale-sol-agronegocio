@@ -10,6 +10,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { installments, ymKey, ymLabel, monthRange } from '@/lib/compras'
+import { classificarMesesDre } from '@/lib/dre-meses'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +25,7 @@ const prevYm = (ym: string) => {
 }
 
 export async function GET() {
-  const [pedidos, commits, compradores, settings, importadas, ajustadas] = await Promise.all([
+  const [pedidos, commits, compradores, settings, importadas, ajustadas, mesesDre] = await Promise.all([
     prisma.purchaseOrder.findMany(),
     prisma.purchaseCommit.findMany(),
     prisma.comprador.findMany({ orderBy: { nome: 'asc' } }),
@@ -33,6 +34,7 @@ export async function GET() {
     // Ajustes manuais de conciliação da DRE também valem aqui: o limite tem de
     // sair da MESMA receita que a DRE mostra, senão as duas telas divergem.
     prisma.dreAjuste.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
+    classificarMesesDre(),
   ])
   const recRows = [...importadas, ...ajustadas]
 
@@ -44,12 +46,15 @@ export async function GET() {
   const refYm = ymKey(curStart)
 
   // ── Receita LÍQUIDA por mês (Bruta − Deduções) da DRE ──
-  // Só meses FECHADOS (anteriores ao corrente): um mês parcial (ex.: agosto com
-  // 2 dias de caixa) derrubaria o limite dos meses seguintes na projeção.
+  // Só meses FECHADOS, pela regra única de lib/dre-meses: anterior ao corrente
+  // E com o razão inteiro. "Anterior ao corrente" sozinho não basta — a base da
+  // DRE pode ter meses de PROJEÇÃO (títulos a receber/a pagar) e, na virada do
+  // mês, o mês que acabou de passar entraria no limite mesmo sem ter sido
+  // importado o fechamento.
   const recliq = new Map<string, number>()
   recRows.forEach(r => {
     const k = `${r.year}-${String(r.month).padStart(2, '0')}`
-    if (k >= refYm) return
+    if (k >= refYm || mesesDre.status[k] !== 'fechado') return
     recliq.set(k, (recliq.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount))
   })
   const latestRecYm = Array.from(recliq.keys()).sort().pop() ?? null

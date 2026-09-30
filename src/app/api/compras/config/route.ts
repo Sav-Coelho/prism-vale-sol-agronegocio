@@ -4,6 +4,7 @@
  * Cria defaults na primeira leitura. Mutações via POST { kind, op, data }.
  */
 import { prisma } from '@/lib/prisma'
+import { classificarMesesDre } from '@/lib/dre-meses'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -44,19 +45,21 @@ async function seedIfEmpty() {
 //  · senão, último mês disponível.
 async function receitaRef(): Promise<{ ym: string | null; value: number; exato: boolean; modo: string }> {
   // Inclui os ajustes manuais de conciliação, igual à /api/dre e à /api/compras/analytics.
-  const [importadas, ajustadas] = await Promise.all([
+  const [importadas, ajustadas, mesesDre] = await Promise.all([
     prisma.dreEntry.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
     prisma.dreAjuste.findMany({ where: { line: { in: ['RECEITA', 'DEDUCAO'] } }, select: { line: true, year: true, month: true, amount: true } }),
+    classificarMesesDre(),
   ])
   const rows = [...importadas, ...ajustadas]
   if (!rows.length) return { ym: null, value: 0, exato: false, modo: 'fallback' }
   const now = new Date()
-  // só meses FECHADOS: o mês corrente (parcial) não entra na base de receita
+  // só meses FECHADOS, pela regra única de lib/dre-meses (anterior ao corrente
+  // E com o razão inteiro) — a mesma de /api/compras/analytics e da DRE
   const curYm = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
   const byMonth = new Map<string, number>()
   rows.forEach(r => {
     const k = `${r.year}-${String(r.month).padStart(2, '0')}`
-    if (k >= curYm) return
+    if (k >= curYm || mesesDre.status[k] !== 'fechado') return
     byMonth.set(k, (byMonth.get(k) ?? 0) + (r.line === 'RECEITA' ? r.amount : -r.amount))
   })
   if (byMonth.size === 0) return { ym: null, value: 0, exato: false, modo: 'fallback' }
