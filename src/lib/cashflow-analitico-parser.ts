@@ -62,8 +62,11 @@ export function parseCashflowAnalitico(buffer: ArrayBuffer): {
     const c = iC.map(idx => idx >= 0 ? clean(row[idx]) : '')
     const c1 = c[0] || '—'
     const d = serial(row[iData]) ?? (iOrig >= 0 ? serial(row[iOrig]) : null)
-    const year = d ? d.getFullYear() : 2026
-    const month = d ? d.getMonth() + 1 : 0
+    // UTC: a data serial vira meia-noite UTC; com getMonth() local, fora de um
+    // servidor UTC todo lançamento do dia 1º caía no mês anterior (na Vercel
+    // não acontece, mas um script local rodando em BRT gravaria errado)
+    const year = d ? d.getUTCFullYear() : 2026
+    const month = d ? d.getUTCMonth() + 1 : 0
     rows++
     if (tipo === 'E') totalE += val; else totalS += val
     filiais.add(filial)

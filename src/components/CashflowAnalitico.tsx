@@ -19,7 +19,10 @@ interface CashflowData {
 const CONS = 'CONSOLIDADO'
 const fmt = (n: number) => (n < 0 ? '−' : '') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtShort = (n: number) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0)) }
+// pt-BR: vírgula decimal (toFixed devolve ponto)
+const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1).replace('.', ',')}M` : a >= 1e3 ? `${Math.round(a / 1e3)}k` : String(Math.round(a))) }
+/** 'AAAA-MM' do mês corrente (UTC, como o servidor) — meses daí em diante no arquivo são títulos a vencer */
+const mesCorrente = () => { const d = new Date(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}` }
 const MONTH_LABEL: Record<string, string> = { '01': 'Jan', '02': 'Fev', '03': 'Mar', '04': 'Abr', '05': 'Mai', '06': 'Jun', '07': 'Jul', '08': 'Ago', '09': 'Set', '10': 'Out', '11': 'Nov', '12': 'Dez' }
 const mLabel = (m: string) => { const [y, mm] = m.split('-'); return `${MONTH_LABEL[mm] ?? mm}/${y.slice(2)}` }
 
@@ -47,6 +50,11 @@ export function CashflowAnalitico() {
   const shownMonths = useMemo(() => selMonths.length ? allMonths.filter(m => selMonths.includes(m)) : allMonths, [allMonths, selMonths])
   const sumShown = (bm: Record<string, number>) => shownMonths.reduce((s, m) => s + (bm[m] ?? 0), 0)
   const toggleMonth = (m: string) => setSelMonths(p => p.includes(m) ? p.filter(x => x !== m) : [...p, m])
+  // o arquivo mistura realizado (datas passadas) e projeção (vencimentos a partir
+  // da extração): o mês corrente está em curso e os seguintes são títulos a vencer
+  const atual = mesCorrente()
+  const tagMes = (m: string) => (m > atual ? 'projeção' : m === atual ? 'em curso' : null)
+  const projetadosVisiveis = shownMonths.filter(m => tagMes(m))
   const cur = data?.data?.[scope]
 
   const kpi = useMemo(() => {
@@ -101,8 +109,23 @@ export function CashflowAnalitico() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${C.line}` }}>
             <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600 }}>Meses</span>
             <button className={selMonths.length === 0 ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => setSelMonths([])}>Todos</button>
-            {allMonths.map(m => <button key={m} className={selMonths.includes(m) ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => toggleMonth(m)}>{mLabel(m)}</button>)}
+            {allMonths.map(m => {
+              const tag = tagMes(m)
+              return (
+                <button key={m} className={selMonths.includes(m) ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => toggleMonth(m)}
+                  style={tag ? { borderStyle: 'dashed' } : undefined} title={tag ? `${mLabel(m)}: ${tag} — títulos a receber e a pagar, não caixa realizado` : undefined}>
+                  {mLabel(m)}{tag && <span style={{ fontSize: 9, marginLeft: 4, opacity: 0.85 }}>{tag}</span>}
+                </button>
+              )
+            })}
           </div>
+          {projetadosVisiveis.length > 0 && (
+            <div className="card mb-6" style={{ padding: '12px 18px', borderLeft: `3px solid ${C.gold}`, fontSize: 12.5, color: C.textSoft, lineHeight: 1.6 }}>
+              <b style={{ color: C.navy }}>{projetadosVisiveis.length === shownMonths.length ? 'Toda a visão é projeção' : 'A visão inclui projeção'}:</b>{' '}
+              {projetadosVisiveis.map(m => `${mLabel(m)} (${tagMes(m)})`).join(', ')} — nesses meses o arquivo traz os títulos a receber e a pagar
+              já emitidos, com vencimento a partir da data de extração, e não o caixa realizado.
+            </div>
+          )}
 
           {/* KPIs */}
           <div className="grid-3 mb-6">
@@ -152,7 +175,8 @@ export function CashflowAnalitico() {
           <TreeTable title="Saídas — por classificação contábil" accent={C.red} nodes={cur?.treeS ?? []} shownMonths={shownMonths} sumShown={sumShown} expanded={expanded} setExpanded={setExpanded} prefix="S" />
 
           <p style={{ fontSize: 11, color: C.textMuted, marginTop: 16, lineHeight: 1.6 }}>
-            <b>Razão de caixa analítico da contabilidade</b> — visão independente da DRE (não altera nenhum número dela).
+            <b>CashFlow Analítico da contabilidade</b> — visão independente da DRE (não altera nenhum número dela). Meses já
+            passados são caixa realizado; do mês corrente em diante, títulos a receber e a pagar (projeção).
             E = entradas, S = saídas, agregadas pela classificação contábil oficial (até 6 níveis). Clique nas linhas para abrir os níveis.
           </p>
         </>
