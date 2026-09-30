@@ -120,6 +120,39 @@ export interface AggregateRiskPoint {
 const MONTH_NAMES = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
                      'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
+/**
+ * Classifica um título com o que se SABIA na data `snapshot` — sem olhar o
+ * futuro. A versão anterior chamava scoreClient(…, snapshot), que lê o status
+ * ATUAL: um título pago em agosto já contava como pago no retrato de maio, e um
+ * calote marcado em setembro pesava em meses em que ele nem tinha vencido. A
+ * série histórica saía de 70% para 38% e voltava a 59% por isso — com a regra
+ * abaixo ela fica entre 51% e 60% e converge para o mesmo valor no mês corrente.
+ *
+ *   · resolvido até a data (paidDate ≤ snapshot): o desfecho que o import gravou
+ *     — PAID é sucesso; DEFAULTED com paidDate é calote resolvido tarde (falha);
+ *   · em aberto na data: falha se já tinha 90+ dias de atraso NAQUELA data,
+ *     senão pendente (fora da verossimilhança, como no scoreClient).
+ */
+export function classifySaleAt(sale: SaleForCredit, snapshot: Date): 'PAID' | 'DEFAULTED' | 'PENDING' {
+  const paidOn = sale.paidDate ? toDate(sale.paidDate) : null
+  if (paidOn && paidOn <= snapshot) return sale.paymentStatus === 'DEFAULTED' ? 'DEFAULTED' : 'PAID'
+  if (sale.dueDate) {
+    const daysLate = (snapshot.getTime() - toDate(sale.dueDate).getTime()) / (1000 * 60 * 60 * 24)
+    if (daysLate >= OVERDUE_DAYS_FOR_DEFAULT) return 'DEFAULTED'
+  }
+  return 'PENDING'
+}
+/** Risco Beta(2,2) de um cliente na data, sem olhar o futuro. */
+function riskAt(sales: SaleForCredit[], snapshot: Date): number {
+  let paid = 0, defaulted = 0
+  for (const s of sales) {
+    const c = classifySaleAt(s, snapshot)
+    if (c === 'PAID') paid++
+    else if (c === 'DEFAULTED') defaulted++
+  }
+  return 1 - (ALPHA_PRIOR + paid) / (ALPHA_PRIOR + BETA_PRIOR + paid + defaulted)
+}
+
 export function aggregateMonthlyRisk(
   clients: ClientSales[],
   monthsBack: number = 12,
@@ -144,7 +177,7 @@ export function aggregateMonthlyRisk(
       const historicalSales = c.sales.filter(s => toDate(s.date) <= snapshot)
       if (historicalSales.length === 0) continue
 
-      const score = scoreClient(historicalSales, snapshot)
+      const score = { risk: riskAt(historicalSales, snapshot) }
 
       // Exposure = sum of amounts that were OPEN at snapshot date
       // i.e., sale.date <= snapshot AND (no paidDate OR paidDate > snapshot)
