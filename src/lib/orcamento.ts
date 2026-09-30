@@ -51,6 +51,19 @@ export const PRIOR: Record<string, ModoLinha> = {
 /** Fora do resultado operacional (não operacional e movimento entre empresas). */
 const FORA_DO_OPERACIONAL = new Set(['NAOOP', 'INTRAGRUPO'])
 
+/**
+ * Premissas de NEGÓCIO — definidas pelo cliente, não estimadas do histórico.
+ * Entram no lugar do coeficiente medido quando a linha está no modo original.
+ * O valor medido continua exposto em `valorAncora` e `valorPeriodo`, para a
+ * distância entre a meta e o realizado ficar visível em vez de sumir.
+ *
+ * CMV 70%: meta informada pelo Sávio em 30/09/2026. Medido no período: 73,4%;
+ * nos últimos 3 meses: 71,4%; em ago/26: 67,2%.
+ */
+export const PREMISSA_PADRAO: Record<string, number> = {
+  CMV: 0.70,
+}
+
 export interface PremissaEntrada { modo?: ModoLinha; valor?: number }
 export interface OrcamentoParams {
   /** meses recentes que definem o nível e os coeficientes (default 3) */
@@ -68,9 +81,13 @@ export interface OrcamentoParams {
 export interface Premissa {
   linha: string
   modo: ModoLinha
-  /** % da receita líquida (modo RECEITA) ou R$/mês (modo FIXO) */
+  /** % da receita líquida (modo RECEITA) ou R$/mês (modo FIXO) — o valor EM USO */
   valor: number
-  /** mesmo coeficiente medido em toda a base, para comparar com a âncora */
+  /** de onde saiu o valor em uso */
+  origem: 'padrao' | 'medido' | 'editado'
+  /** coeficiente medido na janela-âncora */
+  valorAncora: number
+  /** coeficiente medido em toda a base */
   valorPeriodo: number
   min: number
   max: number
@@ -304,6 +321,14 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     })
     return out
   }
+  /** aplica as premissas de negócio por cima do que foi medido */
+  const comPadrao = (medido: Record<string, { modo: ModoLinha; valor: number }>) => {
+    const o = { ...medido }
+    Object.entries(PREMISSA_PADRAO).forEach(([L, v]) => {
+      if (o[L] && o[L].modo === 'RECEITA') o[L] = { modo: 'RECEITA', valor: v }
+    })
+    return o
+  }
   const janelaAncora = meses.slice(-ancora)
   const coefAncora = coefDe(janelaAncora)
   const coefPeriodo = coefDe(meses)
@@ -314,10 +339,15 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     const ed = opts.premissas?.[L]
     const modo = ed?.modo ?? base.modo
     const editado = ed?.valor != null && Number.isFinite(ed.valor)
-    const valor = editado ? (ed!.valor as number) : (modo === base.modo ? base.valor : coefPeriodo[L].valor)
+    const medido = modo === base.modo ? base.valor : coefPeriodo[L].valor
+    // premissa de negócio só vale enquanto a linha continuar no modo original
+    const padrao = modo === PRIOR[L] ? PREMISSA_PADRAO[L] : undefined
+    const valor = editado ? (ed!.valor as number) : (padrao ?? medido)
+    const origem: Premissa['origem'] = editado ? 'editado' : padrao != null ? 'padrao' : 'medido'
     const serie = meses.map(k => (PRIOR[L] === 'RECEITA' ? (dre.get(k)![L] ?? 0) / recLiq(k) : (dre.get(k)![L] ?? 0)))
     return {
-      linha: L, modo, valor, valorPeriodo: coefPeriodo[L].valor,
+      linha: L, modo, valor, origem,
+      valorAncora: base.valor, valorPeriodo: coefPeriodo[L].valor,
       min: Math.min(...serie), max: Math.max(...serie), desvio: desvioPadrao(serie), editado,
     }
   })
@@ -337,7 +367,9 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     const alvo = meses[idx]
     const mod = ajustar(treino)
     const f = preverReceita(mod, alvo)
-    const cf = coefDe(treino.slice(-ancora))
+    // mesmas premissas do orçamento, inclusive as de negócio: o check-up cobra
+    // o que o orçamento dizia, e o orçamento diz CMV 70%
+    const cf = comPadrao(coefDe(treino.slice(-ancora)))
     const rReal = recLiq(alvo)
 
     // parcela da receita que sobra depois das linhas variáveis previstas

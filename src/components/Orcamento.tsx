@@ -17,7 +17,7 @@ const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '')
 const pct = (n: number, d = 1) => (n * 100).toFixed(d).replace('.', ',') + '%'
 
 type ModoLinha = 'RECEITA' | 'FIXO'
-interface Premissa { linha: string; modo: ModoLinha; valor: number; valorPeriodo: number; min: number; max: number; desvio: number; editado: boolean }
+interface Premissa { linha: string; modo: ModoLinha; valor: number; origem: 'padrao' | 'medido' | 'editado'; valorAncora: number; valorPeriodo: number; min: number; max: number; desvio: number; editado: boolean }
 interface MesOrcado { mes: string; receita: { p: number; lo: number; hi: number }; amplitude: number; fragil: boolean; linhas: Record<string, number>; cmv: number; despesas: number; resultado: number }
 interface BacktestPonto { mes: string; nTreino: number; previsto: number; real: number; erro: number; lo: number; hi: number; dentroIC: boolean; resultadoPrevisto: number; resultadoReal: number }
 interface CheckupLinha { linha: string; modo: ModoLinha; premissa: number; realizado: number; previstoRS: number; realizadoRS: number; impacto: number }
@@ -373,7 +373,8 @@ export function Orcamento() {
             <thead>
               <tr>
                 <th style={{ textAlign: 'left' }}>Linha</th><th style={{ textAlign: 'center' }}>Comportamento</th>
-                <th style={{ textAlign: 'right' }}>Premissa</th><th style={{ textAlign: 'right' }}>Em toda a base</th>
+                <th style={{ textAlign: 'right' }}>Premissa</th><th style={{ textAlign: 'center' }}>Origem</th>
+                <th style={{ textAlign: 'right' }}>Últimos {d.params.ancora}m</th><th style={{ textAlign: 'right' }}>Em toda a base</th>
                 <th style={{ textAlign: 'right' }}>Mín–máx no realizado</th><th></th>
               </tr>
             </thead>
@@ -396,6 +397,20 @@ export function Orcamento() {
                         onChange={e => setEdits(s => ({ ...s, [p.linha]: { ...s[p.linha], valor: e.target.value } }))} />
                       <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{ehPct ? '%' : 'R$'}</span>
                     </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span title={p.origem === 'padrao' ? 'Premissa de negócio definida pela consultoria, não estimada do histórico'
+                        : p.origem === 'editado' ? 'Valor que você digitou' : 'Coeficiente medido no realizado'}
+                        style={{
+                          fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 3, whiteSpace: 'nowrap',
+                          color: p.origem === 'padrao' ? C.gold : p.origem === 'editado' ? C.blue : C.textMuted,
+                          border: `1px solid ${p.origem === 'padrao' ? C.gold : p.origem === 'editado' ? C.blue : C.line}`,
+                        }}>
+                        {p.origem === 'padrao' ? 'meta' : p.origem === 'editado' ? 'editado' : 'medido'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>
+                      {ehPct ? pct(p.valorAncora) : fmt(p.valorAncora)}
+                    </td>
                     <td style={{ textAlign: 'right', fontSize: 12, color: C.textMuted }}>
                       {ehPct ? pct(p.valorPeriodo) : fmt(p.valorPeriodo)}
                     </td>
@@ -415,11 +430,12 @@ export function Orcamento() {
           </table>
         </div>
         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 8, lineHeight: 1.6 }}>
-          O <b>comportamento</b> vem de premissa econômica, não de teste estatístico: com {nReal} meses de base a
-          classificação automática chegava a apontar o CMV como custo fixo, e a regressão dava imposto caindo
-          quando a receita sobe. O dado estima o coeficiente; a coluna “em toda a base” mostra o mesmo número
-          medido em todos os {nReal} meses, para você ver se a âncora está puxando demais para o recente.
-          Linhas <b>não operacionais</b> ficam fora do resultado.
+          Linhas marcadas como <b style={{ color: C.gold }}>meta</b> usam premissa de negócio da consultoria, não o
+          coeficiente estimado — hoje o <b>CMV entra a 70%</b>. As duas colunas ao lado mostram o que o realizado diz
+          de fato, nos últimos {d.params.ancora} meses e em toda a base, justamente para a distância entre a meta e o
+          realizado ficar à vista. O <b>comportamento</b> também vem de premissa econômica, não de teste estatístico:
+          com {nReal} meses de base a classificação automática chegava a apontar o CMV como custo fixo, e a regressão
+          dava imposto caindo quando a receita sobe. Linhas <b>não operacionais</b> ficam fora do resultado.
         </div>
       </div>
 
