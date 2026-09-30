@@ -7,6 +7,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { LINE_LABEL } from '@/lib/dre-classifier'
+import { classificarMesesDre } from '@/lib/dre-meses'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -17,9 +18,10 @@ const CONS = 'CONSOLIDADO'
 export async function GET() {
   // Ajustes manuais de conciliação entram como lançamentos normais NA LEITURA:
   // ficam fora de DreEntry para não serem apagados pelo import mensal.
-  const [importados, ajustes] = await Promise.all([
+  const [importados, ajustes, meses] = await Promise.all([
     prisma.dreEntry.findMany(),
     prisma.dreAjuste.findMany(),
+    classificarMesesDre(),
   ])
   const entries = [
     ...importados,
@@ -162,5 +164,13 @@ export async function GET() {
   const dre: Record<string, ReturnType<typeof buildScope>> = {}
   ;[CONS, ...units].forEach(s => { dre[s] = buildScope(s) })
 
-  return NextResponse.json({ hasData: entries.length > 0, units, months, dre })
+  // status de cada mês (lib/dre-meses): a tela abre só nos FECHADOS e marca os
+  // demais — mês corrente, incompleto ou de projeção não é caixa realizado
+  const mesStatus: Record<string, string> = {}
+  months.forEach(m => { mesStatus[m] = meses.status[m] ?? 'incompleto' })
+  return NextResponse.json({
+    hasData: entries.length > 0, units, months, dre,
+    mesStatus, mesesFechados: months.filter(m => mesStatus[m] === 'fechado'),
+    corteDensidade: meses.corte, lancamentosPorMes: meses.contagem,
+  })
 }

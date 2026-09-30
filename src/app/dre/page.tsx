@@ -20,18 +20,32 @@ interface DreRow {
   byMonth: Record<string, number>
   subs?: SubRow[]
 }
+type StatusMes = 'fechado' | 'corrente' | 'incompleto' | 'futuro'
 interface Analytics {
   hasData: boolean
   units: string[]
   months: string[]
   dre: Record<string, { rows: DreRow[] }>
+  /** lib/dre-meses: só 'fechado' é caixa realizado */
+  mesStatus?: Record<string, StatusMes>
+  mesesFechados?: string[]
+  corteDensidade?: number
+  lancamentosPorMes?: Record<string, number>
+}
+// o que cada mês NÃO fechado é, para a tela não apresentar projeção como realizado
+const STATUS_TAG: Record<Exclude<StatusMes, 'fechado'>, { curto: string; longo: string }> = {
+  corrente: { curto: 'em curso', longo: 'mês em curso — a base ainda não tem o fechamento' },
+  incompleto: { curto: 'incompleto', longo: 'mês sem o razão completo — base parcial ou de projeção' },
+  futuro: { curto: 'projeção', longo: 'mês futuro — só títulos a receber e a pagar já emitidos, não caixa realizado' },
 }
 
 const CONS = 'CONSOLIDADO'
 const fmt = (n: number) => (n < 0 ? '−' : '') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtShort = (n: number) => (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a/1e6).toFixed(1)}M` : a >= 1e3 ? `${(a/1e3).toFixed(0)}k` : a.toFixed(0)) }
-const pct = (n: number, base: number) => base ? `${(n / base * 100).toFixed(1)}%` : '—'
+// pt-BR: vírgula decimal SEMPRE (toFixed devolve ponto)
+const dec = (n: number, d: number) => n.toFixed(d).replace('.', ',')
+const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${dec(a / 1e6, 1)}M` : a >= 1e3 ? `${Math.round(a / 1e3)}k` : String(Math.round(a))) }
+const pct = (n: number, base: number) => base ? `${n / base < 0 ? '−' : ''}${dec(Math.abs(n / base) * 100, 1)}%` : '—'
 const MONTH_LABEL: Record<string, string> = { '01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez' }
 const mLabel = (m: string) => { const [y, mm] = m.split('-'); return `${MONTH_LABEL[mm] ?? mm}/${y.slice(2)}` }
 
@@ -77,7 +91,12 @@ export default function DrePage() {
   }
 
   const allMonths = data?.months ?? []
-  const shownMonths = useMemo(() => selMonths.length ? allMonths.filter(m => selMonths.includes(m)) : allMonths, [allMonths, selMonths])
+  // sem seleção, a DRE mostra só os meses FECHADOS: meses em curso, incompletos
+  // ou de projeção não são caixa realizado e distorciam todos os totais
+  const statusDe = (m: string): StatusMes => data?.mesStatus?.[m] ?? 'fechado'
+  const fechados = useMemo(() => data?.mesesFechados ?? allMonths, [data, allMonths])
+  const shownMonths = useMemo(() => selMonths.length ? allMonths.filter(m => selMonths.includes(m)) : fechados, [allMonths, selMonths, fechados])
+  const naoFechadosVisiveis = shownMonths.filter(m => statusDe(m) !== 'fechado')
   const cur = data?.dre?.[scope]
   const sumShown = (bm: Record<string, number>) => shownMonths.reduce((s, m) => s + (bm[m] ?? 0), 0)
   const rowOf = (key: string) => cur?.rows.find(r => r.key === key)
@@ -185,8 +204,21 @@ export default function DrePage() {
           {/* Controles: meses + modo */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${C.line}` }}>
             <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600 }}>Meses</span>
-            <button className={selMonths.length === 0 ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => setSelMonths([])}>Todos</button>
-            {allMonths.map(m => <button key={m} className={selMonths.includes(m) ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => toggleMonth(m)}>{mLabel(m)}</button>)}
+            <button className={selMonths.length === 0 ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => setSelMonths([])}
+              title="Só os meses com o razão completo — caixa realizado">Fechados</button>
+            <button className={selMonths.length === allMonths.length ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => setSelMonths(allMonths)}
+              title="Inclui meses em curso e de projeção">Todos</button>
+            {allMonths.map(m => {
+              const st = statusDe(m)
+              const tag = st === 'fechado' ? null : STATUS_TAG[st]
+              return (
+                <button key={m} className={selMonths.includes(m) ? 'btn btn-primary btn-sm' : 'btn btn-sm'} onClick={() => toggleMonth(m)}
+                  title={tag ? `${mLabel(m)}: ${tag.longo}` : `${mLabel(m)}: mês fechado`}
+                  style={tag ? { borderStyle: 'dashed', color: selMonths.includes(m) ? undefined : C.textMuted } : undefined}>
+                  {mLabel(m)}{tag && <span style={{ fontSize: 9, marginLeft: 4, opacity: 0.85 }}>{tag.curto}</span>}
+                </button>
+              )
+            })}
             <div style={{ marginLeft: 'auto', display: 'inline-flex', border: `1px solid ${C.line}`, borderRadius: 4, overflow: 'hidden' }}>
               <button className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: !avMode ? C.navy : '#fff', color: !avMode ? '#fff' : C.textSoft }} onClick={() => setAvMode(false)}>R$</button>
               <button className="btn btn-sm" style={{ border: 'none', borderRadius: 0, background: avMode ? C.navy : '#fff', color: avMode ? '#fff' : C.textSoft }} onClick={() => setAvMode(true)}>AV %</button>
@@ -194,8 +226,23 @@ export default function DrePage() {
             <button className="btn btn-sm" onClick={downloadPdf} style={{ background: C.gold, color: '#fff', border: 'none', fontWeight: 600 }} title="Gera um PDF com todas as linhas, subcontas e fornecedores abertos">⬇ PDF</button>
           </div>
 
+          {naoFechadosVisiveis.length > 0 && (
+            <div className="card mb-6" style={{ padding: '12px 18px', borderLeft: `3px solid ${C.red}`, fontSize: 12.5, color: C.textSoft, lineHeight: 1.6 }}>
+              <b style={{ color: C.red }}>Atenção: a seleção inclui {naoFechadosVisiveis.length === 1 ? 'um mês não fechado' : `${naoFechadosVisiveis.length} meses não fechados`}</b>{' '}
+              ({naoFechadosVisiveis.map(m => `${mLabel(m)} — ${STATUS_TAG[statusDe(m) as Exclude<StatusMes, 'fechado'>].curto}`).join(', ')}).
+              Nesses meses a base não é o caixa realizado: são títulos a receber e a pagar já emitidos, ou um mês pela metade.
+              Os totais, cartões e gráficos abaixo somam esses valores.
+            </div>
+          )}
+          {selMonths.length === 0 && allMonths.length > fechados.length && (
+            <div style={{ fontSize: 11.5, color: C.textMuted, margin: '-8px 0 16px' }}>
+              Exibindo os {fechados.length} meses fechados. Fora da visão: {allMonths.filter(m => statusDe(m) !== 'fechado').map(m => `${mLabel(m)} (${STATUS_TAG[statusDe(m) as Exclude<StatusMes, 'fechado'>].curto})`).join(', ')} —
+              {' '}mês fechado tem o razão completo, acima de {(data?.corteDensidade ?? 0).toLocaleString('pt-BR')} lançamentos.
+            </div>
+          )}
+
           {/* Documento de impressão — invisível na tela, sai no PDF com tudo aberto */}
-          <DrePrint scope={scope} rows={cur?.rows ?? []} months={shownMonths} />
+          <DrePrint scope={scope} rows={cur?.rows ?? []} months={shownMonths} status={data?.mesStatus} />
 
           {/* ═══ DASHBOARD ═══ */}
           {kpis && (
@@ -268,7 +315,16 @@ export default function DrePage() {
                 <thead>
                   <tr>
                     <th style={{ textAlign: 'left' }}>Linha</th>
-                    {shownMonths.map(m => <th key={m} style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{mLabel(m)}</th>)}
+                    {shownMonths.map(m => {
+                      const st = statusDe(m)
+                      const tag = st === 'fechado' ? null : STATUS_TAG[st]
+                      return (
+                        <th key={m} style={{ textAlign: 'right', whiteSpace: 'nowrap' }} title={tag?.longo}>
+                          {mLabel(m)}
+                          {tag && <div style={{ fontSize: 9, fontWeight: 600, color: C.yellow, letterSpacing: '0.04em' }}>{tag.curto}</div>}
+                        </th>
+                      )
+                    })}
                     <th style={{ textAlign: 'right', background: C.navyMid }}>Total</th>
                   </tr>
                 </thead>
@@ -280,7 +336,7 @@ export default function DrePage() {
                       const disp = row.sign === -1 ? -raw : raw
                       if (avMode) {
                         const base = m ? (recliqRow?.byMonth[m] ?? 0) : recLiqTotal
-                        return base ? `${(raw / base * 100).toFixed(1)}%` : '—'
+                        return pct(raw, base)
                       }
                       return fmtShort(disp)
                     }
@@ -316,7 +372,7 @@ export default function DrePage() {
                           const subCell = (m: string | null) => {
                             const raw = m ? (s.byMonth[m] ?? 0) : sumShown(s.byMonth)
                             const disp = row.sign === -1 ? -raw : raw
-                            if (avMode) { const base = m ? (recliqRow?.byMonth[m] ?? 0) : recLiqTotal; return base ? `${(raw / base * 100).toFixed(1)}%` : '—' }
+                            if (avMode) { const base = m ? (recliqRow?.byMonth[m] ?? 0) : recLiqTotal; return pct(raw, base) }
                             return fmtShort(disp)
                           }
                           return (
@@ -360,7 +416,8 @@ export default function DrePage() {
   )
 }
 
-function DrePrint({ scope, rows, months }: { scope: string; rows: DreRow[]; months: string[] }) {
+function DrePrint({ scope, rows, months, status = {} }: { scope: string; rows: DreRow[]; months: string[]; status?: Record<string, StatusMes> }) {
+  const naoFechados = months.filter(m => (status[m] ?? 'fechado') !== 'fechado')
   const sum = (bm: Record<string, number>) => months.reduce((s, m) => s + (bm[m] ?? 0), 0)
   const val = (bm: Record<string, number>, m: string | null, sign?: 1 | -1) => {
     const raw = m ? (bm[m] ?? 0) : sum(bm)
@@ -382,11 +439,20 @@ function DrePrint({ scope, rows, months }: { scope: string; rows: DreRow[]; mont
           <div>Emitido em {new Date().toLocaleDateString('pt-BR')}</div>
         </div>
       </div>
+      {naoFechados.length > 0 && (
+        <div style={{ fontSize: 8.5, color: C.red, marginBottom: 6 }}>
+          Inclui mês não fechado ({naoFechados.map(m => `${mLabel(m)} — ${STATUS_TAG[status[m] as Exclude<StatusMes, 'fechado'>].curto}`).join(', ')}):
+          nesses meses os valores são títulos a receber e a pagar já emitidos, não caixa realizado.
+        </div>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
             <th style={{ ...th, textAlign: 'left' }}>Linha</th>
-            {months.map(m => <th key={m} style={th}>{mLabel(m)}</th>)}
+            {months.map(m => {
+              const st = status[m] ?? 'fechado'
+              return <th key={m} style={th}>{mLabel(m)}{st !== 'fechado' && <div style={{ fontSize: 6.5, color: C.yellow }}>{STATUS_TAG[st].curto}</div>}</th>
+            })}
             <th style={{ ...th, background: C.navyMid }}>Total</th>
           </tr>
         </thead>

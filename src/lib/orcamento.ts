@@ -44,6 +44,7 @@
  * fixo. Ambos são sobreponíveis pela tela.
  */
 import { prisma } from '@/lib/prisma'
+import { chaveMes, classificarMeses } from '@/lib/dre-meses'
 
 export type ModoLinha = 'RECEITA' | 'FIXO'
 export type GrupoLinha = 'CMV' | 'OPERACIONAL' | 'ABAIXO'
@@ -308,25 +309,22 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   }
 
   // ── quais meses estão FECHADOS ──────────────────────────────────────────
-  // Duas armadilhas aqui, e as duas já morderam:
-  //  1. o mês corrente entra pela metade;
-  //  2. o import do CashFlow traz TÍTULOS FUTUROS — a receber e a pagar — então
-  //     meses à frente aparecem no DreEntry com receita E despesa. Testar
-  //     "tem despesa lançada" não os separa.
-  // O que separa é a DENSIDADE: um mês realizado tem o razão inteiro (~1.500
-  // lançamentos aqui), um mês futuro tem só os títulos já emitidos (~400).
+  // Regra única de lib/dre-meses (a mesma da DRE e do Controle de Compras):
+  // anterior ao corrente E com o razão inteiro. O import do CashFlow traz
+  // TÍTULOS FUTUROS — a receber e a pagar —, então meses à frente aparecem no
+  // DreEntry com receita E despesa; testar "tem despesa lançada" não separa.
   const hoje = new Date()
   const kAtual = key(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1)
-  const contaDe = new Map<number, number>()
-  densidade.forEach(r => contaDe.set(key(r.year, r.month), r._count._all))
+  const contaDe = new Map<string, number>()
+  densidade.forEach(r => contaDe.set(chaveMes(r.year, r.month), r._count._all))
+  const classif = classificarMeses(contaDe, hoje)
+  const ym = (k: number) => chaveMes(Math.floor(k / 100), k % 100)
   const candidatos = Array.from(dre.keys()).filter(k => k < kAtual).sort((a, b) => a - b)
-  const contagens = candidatos.map(k => contaDe.get(k) ?? 0).sort((a, b) => a - b)
-  const mediana = contagens.length ? contagens[Math.floor(contagens.length / 2)] : 0
-  const corteDensidade = mediana * 0.6
-  const meses = candidatos.filter(k => (contaDe.get(k) ?? 0) >= corteDensidade)
+  const corteDensidade = classif.corte
+  const meses = candidatos.filter(k => classif.status[ym(k)] === 'fechado')
   const descartados = candidatos
-    .filter(k => (contaDe.get(k) ?? 0) < corteDensidade)
-    .map(k => ({ mes: rotulo(k), lancamentos: contaDe.get(k) ?? 0 }))
+    .filter(k => classif.status[ym(k)] !== 'fechado')
+    .map(k => ({ mes: rotulo(k), lancamentos: classif.contagem[ym(k)] ?? 0 }))
   if (meses.length < 4) {
     return { ...VAZIO, params, motivo: `São precisos ao menos 4 meses fechados de DRE; há ${meses.length}.` }
   }
