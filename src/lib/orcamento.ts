@@ -3,9 +3,9 @@
  *
  * ── Desenho, e por que é assim ────────────────────────────────────────────
  * A DRE realizada tem POUCOS meses (de set/26 em diante o DreEntry guarda
- * recebível futuro vindo do CashFlow, não realizado). Modelar 12 meses a
- * partir disso por mínimos quadrados abre o intervalo para ±55% já no começo
- * e produz coeficientes sem sentido econômico. Então o modelo é híbrido:
+ * título futuro vindo do CashFlow, não realizado). Modelar 12 meses a partir
+ * disso por mínimos quadrados abre o intervalo para ±55% já no começo e
+ * produz coeficientes sem sentido econômico. Então o modelo é híbrido:
  *
  *   · SAZONALIDADE e TENDÊNCIA vêm da série LONGA de vendas (DemandEntry,
  *     ~20 meses). É a única série com ciclo suficiente.
@@ -15,14 +15,26 @@
  *   · INCERTEZA cresce com √h (passeio aleatório), não pela alavancagem do
  *     OLS, que explode fora da amostra.
  *
+ * ── Mesma estrutura da DRE ─────────────────────────────────────────────────
+ * Os subtotais seguem AS MESMAS fórmulas de /api/dre, para que o orçamento
+ * de um mês fechado mostre exatamente o número da aba de DRE:
+ *
+ *   Receita Líquida = Receita − Deduções
+ *   EBITDA          = Receita Líquida − CMV − ADM − Pessoal − Logística − Comercial − Impostos
+ *   Lucro Líquido   = EBITDA − Financeiras(líq. de juros) − Sócios − Investimentos + Não operacional
+ *
+ * O não operacional SOMA: aqui ele é reembolso recebido (excedente), dinheiro
+ * que entrou. Uma versão anterior deste arquivo o excluía e chamava de
+ * "resultado" um subtotal que não existe na DRE (LL − não operacional) — o
+ * cliente veria dois lucros diferentes para o mesmo mês.
+ *
  * ── O que é previsão e o que é cenário ────────────────────────────────────
- * RECEITA é previsão: o backtest de origem móvel dá MAPE ~4% a um passo, com
- * o real dentro do IC95 nos três meses testados.
- * RESULTADO é CENÁRIO, não previsão. O resultado operacional é uma diferença
- * pequena entre números grandes (CMV come ~73% da receita líquida), então um
- * erro de 1 ponto no CMV vale mais que o resultado do mês inteiro — o MAPE do
- * resultado passa de 600%. As linhas de custo e despesa são PREMISSAS
- * editáveis; o resultado é a consequência aritmética delas.
+ * RECEITA é previsão: backtest de origem móvel com MAPE ~4% a um passo e o
+ * realizado dentro do IC 95% nos três meses testados.
+ * LUCRO é CENÁRIO: é a diferença pequena entre números grandes — o CMV sozinho
+ * passa de 70% da receita líquida — então pequenos erros de premissa viram
+ * erros grandes de lucro. Custo e despesa são PREMISSAS editáveis; o lucro é a
+ * consequência aritmética delas.
  *
  * ── Comportamento das linhas ──────────────────────────────────────────────
  * Vem de PRIOR ECONÔMICO, não de teste estatístico. Com n=8 a classificação
@@ -34,6 +46,7 @@
 import { prisma } from '@/lib/prisma'
 
 export type ModoLinha = 'RECEITA' | 'FIXO'
+export type GrupoLinha = 'CMV' | 'OPERACIONAL' | 'ABAIXO'
 
 /** Como cada linha da DRE se comporta. Editável na tela. */
 export const PRIOR: Record<string, ModoLinha> = {
@@ -48,8 +61,17 @@ export const PRIOR: Record<string, ModoLinha> = {
   NAOOP: 'FIXO',
   SOCIO: 'FIXO',
 }
-/** Fora do resultado operacional (não operacional e movimento entre empresas). */
-const FORA_DO_OPERACIONAL = new Set(['NAOOP', 'INTRAGRUPO'])
+/** Posição de cada linha na DRE — idêntica à de /api/dre. */
+export const GRUPO: Record<string, GrupoLinha> = {
+  CMV: 'CMV',
+  ADM: 'OPERACIONAL', PESSOAL: 'OPERACIONAL', LOG: 'OPERACIONAL', COM: 'OPERACIONAL', IMPOSTOS: 'OPERACIONAL',
+  FIN: 'ABAIXO', SOCIO: 'ABAIXO', INVEST: 'ABAIXO', NAOOP: 'ABAIXO',
+}
+/** Sinal da linha no Lucro Líquido: custo tira, o não operacional (reembolso) soma. */
+export const SINAL: Record<string, 1 | -1> = {
+  CMV: -1, ADM: -1, PESSOAL: -1, LOG: -1, COM: -1, IMPOSTOS: -1,
+  FIN: -1, SOCIO: -1, INVEST: -1, NAOOP: 1,
+}
 
 /**
  * Premissas de NEGÓCIO — definidas pelo cliente, não estimadas do histórico.
@@ -80,10 +102,11 @@ export interface OrcamentoParams {
 
 export interface Premissa {
   linha: string
+  grupo: GrupoLinha
+  sinal: 1 | -1
   modo: ModoLinha
-  /** % da receita líquida (modo RECEITA) ou R$/mês (modo FIXO) — o valor EM USO */
+  /** fração da receita líquida (modo RECEITA) ou R$/mês (modo FIXO) — o valor EM USO */
   valor: number
-  /** de onde saiu o valor em uso */
   origem: 'padrao' | 'medido' | 'editado'
   /** coeficiente medido na janela-âncora */
   valorAncora: number
@@ -94,15 +117,23 @@ export interface Premissa {
   desvio: number
   editado: boolean
 }
-export interface MesOrcado {
+/** Os subtotais de um mês, com a mesma nomenclatura da DRE. */
+export interface Subtotais {
+  receita: number
+  cmv: number
+  /** ADM + Pessoal + Logística + Comercial + Impostos */
+  despesasOperacionais: number
+  ebitda: number
+  /** Financeiras + Sócios + Investimentos − Não operacional */
+  abaixoEbitda: number
+  lucroLiquido: number
+}
+export interface MesOrcado extends Subtotais {
   mes: string
-  receita: { p: number; lo: number; hi: number }
+  ic: { lo: number; hi: number }
   amplitude: number
   fragil: boolean
   linhas: Record<string, number>
-  cmv: number
-  despesas: number
-  resultado: number
 }
 /**
  * Check-up: o mês já fechou, então dá para cobrar o que o orçamento previu.
@@ -112,33 +143,42 @@ export interface MesOrcado {
  * acertaria por construção. Aqui ele só vê o que existia até agosto, que é
  * exatamente o número que a tela mostrava antes do fechamento.
  *
- * A diferença de resultado é decomposta de forma EXATA (a soma dos efeitos
- * reproduz a diferença até o centavo):
+ * A diferença de Lucro Líquido é decomposta de forma EXATA (a soma dos efeitos
+ * reproduz a diferença ao centavo), separando volume de taxa:
  *
- *   efeito receita  = (Rreal − Rprev) × (1 − premissas variáveis)
- *   efeito de linha variável = −(razão real − razão prevista) × Rreal
- *   efeito de linha fixa     = −(valor real − valor previsto)
+ *   efeito receita           = (Rreal − Rprev) × (1 + Σ sinal·razão prevista das linhas variáveis)
+ *   efeito de linha variável = sinal × (razão real − razão prevista) × Rreal
+ *   efeito de linha fixa     = sinal × (valor real − valor previsto)
+ *
+ * O efeito receita é partido em duas parcelas — a das linhas até o EBITDA e a
+ * das linhas abaixo dele — para que o subtotal de EBITDA feche sozinho mesmo
+ * quando alguém muda uma linha de baixo para "% da receita" na tela.
  */
 export interface CheckupLinha {
   linha: string
+  grupo: GrupoLinha
+  sinal: 1 | -1
   modo: ModoLinha
-  /** premissa e realizado na unidade do modo: fração da receita, ou R$ */
   premissa: number
   realizado: number
   previstoRS: number
   realizadoRS: number
-  /** quanto esta linha tirou (−) ou devolveu (+) de resultado */
+  /** quanto esta linha tirou (−) ou devolveu (+) de lucro */
   impacto: number
 }
 export interface Checkup {
   mes: string
   nTreino: number
-  receita: { previsto: number; realizado: number; erro: number; lo: number; hi: number; dentroIC: boolean }
-  efeitoReceita: number
+  receita: { previsto: number; realizado: number; lo: number; hi: number; dentroIC: boolean }
+  /** efeito volume até o EBITDA e abaixo dele */
+  efeitoReceita: { ateEbitda: number; abaixo: number }
   linhas: CheckupLinha[]
-  resultado: { previsto: number; realizado: number; diferenca: number }
+  ebitda: { previsto: number; realizado: number }
+  lucroLiquido: { previsto: number; realizado: number; diferenca: number }
   /** soma dos efeitos menos a diferença — tem de ser ~0; é a prova da decomposição */
   residuo: number
+  /** o mesmo para o subtotal de EBITDA */
+  residuoEbitda: number
 }
 
 export interface BacktestPonto {
@@ -146,12 +186,13 @@ export interface BacktestPonto {
   nTreino: number
   previsto: number
   real: number
+  /** (previsto − real) ÷ real: positivo = previu acima */
   erro: number
   lo: number
   hi: number
   dentroIC: boolean
-  resultadoPrevisto: number
-  resultadoReal: number
+  lucroPrevisto: number
+  lucroReal: number
 }
 export interface OrcamentoResultado {
   hasData: boolean
@@ -164,18 +205,17 @@ export interface OrcamentoResultado {
     descartados: { mes: string; lancamentos: number }[]
     corteDensidade: number
   }
-  /** realizado, para o gráfico emendar história e projeção */
-  historico: { mes: string; receita: number; cmv: number; despesas: number; resultado: number }[]
+  /** realizado, com os mesmos subtotais da DRE */
+  historico: ({ mes: string } & Subtotais)[]
   params: Required<Omit<OrcamentoParams, 'premissas' | 'crescimento'>> & { crescimento: number | null }
   tendencia: { mensalEstimada: number; mensalUsada: number; phi: number; fonte: string }
   sazonalidade: { mes: number; fator: number; obs: number; fragil: boolean }[]
   premissas: Premissa[]
   backtest: BacktestPonto[]
-  /** meses já fechados que o orçamento havia previsto, com a diferença decomposta */
   checkups: Checkup[]
-  metricas: { mapeReceita: number; coberturaIC: string; mapeResultado: number; nTestes: number }
+  metricas: { mapeReceita: number; coberturaIC: string; mapeLucro: number; nTestes: number; tCritico: number; grausLiberdade: number }
   meses: MesOrcado[]
-  totais: { receita: number; cmv: number; despesas: number; resultado: number }
+  totais: Subtotais
 }
 
 const MES_LABEL = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -191,10 +231,32 @@ const desvioPadrao = (a: number[]) => {
   const m = media(a)
   return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1))
 }
-// t bilateral a 95% — tabela curta evita dependência externa
-const TCRIT: Record<number, number> = { 1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 18: 2.101, 20: 2.086, 25: 2.060, 30: 2.042 }
-const tcrit = (gl: number) => TCRIT[gl] ?? (gl > 30 ? 1.96 : 12.706)
 
+// ── t de Student bilateral a 95% (quantil 0,975) ──────────────────────────
+// Tabela completa de 1 a 30 graus de liberdade, com 6 casas, e interpolação
+// em 1/gl acima disso. A tabela anterior tinha 3 casas e BURACOS (17, 19,
+// 21–29) que caíam num fallback de 12,706 — quando a base chegasse a 19
+// meses, o intervalo abriria umas 6 vezes sem motivo nenhum.
+const T975 = [NaN,
+  12.706205, 4.302653, 3.182446, 2.776445, 2.570582, 2.446912, 2.364624, 2.306004, 2.262157, 2.228139,
+  2.200985, 2.178813, 2.160369, 2.144787, 2.131450, 2.119905, 2.109816, 2.100922, 2.093024, 2.085963,
+  2.079614, 2.073873, 2.068658, 2.063899, 2.059539, 2.055529, 2.051831, 2.048407, 2.045230, 2.042272]
+const T975_ALTO: Array<[number, number]> = [[30, 2.042272], [40, 2.021075], [60, 2.000298], [120, 1.979930], [Infinity, 1.959964]]
+export function tcrit(gl: number): number {
+  const g = Math.max(1, Math.floor(gl))
+  if (g <= 30) return T975[g]
+  for (let i = 0; i < T975_ALTO.length - 1; i++) {
+    const [g0, t0] = T975_ALTO[i]
+    const [g1, t1] = T975_ALTO[i + 1]
+    if (g <= g1) {
+      const x0 = 1 / g0, x1 = g1 === Infinity ? 0 : 1 / g1, x = 1 / g
+      return t0 + ((t1 - t0) * (x - x0)) / (x1 - x0)
+    }
+  }
+  return 1.959964
+}
+
+const SUB_ZERO: Subtotais = { receita: 0, cmv: 0, despesasOperacionais: 0, ebitda: 0, abaixoEbitda: 0, lucroLiquido: 0 }
 const VAZIO: OrcamentoResultado = {
   hasData: false,
   base: { mesesRealizados: [], ultimoFechado: '', serieLonga: { n: 0, de: '', ate: '' }, descartados: [], corteDensidade: 0 },
@@ -202,8 +264,18 @@ const VAZIO: OrcamentoResultado = {
   params: { ancora: 3, phi: 0.85, horizonte: 7, crescimento: null },
   tendencia: { mensalEstimada: 0, mensalUsada: 0, phi: 0.85, fonte: '' },
   sazonalidade: [], premissas: [], backtest: [], checkups: [],
-  metricas: { mapeReceita: 0, coberturaIC: '0/0', mapeResultado: 0, nTestes: 0 },
-  meses: [], totais: { receita: 0, cmv: 0, despesas: 0, resultado: 0 },
+  metricas: { mapeReceita: 0, coberturaIC: '0/0', mapeLucro: 0, nTestes: 0, tCritico: 0, grausLiberdade: 0 },
+  meses: [], totais: SUB_ZERO,
+}
+
+/** Subtotais de um mês a partir do valor de cada linha — fórmulas de /api/dre. */
+function subtotais(receita: number, valor: (L: string) => number, linhas: string[]): Subtotais {
+  const cmv = linhas.includes('CMV') ? valor('CMV') : 0
+  const despesasOperacionais = linhas.filter(L => GRUPO[L] === 'OPERACIONAL').reduce((s, L) => s + valor(L), 0)
+  const ebitda = receita - cmv - despesasOperacionais
+  // abaixo do EBITDA com sinal da DRE: custo soma aqui, não operacional subtrai
+  const abaixoEbitda = linhas.filter(L => GRUPO[L] === 'ABAIXO').reduce((s, L) => s - SINAL[L] * valor(L), 0)
+  return { receita, cmv, despesasOperacionais, ebitda, abaixoEbitda, lucroLiquido: ebitda - abaixoEbitda }
 }
 
 export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<OrcamentoResultado> {
@@ -229,6 +301,11 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   }
   dreRows.forEach(r => somar(r.year, r.month, r.line, r._sum.amount ?? 0))
   ajustes.forEach(r => somar(r.year, r.month, r.line, r._sum.amount ?? 0))
+  /** valor da linha no mês como a DRE o usa: Financeiras líquidas de juros recebidos */
+  const valorReal = (k: number, L: string) => {
+    const o = dre.get(k)!
+    return L === 'FIN' ? (o.FIN ?? 0) - (o.JUROS ?? 0) : (o[L] ?? 0)
+  }
 
   // ── quais meses estão FECHADOS ──────────────────────────────────────────
   // Duas armadilhas aqui, e as duas já morderam:
@@ -309,12 +386,12 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   }
 
   // ── coeficientes por linha, sobre a janela-âncora ──
-  const linhasPresentes = Object.keys(PRIOR).filter(L => meses.some(k => Math.abs(dre.get(k)![L] ?? 0) > 0))
+  const linhasPresentes = Object.keys(PRIOR).filter(L => meses.some(k => Math.abs(valorReal(k, L)) > 0))
   const coefDe = (janela: number[]) => {
     const somaRec = janela.reduce((s, k) => s + recLiq(k), 0)
     const out: Record<string, { modo: ModoLinha; valor: number }> = {}
     linhasPresentes.forEach(L => {
-      const vals = janela.map(k => dre.get(k)![L] ?? 0)
+      const vals = janela.map(k => valorReal(k, L))
       out[L] = PRIOR[L] === 'RECEITA'
         ? { modo: 'RECEITA', valor: somaRec > 0 ? vals.reduce((s, v) => s + v, 0) / somaRec : 0 }
         : { modo: 'FIXO', valor: media(vals) }
@@ -329,38 +406,34 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     })
     return o
   }
-  const janelaAncora = meses.slice(-ancora)
-  const coefAncora = coefDe(janelaAncora)
+  const coefAncora = coefDe(meses.slice(-ancora))
   const coefPeriodo = coefDe(meses)
 
-  // premissas finais: âncora, sobreposta pelo que a tela editou
+  // premissas finais: âncora, sobreposta pela meta de negócio e pelo que a tela editou
   const premissas: Premissa[] = linhasPresentes.map(L => {
     const base = coefAncora[L]
     const ed = opts.premissas?.[L]
     const modo = ed?.modo ?? base.modo
     const editado = ed?.valor != null && Number.isFinite(ed.valor)
     const medido = modo === base.modo ? base.valor : coefPeriodo[L].valor
-    // premissa de negócio só vale enquanto a linha continuar no modo original
     const padrao = modo === PRIOR[L] ? PREMISSA_PADRAO[L] : undefined
     const valor = editado ? (ed!.valor as number) : (padrao ?? medido)
     const origem: Premissa['origem'] = editado ? 'editado' : padrao != null ? 'padrao' : 'medido'
-    const serie = meses.map(k => (PRIOR[L] === 'RECEITA' ? (dre.get(k)![L] ?? 0) / recLiq(k) : (dre.get(k)![L] ?? 0)))
+    const serie = meses.map(k => (PRIOR[L] === 'RECEITA' ? valorReal(k, L) / recLiq(k) : valorReal(k, L)))
     return {
-      linha: L, modo, valor, origem,
+      linha: L, grupo: GRUPO[L], sinal: SINAL[L], modo, valor, origem,
       valorAncora: base.valor, valorPeriodo: coefPeriodo[L].valor,
       min: Math.min(...serie), max: Math.max(...serie), desvio: desvioPadrao(serie), editado,
     }
   })
+  const emUso = Object.fromEntries(premissas.map(p => [p.linha, p]))
   const aplicar = (L: string, receita: number) => {
-    const p = premissas.find(x => x.linha === L)
+    const p = emUso[L]
     if (!p) return 0
     return p.modo === 'RECEITA' ? p.valor * receita : p.valor
   }
 
   // ── check-up: todo mês fechado que dava para prever, com a diferença aberta ──
-  // Origem TRAVADA antes do alvo. Reprever o mês depois que ele fecha faria o
-  // modelo treinar com o próprio mês e acertar por construção.
-  const operacionais = linhasPresentes.filter(L => !FORA_DO_OPERACIONAL.has(L))
   const checkups: Checkup[] = []
   for (let idx = 4; idx < meses.length; idx++) {
     const treino = meses.slice(0, idx)
@@ -371,56 +444,59 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     // o que o orçamento dizia, e o orçamento diz CMV 70%
     const cf = comPadrao(coefDe(treino.slice(-ancora)))
     const rReal = recLiq(alvo)
+    const prevDe = (L: string, R: number) => (cf[L] ? (cf[L].modo === 'RECEITA' ? cf[L].valor * R : cf[L].valor) : 0)
 
-    // parcela da receita que sobra depois das linhas variáveis previstas
-    const somaVarPrev = operacionais
-      .filter(L => cf[L]?.modo === 'RECEITA')
-      .reduce((s, L) => s + cf[L].valor, 0)
-    const efeitoReceita = (rReal - f.p) * (1 - somaVarPrev)
+    // efeito volume, em duas parcelas: até o EBITDA e abaixo dele
+    const pesoVar = (grupos: GrupoLinha[]) => linhasPresentes
+      .filter(L => grupos.includes(GRUPO[L]) && cf[L]?.modo === 'RECEITA')
+      .reduce((s, L) => s + SINAL[L] * cf[L].valor, 0)
+    const efeitoReceita = {
+      ateEbitda: (rReal - f.p) * (1 + pesoVar(['CMV', 'OPERACIONAL'])),
+      abaixo: (rReal - f.p) * pesoVar(['ABAIXO']),
+    }
 
-    const linhas: CheckupLinha[] = operacionais.map(L => {
+    const linhas: CheckupLinha[] = linhasPresentes.map(L => {
       const modo = cf[L]?.modo ?? PRIOR[L]
       const premissa = cf[L]?.valor ?? 0
-      const realizadoRS = dre.get(alvo)![L] ?? 0
+      const realizadoRS = valorReal(alvo, L)
       const realizado = modo === 'RECEITA' ? (rReal > 0 ? realizadoRS / rReal : 0) : realizadoRS
-      const previstoRS = modo === 'RECEITA' ? premissa * f.p : premissa
-      // variável: mede a diferença de razão sobre a receita REAL, para não
-      // contar duas vezes o que o efeito receita já explicou
+      const previstoRS = prevDe(L, f.p)
+      // variável: diferença de razão sobre a receita REAL, para não contar duas
+      // vezes o que o efeito receita já explicou
       const impacto = modo === 'RECEITA'
-        ? -(realizado - premissa) * rReal
-        : -(realizadoRS - premissa)
-      return { linha: L, modo, premissa, realizado, previstoRS, realizadoRS, impacto }
+        ? SINAL[L] * (realizado - premissa) * rReal
+        : SINAL[L] * (realizadoRS - premissa)
+      return { linha: L, grupo: GRUPO[L], sinal: SINAL[L], modo, premissa, realizado, previstoRS, realizadoRS, impacto }
     })
 
-    const resultadoPrevisto = f.p - operacionais.reduce((s, L) => s + (cf[L] ? (cf[L].modo === 'RECEITA' ? cf[L].valor * f.p : cf[L].valor) : 0), 0)
-    const resultadoReal = rReal - operacionais.reduce((s, L) => s + (dre.get(alvo)![L] ?? 0), 0)
-    const diferenca = resultadoReal - resultadoPrevisto
-    const somaEfeitos = efeitoReceita + linhas.reduce((s, l) => s + l.impacto, 0)
+    const sp = subtotais(f.p, L => prevDe(L, f.p), linhasPresentes)
+    const sr = subtotais(rReal, L => valorReal(alvo, L), linhasPresentes)
+    const diferenca = sr.lucroLiquido - sp.lucroLiquido
+    const somaTudo = efeitoReceita.ateEbitda + efeitoReceita.abaixo + linhas.reduce((s, l) => s + l.impacto, 0)
+    const somaEbitda = efeitoReceita.ateEbitda + linhas.filter(l => l.grupo !== 'ABAIXO').reduce((s, l) => s + l.impacto, 0)
 
     checkups.push({
       mes: rotulo(alvo), nTreino: treino.length,
-      receita: {
-        previsto: f.p, realizado: rReal,
-        erro: rReal !== 0 ? (f.p - rReal) / rReal : 0,
-        lo: f.lo, hi: f.hi, dentroIC: rReal >= f.lo && rReal <= f.hi,
-      },
+      receita: { previsto: f.p, realizado: rReal, lo: f.lo, hi: f.hi, dentroIC: rReal >= f.lo && rReal <= f.hi },
       efeitoReceita, linhas,
-      resultado: { previsto: resultadoPrevisto, realizado: resultadoReal, diferenca },
-      residuo: somaEfeitos - diferenca,
+      ebitda: { previsto: sp.ebitda, realizado: sr.ebitda },
+      lucroLiquido: { previsto: sp.lucroLiquido, realizado: sr.lucroLiquido, diferenca },
+      residuo: somaTudo - diferenca,
+      residuoEbitda: somaEbitda - (sr.ebitda - sp.ebitda),
     })
   }
   checkups.reverse()   // mais recente primeiro
 
-  // o backtest é a leitura resumida dos mesmos pontos
+  // o backtest é a leitura resumida dos três check-ups mais recentes
   const backtest: BacktestPonto[] = checkups.slice(0, 3).map(c => ({
     mes: c.mes, nTreino: c.nTreino, previsto: c.receita.previsto, real: c.receita.realizado,
-    erro: c.receita.erro, lo: c.receita.lo, hi: c.receita.hi, dentroIC: c.receita.dentroIC,
-    resultadoPrevisto: c.resultado.previsto, resultadoReal: c.resultado.realizado,
+    erro: c.receita.realizado !== 0 ? (c.receita.previsto - c.receita.realizado) / c.receita.realizado : 0,
+    lo: c.receita.lo, hi: c.receita.hi, dentroIC: c.receita.dentroIC,
+    lucroPrevisto: c.lucroLiquido.previsto, lucroReal: c.lucroLiquido.realizado,
   })).reverse()
   const mapeReceita = backtest.length ? media(backtest.map(b => Math.abs(b.erro))) : 0
-  const mapeResultado = backtest.length
-    ? media(backtest.filter(b => b.resultadoReal !== 0).map(b => Math.abs((b.resultadoPrevisto - b.resultadoReal) / b.resultadoReal)))
-    : 0
+  const comLucro = backtest.filter(b => b.lucroReal !== 0)
+  const mapeLucro = comLucro.length ? media(comLucro.map(b => Math.abs((b.lucroPrevisto - b.lucroReal) / b.lucroReal))) : 0
 
   // ── projeção ──
   const mod = ajustar(meses)
@@ -431,17 +507,15 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     const f = preverReceita(mod, k)
     const linhas: Record<string, number> = {}
     linhasPresentes.forEach(L => { linhas[L] = aplicar(L, f.p) })
-    const cmv = linhas.CMV ?? 0
-    const despesas = linhasPresentes
-      .filter(L => L !== 'CMV' && !FORA_DO_OPERACIONAL.has(L))
-      .reduce((s, L) => s + linhas[L], 0)
     const amplitude = f.p > 0 ? (f.hi - f.lo) / f.p / 2 : 0
     mesesOrcados.push({
-      mes: rotulo(k), receita: f, amplitude,
+      mes: rotulo(k), ic: { lo: f.lo, hi: f.hi }, amplitude,
       fragil: amplitude > 0.4,
-      linhas, cmv, despesas, resultado: f.p - cmv - despesas,
+      linhas,
+      ...subtotais(f.p, L => linhas[L], linhasPresentes),
     })
   }
+  const somaCampo = (c: keyof Subtotais) => mesesOrcados.reduce((s, m) => s + m[c], 0)
 
   return {
     hasData: true,
@@ -451,14 +525,7 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
       serieLonga: { n: dem.length, de: dem.length ? rotulo(dem[0].k) : '', ate: dem.length ? rotulo(dem[dem.length - 1].k) : '' },
       descartados, corteDensidade: Math.round(corteDensidade),
     },
-    historico: meses.map(k => {
-      const o = dre.get(k)!
-      const cmv = o.CMV ?? 0
-      const despesas = linhasPresentes
-        .filter(L => L !== 'CMV' && !FORA_DO_OPERACIONAL.has(L))
-        .reduce((s, L) => s + (o[L] ?? 0), 0)
-      return { mes: rotulo(k), receita: recLiq(k), cmv, despesas, resultado: recLiq(k) - cmv - despesas }
-    }),
+    historico: meses.map(kk => ({ mes: rotulo(kk), ...subtotais(recLiq(kk), L => valorReal(kk, L), linhasPresentes) })),
     params,
     tendencia: {
       mensalEstimada: gEstimado, mensalUsada: gUsado, phi,
@@ -472,16 +539,16 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     backtest,
     checkups,
     metricas: {
-      mapeReceita, mapeResultado,
+      mapeReceita, mapeLucro,
       coberturaIC: `${backtest.filter(b => b.dentroIC).length}/${backtest.length}`,
       nTestes: backtest.length,
+      tCritico: tcrit(mod.gl), grausLiberdade: mod.gl,
     },
     meses: mesesOrcados,
     totais: {
-      receita: mesesOrcados.reduce((s, m) => s + m.receita.p, 0),
-      cmv: mesesOrcados.reduce((s, m) => s + m.cmv, 0),
-      despesas: mesesOrcados.reduce((s, m) => s + m.despesas, 0),
-      resultado: mesesOrcados.reduce((s, m) => s + m.resultado, 0),
+      receita: somaCampo('receita'), cmv: somaCampo('cmv'),
+      despesasOperacionais: somaCampo('despesasOperacionais'), ebitda: somaCampo('ebitda'),
+      abaixoEbitda: somaCampo('abaixoEbitda'), lucroLiquido: somaCampo('lucroLiquido'),
     },
   }
 }
