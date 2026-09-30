@@ -10,7 +10,8 @@ clientes, análise comercial (margem/curva ABC/giro) e demanda por cliente.
 > **Não há integração ao vivo com o ERP.** Todo módulo é alimentado por **arquivos XLSX
 > exportados do ERP** e enviados pela tela. O app parseia, reconcilia e analisa.
 
-- **Deploy:** Vercel (hobby) — auto-deploy a cada `push` no branch `main`
+- **Deploy:** Vercel (hobby) — auto-deploy a cada push no branch main
+- **Produção:** https://prism-vale-sol-agronegocio.vercel.app
 - **Repositório:** `github.com/Sav-Coelho/prism-vale-sol-agronegocio`
 - **Referência técnica completa:** [CONTEXTO_PRISM.md](CONTEXTO_PRISM.md) · guia para Claude Code: [CLAUDE.md](CLAUDE.md) · deep-dive do risco: [docs/RISCO_CLIENTE.md](docs/RISCO_CLIENTE.md)
 
@@ -28,25 +29,29 @@ clientes, análise comercial (margem/curva ABC/giro) e demanda por cliente.
 | Planilhas | `xlsx` (SheetJS) |
 | Deploy | Vercel — build: `prisma generate && prisma db push --accept-data-loss && next build` |
 
-Sem biblioteca de UI (CSS próprio) e **sem autenticação** — operado por uma pessoa (o
-controller do cliente). Fontes: **Inter** + **DM Serif Display**.
+Sem biblioteca de UI (CSS próprio). O app exige login: o papel Gerencial acessa todos
+os módulos; o papel Comercial acessa somente a Demanda por Cliente, em modo de leitura.
+As duas contas de equipe são compartilhadas. Fontes: **Inter** + **DM Serif Display**.
 
 ### Variáveis de ambiente (Vercel / `.env`)
 ```
 DATABASE_URL=   # Neon — URL com connection pooling (runtime)
 DIRECT_URL=     # Neon — URL direta (usada pelo prisma db push no build)
+AUTH_SECRET=    # segredo aleatório para assinar sessões (mínimo 24 caracteres)
+SEED_GERENCIAL_PASSWORD= # senha inicial gerencial, usada se a tabela User estiver vazia
+SEED_COMERCIAL_PASSWORD= # senha inicial comercial, usada se a tabela User estiver vazia
 ```
 
 ---
 
 ## Módulos
 
-A raiz `/` redireciona para `/risco-cliente`. Navegação em `src/components/Shell.tsx`.
+A raiz `/` leva usuários sem sessão ao `/login`; após autenticar, o papel Gerencial começa em `/dre` e o Comercial em `/demanda-cliente`. O middleware também restringe páginas e APIs por papel. Navegação em `src/components/Shell.tsx`.
 
 ### ▤ DRE Gerencial — `/dre`
 DRE em **regime de caixa**, com colunas mensais, consolidado e por unidade. **Fonte única:**
 o XLSX *CashFlow Analítico* da contabilidade — o import classifica cada evento de caixa numa
-linha da DRE e **substitui a base inteira**. Carrega as "depurações" acordadas com o cliente
+linha da DRE e substitui os meses presentes no arquivo; `?escopo=tudo` substitui a base inteira. Carrega as "depurações" acordadas com o cliente
 (financiamento de veículo FCA separando principal/juros, intragrupo Multmunde fora do
 resultado, transferências entre lojas excluídas, reembolso a cliente líquido nas deduções
 etc.). Estrutura: Receita Bruta → Deduções → Receita Líquida → CMV → Margem de Contribuição
@@ -88,7 +93,7 @@ real (custo do ABC de estoque).
 
 ## Modelo de dados (resumo)
 
-17 modelos no `prisma/schema.prisma`, por módulo:
+19 modelos em `prisma/schema.prisma`, por módulo:
 
 - **Crédito:** `Unit`, `Client` (`code` do ERP = chave de dedup), `Sale` (um título a
   receber; `paymentStatus` PENDING/PAID/OVERDUE/DEFAULTED).
@@ -98,6 +103,8 @@ real (custo do ABC de estoque).
 - **Compras:** `Comprador`, `PurchaseOrder`, `PurchaseCommit`, `Fornecedor`,
   `PurchaseCategoria`, `PurchaseSetting`.
 - **Demanda:** `DemandEntry`.
+- **Acesso:** `User` (login, hash de senha, papel e estado ativo).
+- **Ajustes da DRE:** `DreAjuste` (conciliações manuais preservadas entre importações).
 - **Brutos de import (ERP):** `Receivable`, `Payable`.
 
 Detalhamento campo a campo em [CONTEXTO_PRISM.md](CONTEXTO_PRISM.md).

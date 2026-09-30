@@ -7,9 +7,12 @@ Nome do produto na UI: **Arken**.
 - **Dono/dev:** Savio (savio@braveeducacao.com.br)
 - **Repositório:** `github.com/Sav-Coelho/prism-vale-sol-agronegocio` (branch `main`)
 - **Deploy:** Vercel (hobby) — auto-deploy a cada push
+- **Produção:** https://prism-vale-sol-agronegocio.vercel.app (verificado em 24/09/2026)
+- **Deploy verificado:** `READY`, branch `main`, commit `6f0352662a99c3be5c69b8ec7d6f418819fc829e` (igual ao `HEAD` local)
 - **Banco:** PostgreSQL na Neon, região `sa-east-1`, free tier
-- **Sem autenticação, um único operador.** Sem integração ao vivo com o ERP — tudo entra por
-  upload de **XLSX exportado do ERP**.
+- **Acesso:** login obrigatório; gerencial acessa todos os módulos e comercial tem acesso
+  somente de leitura à Demanda por Cliente. As contas são compartilhadas. Sem integração ao
+  vivo com o ERP — tudo entra por upload de **XLSX exportado do ERP**.
 
 > Documentos irmãos: [README.md](README.md) (visão geral), [CLAUDE.md](CLAUDE.md) (guia para
 > Claude Code), [docs/RISCO_CLIENTE.md](docs/RISCO_CLIENTE.md) (deep-dive do risco de cliente).
@@ -36,9 +39,12 @@ Env vars:
 ```
 DATABASE_URL=   # Neon — connection pooling (runtime)
 DIRECT_URL=     # Neon — direta (prisma db push no build)
+AUTH_SECRET=    # segredo aleatório para assinar JWTs de sessão (mínimo 24 caracteres)
+SEED_GERENCIAL_PASSWORD= # senha inicial gerencial, usada só se User estiver vazia
+SEED_COMERCIAL_PASSWORD= # senha inicial comercial, usada só se User estiver vazia
 ```
 
-`src/lib/prisma.ts` exporta **apenas o singleton do PrismaClient — não há seed**. Dados de
+`src/lib/prisma.ts` exporta **apenas o singleton do PrismaClient — não há seed global**. As duas contas são criadas no primeiro login quando a tabela `User` está vazia. Dados de
 referência são criados sob demanda (ex.: `/api/compras/config` cria compradores/categorias
 default na primeira leitura).
 
@@ -48,12 +54,12 @@ default na primeira leitura).
 
 ```
 prism-vale-sol-agronegocio/
-├── prisma/schema.prisma            # 17 modelos
+├── prisma/schema.prisma            # 19 modelos
 ├── docs/RISCO_CLIENTE.md           # deep-dive do módulo de crédito
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx              # <title> "Arken · Vale Sol Agronegócio", fontes Inter + DM Serif
-│   │   ├── page.tsx                # redirect → /risco-cliente
+│   │   ├── page.tsx                # fallback → /risco-cliente; middleware roteia por papel
 │   │   ├── globals.css             # design system (sem lib de UI)
 │   │   ├── icon.svg                # favicon
 │   │   ├── dre/page.tsx            # DRE Gerencial (caixa)
@@ -94,7 +100,7 @@ prism-vale-sol-agronegocio/
 
 ## Schema do banco (`prisma/schema.prisma`)
 
-17 modelos. Dinheiro sempre `Float`. Único encadeamento de FK: `Client → Sale → Unit`.
+19 modelos. Dinheiro sempre `Float`. Único encadeamento de FK: `Client → Sale → Unit`.
 
 ### Módulo Crédito (Risco de Cliente)
 
@@ -157,6 +163,11 @@ year, month, amount (assinado: E +, S −, VALOR original), n (qtde agregada), i
 **DemandEntry** — `vendedor?`, `clienteCode`, `cliente`, `produtoCode?`, `produto`, `year`,
 `month`, `qtd`, `valor`. `@@index([clienteCode])` · `@@index([year, month])`.
 
+### Acesso e ajustes manuais
+
+**User** — logins compartilhados `gerencial` e `comercial`, hash bcrypt, papel e estado ativo. O primeiro login sem usuários cria as duas contas usando `SEED_GERENCIAL_PASSWORD` e `SEED_COMERCIAL_PASSWORD`; as senhas não têm fallback fixo. Sessões são JWT HS256 no cookie HTTP-only `arken_session`, expiram em 12 horas e renovam durante uso; `AUTH_SECRET` precisa ter no mínimo 24 caracteres. O middleware exige login, leva cada papel à sua página inicial e limita `comercial` a consultas GET/HEAD em `/demanda-cliente` e `/api/demanda`.
+
+**DreAjuste** — ajustes e conciliações manuais da DRE.
 ### Brutos de import (ERP)
 
 **Receivable** / **Payable** — dump completo dos relatórios de títulos do ERP (`fitid`
@@ -182,7 +193,7 @@ linha → subconta → fornecedor. Cada linha traz `total` (todos os meses) e `b
 
 1. **CashFlow Analítico** (`isCashflowAnaliticoFile`) → **fonte única**. `buildDreFromCashflow`
    (`dre-cashflow-source.ts`) classifica cada lançamento (E/S) numa linha da DRE e
-   **apaga+reinsere a `DreEntry` inteira** (transação, chunks de 3000). Depurações embutidas:
+   substitui somente os meses presentes no arquivo (ou a tabela inteira com `?escopo=tudo`; transação, chunks de 3000). Depurações embutidas:
    - Veículo **FCA Fiat**: principal → INVEST, juros → FIN.
    - **Multmunde** (grupo) pago como fornecedor de mercadorias → INTRAGRUPO (fora do resultado, memo).
    - **Depósito C/C / Transferência entre lojas** → descartado.

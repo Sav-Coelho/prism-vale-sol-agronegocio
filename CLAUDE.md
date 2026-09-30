@@ -6,11 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Arken** — corporate management system for **Vale Sol Agronegócio** (a veterinary/agro
 retail group: brands **VS** = Vale do Sol and **MM** = Multimundo, 7 stores). Full-stack
-Next.js 14 App Router, no auth, single operator (the client's controller). Every module is
+Next.js 14 App Router with session authentication. The shared gerencial account can access
+all modules; the shared comercial account is read-only and limited to /demanda-cliente.
+Every module is
 fed by **XLSX reports exported from the client's ERP** — there is no live ERP integration;
 the analyst uploads spreadsheets and the app parses, reconciles and analyzes them.
 
-Root `/` redirects to `/risco-cliente`. Six modules (see `src/components/Shell.tsx` nav):
+Unauthenticated requests go to `/login`; after login, `/` routes gerencial to `/dre` and comercial to `/demanda-cliente`. Six modules (see `src/components/Shell.tsx` nav):
 
 | Route | Module | Feeds from |
 |-------|--------|-----------|
@@ -41,9 +43,12 @@ PostgreSQL free tier (`sa-east-1`). Charts via **Recharts**. XLSX parsing via **
 **Key env vars:**
 - `DATABASE_URL` — Neon connection pooling URL (runtime)
 - `DIRECT_URL` — Neon direct URL (used by `prisma db push` at build)
+- `AUTH_SECRET` — session JWT signing secret (minimum 24 characters)
+- `SEED_GERENCIAL_PASSWORD` / `SEED_COMERCIAL_PASSWORD` — initial shared-account passwords, used only while `User` is empty
 
 Schema is managed with `prisma db push` (no migration files). `prisma.ts` is a **plain
-PrismaClient singleton — no seeds**. Reference data is created lazily where needed (e.g.
+PrismaClient singleton — no global seed**. The two shared users are seeded on the first login
+when the User table is empty. Reference data is created lazily where needed (e.g.
 `/api/compras/config` seeds default buyers/categories on first read).
 
 ## Critical TypeScript Constraint
@@ -63,7 +68,7 @@ Array.from(map.entries()).forEach(([k, v]) => { })
 
 ## Data model (prisma/schema.prisma)
 
-17 models, grouped by module. All numeric money is `Float`. No cross-module FKs except
+19 models, grouped by module. All numeric money is `Float`. No cross-module FKs except
 `Client → Sale → Unit`.
 
 **Credit / Risco de Cliente**
@@ -94,6 +99,10 @@ Array.from(map.entries()).forEach(([k, v]) => { })
 **Demanda por Cliente**
 - `DemandEntry` — `(cliente × produto × month)` aggregate from the COMERCIAL report.
 
+**Access and adjustments**
+- `User` — shared accounts with bcrypt password hashes and `gerencial` / `comercial` roles. Session cookie `arken_session` is HTTP-only, valid for 12 hours and renewed during use.
+- `DreAjuste` — manual DRE reconciliation adjustments.
+
 **Also present but not central**: `Receivable`, `Payable` (raw ERP title imports; the active
 credit flow uses `Sale`, and compras uses `PurchaseCommit`).
 
@@ -103,7 +112,7 @@ credit flow uses `Sale`, and compras uses `PurchaseCommit`).
 Cash-basis managerial P&L, monthly columns, consolidated + per unit. **Single source** =
 CashFlow Analítico XLSX. `POST /api/dre/import` detects the file type and rebuilds:
 - **CashFlow Analítico** (`isCashflowAnaliticoFile`) → `buildDreFromCashflow` classifies every
-  cash line into a DRE line and **wipes+replaces the entire `DreEntry` table**. This carries
+  cash line into a DRE line. By default it replaces only the months in the file; `?escopo=tudo` rebuilds the whole `DreEntry` table. This carries
   the client-specific "depurações" (FCA vehicle financing split principal→INVEST / juros→FIN;
   Multmunde intragroup excluded; inter-store transfers dropped; customer reimbursement netted
   in DEDUCAO, never negative; Orga Log = CMV; interest received on its own JUROS line).
