@@ -87,6 +87,43 @@ export interface MesOrcado {
   despesas: number
   resultado: number
 }
+/**
+ * Check-up: o mês já fechou, então dá para cobrar o que o orçamento previu.
+ *
+ * A previsão é RECONSTRUÍDA com origem travada antes do mês — se o modelo
+ * reprevisse setembro depois de setembro fechar, ele treinaria com setembro e
+ * acertaria por construção. Aqui ele só vê o que existia até agosto, que é
+ * exatamente o número que a tela mostrava antes do fechamento.
+ *
+ * A diferença de resultado é decomposta de forma EXATA (a soma dos efeitos
+ * reproduz a diferença até o centavo):
+ *
+ *   efeito receita  = (Rreal − Rprev) × (1 − premissas variáveis)
+ *   efeito de linha variável = −(razão real − razão prevista) × Rreal
+ *   efeito de linha fixa     = −(valor real − valor previsto)
+ */
+export interface CheckupLinha {
+  linha: string
+  modo: ModoLinha
+  /** premissa e realizado na unidade do modo: fração da receita, ou R$ */
+  premissa: number
+  realizado: number
+  previstoRS: number
+  realizadoRS: number
+  /** quanto esta linha tirou (−) ou devolveu (+) de resultado */
+  impacto: number
+}
+export interface Checkup {
+  mes: string
+  nTreino: number
+  receita: { previsto: number; realizado: number; erro: number; lo: number; hi: number; dentroIC: boolean }
+  efeitoReceita: number
+  linhas: CheckupLinha[]
+  resultado: { previsto: number; realizado: number; diferenca: number }
+  /** soma dos efeitos menos a diferença — tem de ser ~0; é a prova da decomposição */
+  residuo: number
+}
+
 export interface BacktestPonto {
   mes: string
   nTreino: number
@@ -117,6 +154,8 @@ export interface OrcamentoResultado {
   sazonalidade: { mes: number; fator: number; obs: number; fragil: boolean }[]
   premissas: Premissa[]
   backtest: BacktestPonto[]
+  /** meses já fechados que o orçamento havia previsto, com a diferença decomposta */
+  checkups: Checkup[]
   metricas: { mapeReceita: number; coberturaIC: string; mapeResultado: number; nTestes: number }
   meses: MesOrcado[]
   totais: { receita: number; cmv: number; despesas: number; resultado: number }
@@ -145,7 +184,7 @@ const VAZIO: OrcamentoResultado = {
   historico: [],
   params: { ancora: 3, phi: 0.85, horizonte: 7, crescimento: null },
   tendencia: { mensalEstimada: 0, mensalUsada: 0, phi: 0.85, fonte: '' },
-  sazonalidade: [], premissas: [], backtest: [],
+  sazonalidade: [], premissas: [], backtest: [], checkups: [],
   metricas: { mapeReceita: 0, coberturaIC: '0/0', mapeResultado: 0, nTestes: 0 },
   meses: [], totais: { receita: 0, cmv: 0, despesas: 0, resultado: 0 },
 }
@@ -288,28 +327,64 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     return p.modo === 'RECEITA' ? p.valor * receita : p.valor
   }
 
-  // ── backtest de origem móvel: 1 passo à frente nos últimos 3 fechados ──
-  const backtest: BacktestPonto[] = []
-  for (let atras = Math.min(2, meses.length - 5); atras >= 0; atras--) {
-    const idx = meses.length - 1 - atras
+  // ── check-up: todo mês fechado que dava para prever, com a diferença aberta ──
+  // Origem TRAVADA antes do alvo. Reprever o mês depois que ele fecha faria o
+  // modelo treinar com o próprio mês e acertar por construção.
+  const operacionais = linhasPresentes.filter(L => !FORA_DO_OPERACIONAL.has(L))
+  const checkups: Checkup[] = []
+  for (let idx = 4; idx < meses.length; idx++) {
     const treino = meses.slice(0, idx)
-    if (treino.length < 4) continue
     const alvo = meses[idx]
     const mod = ajustar(treino)
     const f = preverReceita(mod, alvo)
     const cf = coefDe(treino.slice(-ancora))
-    const prevLinha = (L: string) => (cf[L] ? (cf[L].modo === 'RECEITA' ? cf[L].valor * f.p : cf[L].valor) : 0)
-    const operacionais = linhasPresentes.filter(L => !FORA_DO_OPERACIONAL.has(L))
-    const resultadoPrevisto = f.p - operacionais.reduce((s, L) => s + prevLinha(L), 0)
-    const resultadoReal = recLiq(alvo) - operacionais.reduce((s, L) => s + (dre.get(alvo)![L] ?? 0), 0)
-    const real = recLiq(alvo)
-    backtest.push({
-      mes: rotulo(alvo), nTreino: treino.length, previsto: f.p, real,
-      erro: real !== 0 ? (f.p - real) / real : 0,
-      lo: f.lo, hi: f.hi, dentroIC: real >= f.lo && real <= f.hi,
-      resultadoPrevisto, resultadoReal,
+    const rReal = recLiq(alvo)
+
+    // parcela da receita que sobra depois das linhas variáveis previstas
+    const somaVarPrev = operacionais
+      .filter(L => cf[L]?.modo === 'RECEITA')
+      .reduce((s, L) => s + cf[L].valor, 0)
+    const efeitoReceita = (rReal - f.p) * (1 - somaVarPrev)
+
+    const linhas: CheckupLinha[] = operacionais.map(L => {
+      const modo = cf[L]?.modo ?? PRIOR[L]
+      const premissa = cf[L]?.valor ?? 0
+      const realizadoRS = dre.get(alvo)![L] ?? 0
+      const realizado = modo === 'RECEITA' ? (rReal > 0 ? realizadoRS / rReal : 0) : realizadoRS
+      const previstoRS = modo === 'RECEITA' ? premissa * f.p : premissa
+      // variável: mede a diferença de razão sobre a receita REAL, para não
+      // contar duas vezes o que o efeito receita já explicou
+      const impacto = modo === 'RECEITA'
+        ? -(realizado - premissa) * rReal
+        : -(realizadoRS - premissa)
+      return { linha: L, modo, premissa, realizado, previstoRS, realizadoRS, impacto }
+    })
+
+    const resultadoPrevisto = f.p - operacionais.reduce((s, L) => s + (cf[L] ? (cf[L].modo === 'RECEITA' ? cf[L].valor * f.p : cf[L].valor) : 0), 0)
+    const resultadoReal = rReal - operacionais.reduce((s, L) => s + (dre.get(alvo)![L] ?? 0), 0)
+    const diferenca = resultadoReal - resultadoPrevisto
+    const somaEfeitos = efeitoReceita + linhas.reduce((s, l) => s + l.impacto, 0)
+
+    checkups.push({
+      mes: rotulo(alvo), nTreino: treino.length,
+      receita: {
+        previsto: f.p, realizado: rReal,
+        erro: rReal !== 0 ? (f.p - rReal) / rReal : 0,
+        lo: f.lo, hi: f.hi, dentroIC: rReal >= f.lo && rReal <= f.hi,
+      },
+      efeitoReceita, linhas,
+      resultado: { previsto: resultadoPrevisto, realizado: resultadoReal, diferenca },
+      residuo: somaEfeitos - diferenca,
     })
   }
+  checkups.reverse()   // mais recente primeiro
+
+  // o backtest é a leitura resumida dos mesmos pontos
+  const backtest: BacktestPonto[] = checkups.slice(0, 3).map(c => ({
+    mes: c.mes, nTreino: c.nTreino, previsto: c.receita.previsto, real: c.receita.realizado,
+    erro: c.receita.erro, lo: c.receita.lo, hi: c.receita.hi, dentroIC: c.receita.dentroIC,
+    resultadoPrevisto: c.resultado.previsto, resultadoReal: c.resultado.realizado,
+  })).reverse()
   const mapeReceita = backtest.length ? media(backtest.map(b => Math.abs(b.erro))) : 0
   const mapeResultado = backtest.length
     ? media(backtest.filter(b => b.resultadoReal !== 0).map(b => Math.abs((b.resultadoPrevisto - b.resultadoReal) / b.resultadoReal)))
@@ -363,6 +438,7 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     }),
     premissas,
     backtest,
+    checkups,
     metricas: {
       mapeReceita, mapeResultado,
       coberturaIC: `${backtest.filter(b => b.dentroIC).length}/${backtest.length}`,

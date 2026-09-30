@@ -20,6 +20,15 @@ type ModoLinha = 'RECEITA' | 'FIXO'
 interface Premissa { linha: string; modo: ModoLinha; valor: number; valorPeriodo: number; min: number; max: number; desvio: number; editado: boolean }
 interface MesOrcado { mes: string; receita: { p: number; lo: number; hi: number }; amplitude: number; fragil: boolean; linhas: Record<string, number>; cmv: number; despesas: number; resultado: number }
 interface BacktestPonto { mes: string; nTreino: number; previsto: number; real: number; erro: number; lo: number; hi: number; dentroIC: boolean; resultadoPrevisto: number; resultadoReal: number }
+interface CheckupLinha { linha: string; modo: ModoLinha; premissa: number; realizado: number; previstoRS: number; realizadoRS: number; impacto: number }
+interface Checkup {
+  mes: string; nTreino: number
+  receita: { previsto: number; realizado: number; erro: number; lo: number; hi: number; dentroIC: boolean }
+  efeitoReceita: number
+  linhas: CheckupLinha[]
+  resultado: { previsto: number; realizado: number; diferenca: number }
+  residuo: number
+}
 interface Orc {
   hasData: boolean; motivo?: string
   base: { mesesRealizados: string[]; ultimoFechado: string; serieLonga: { n: number; de: string; ate: string }; descartados: { mes: string; lancamentos: number }[]; corteDensidade: number }
@@ -29,6 +38,7 @@ interface Orc {
   sazonalidade: { mes: number; fator: number; obs: number; fragil: boolean }[]
   premissas: Premissa[]
   backtest: BacktestPonto[]
+  checkups: Checkup[]
   metricas: { mapeReceita: number; mapeResultado: number; coberturaIC: string; nTestes: number }
   meses: MesOrcado[]
   totais: { receita: number; cmv: number; despesas: number; resultado: number }
@@ -48,6 +58,7 @@ export function Orcamento() {
   const [phi, setPhi] = useState(0.85)
   const [horizonte, setHorizonte] = useState(7)
   const [crescimento, setCrescimento] = useState<string>('')
+  const [mesCheckup, setMesCheckup] = useState<string>('')
   // premissas editadas: linha → { modo, valor na unidade da tela }
   const [edits, setEdits] = useState<Record<string, { modo?: ModoLinha; valor?: string }>>({})
 
@@ -161,6 +172,128 @@ export function Orcamento() {
           <br />* mês com um único ano observado — fator frágil.
         </div>
       </div>
+
+      {/* ── check-up do mês fechado ── */}
+      {d.checkups.length > 0 && (() => {
+        const c = d.checkups.find(x => x.mes === mesCheckup) ?? d.checkups[0]
+        const ordenadas = c.linhas.slice().sort((a, b) => Math.abs(b.impacto) - Math.abs(a.impacto))
+        const maior = ordenadas[0]
+        const dif = c.resultado.diferenca
+        return (
+          <div className="card mb-6" style={{ borderLeft: `3px solid ${dif >= 0 ? C.green : C.red}` }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div className="card-eyebrow">Check-up do orçamento</div>
+                <div className="card-title" style={{ fontSize: 14 }}>
+                  O que foi previsto para {c.mes} × o que fechou de fato
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 600, marginBottom: 5 }}>Mês fechado</div>
+                <select className="form-select" style={{ width: 130 }} value={c.mes} onChange={e => setMesCheckup(e.target.value)}>
+                  {d.checkups.map(x => <option key={x.mes} value={x.mes}>{x.mes}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 12, color: C.textSoft, lineHeight: 1.6, margin: '10px 0 14px', maxWidth: 900 }}>
+              A previsão é reconstruída com <b>origem travada antes de {c.mes}</b> — o modelo só enxerga os {c.nTreino} meses
+              anteriores. Sem isso ele treinaria com o próprio mês e acertaria por construção.
+            </p>
+
+            {/* placar */}
+            <div style={{ display: 'flex', gap: 26, flexWrap: 'wrap', background: '#f4f7fb', padding: '12px 16px', borderRadius: 4, marginBottom: 14 }}>
+              <Placar rotulo="Receita prevista" valor={fmt(c.receita.previsto)} />
+              <Placar rotulo="Receita realizada" valor={fmt(c.receita.realizado)} cor={C.navy} />
+              <Placar rotulo="Erro da receita" valor={(c.receita.erro >= 0 ? '+' : '') + pct(c.receita.erro)}
+                cor={Math.abs(c.receita.erro) <= 0.1 ? C.green : C.amber} />
+              <Placar rotulo="Dentro do IC 95%" valor={c.receita.dentroIC ? 'sim' : 'não'} cor={c.receita.dentroIC ? C.green : C.red} />
+              <Placar rotulo="Resultado previsto" valor={fmt(c.resultado.previsto)} />
+              <Placar rotulo="Resultado realizado" valor={fmt(c.resultado.realizado)} cor={c.resultado.realizado >= 0 ? C.green : C.red} />
+              <Placar rotulo="Diferença" valor={(dif >= 0 ? '+' : '') + fmt(dif)} cor={dif >= 0 ? C.green : C.red} />
+            </div>
+
+            {/* ponte: de onde veio a diferença */}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Ponto de divergência</th>
+                    <th style={{ textAlign: 'right' }}>Premissa</th>
+                    <th style={{ textAlign: 'right' }}>Realizado</th>
+                    <th style={{ textAlign: 'right' }}>Diferença</th>
+                    <th style={{ textAlign: 'right' }}>Impacto no resultado</th>
+                    <th style={{ textAlign: 'left' }}>Por quê</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style={{ background: '#f9fbfd' }}>
+                    <td style={{ fontWeight: 700, color: C.navy }}>Receita líquida</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(c.receita.previsto)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(c.receita.realizado)}</td>
+                    <td style={{ textAlign: 'right', color: c.receita.realizado >= c.receita.previsto ? C.green : C.amber }}>
+                      {(c.receita.realizado >= c.receita.previsto ? '+' : '') + fmt(c.receita.realizado - c.receita.previsto)}
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: c.efeitoReceita >= 0 ? C.green : C.red }}>
+                      {(c.efeitoReceita >= 0 ? '+' : '') + fmt(c.efeitoReceita)}
+                    </td>
+                    <td style={{ fontSize: 11.5, color: C.textSoft }}>
+                      Receita {c.receita.realizado >= c.receita.previsto ? 'acima' : 'abaixo'} do previsto em {pct(Math.abs(c.receita.erro))}
+                      {c.receita.dentroIC
+                        ? ' — dentro do intervalo de 95%, variação normal do modelo.'
+                        : ' — FORA do intervalo de 95%: o modelo errou, não é só oscilação.'}
+                    </td>
+                  </tr>
+                  {ordenadas.map(l => {
+                    const ehPct = l.modo === 'RECEITA'
+                    const dPts = l.realizado - l.premissa
+                    return (
+                      <tr key={l.linha}>
+                        <td style={{ fontWeight: 600, color: C.navy, fontSize: 13 }}>{LABEL[l.linha] ?? l.linha}</td>
+                        <td style={{ textAlign: 'right' }}>{ehPct ? pct(l.premissa) : fmt(l.premissa)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{ehPct ? pct(l.realizado) : fmt(l.realizado)}</td>
+                        <td style={{ textAlign: 'right', color: dPts <= 0 ? C.green : C.amber }}>
+                          {ehPct
+                            ? `${dPts >= 0 ? '+' : '−'}${Math.abs(dPts * 100).toFixed(1).replace('.', ',')} pts`
+                            : `${dPts >= 0 ? '+' : ''}${fmt(dPts)}`}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, color: l.impacto >= 0 ? C.green : C.red }}>
+                          {(l.impacto >= 0 ? '+' : '') + fmt(l.impacto)}
+                        </td>
+                        <td style={{ fontSize: 11.5, color: C.textSoft }}>
+                          {ehPct
+                            ? `Consumiu ${pct(l.realizado)} da receita contra ${pct(l.premissa)} de premissa.`
+                            : `Gastou ${fmt(l.realizadoRS)} contra ${fmt(l.previstoRS)} de premissa.`}
+                          {Math.abs(l.impacto) > Math.abs(dif) * 0.5 && Math.abs(dif) > 0 ? ' Explica a maior parte da diferença.' : ''}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  <tr style={{ borderTop: `2px solid ${C.navy}`, background: '#f6f8fb' }}>
+                    <td style={{ fontWeight: 700, color: C.navy }}>Soma dos efeitos</td>
+                    <td colSpan={3}></td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: dif >= 0 ? C.green : C.red }}>
+                      {(dif >= 0 ? '+' : '') + fmt(dif)}
+                    </td>
+                    <td style={{ fontSize: 11.5, color: C.textMuted }}>
+                      Fecha exatamente com a diferença de resultado
+                      {Math.abs(c.residuo) > 1 ? ` (resíduo de ${fmt(c.residuo)} — conferir)` : ' (resíduo zero).'}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ fontSize: 12, color: C.textSoft, marginTop: 12, lineHeight: 1.6 }}>
+              <b>Leitura do mês:</b> o resultado ficou {dif >= 0 ? 'acima' : 'abaixo'} do orçado em <b>{fmt(Math.abs(dif))}</b>.
+              {maior && Math.abs(maior.impacto) > Math.abs(c.efeitoReceita)
+                ? <> A maior divergência veio de <b>{LABEL[maior.linha] ?? maior.linha}</b> ({(maior.impacto >= 0 ? '+' : '') + fmt(maior.impacto)}), e não da receita.</>
+                : <> A receita foi o principal fator ({(c.efeitoReceita >= 0 ? '+' : '') + fmt(c.efeitoReceita)}).</>}
+              {' '}Cada linha é medida contra a receita realizada, para não contar duas vezes o que o efeito de receita já explicou.
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── backtest ── */}
       <div className="card mb-6" style={{ borderLeft: `3px solid ${d.metricas.mapeReceita < 0.1 ? C.green : C.amber}` }}>
@@ -348,6 +481,15 @@ export function Orcamento() {
         </div>
       </div>
     </>
+  )
+}
+
+function Placar({ rotulo, valor, cor }: { rotulo: string; valor: string; cor?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, fontWeight: 700 }}>{rotulo}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: cor ?? C.textSoft, marginTop: 2 }}>{valor}</div>
+    </div>
   )
 }
 
