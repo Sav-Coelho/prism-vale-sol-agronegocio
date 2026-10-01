@@ -11,6 +11,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { calcularBcg } from '@/lib/bcg'
+import { periodoAbc } from '@/lib/abc-periodo'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -36,10 +37,10 @@ export async function GET(req: Request) {
   if (!isNaN(baseParam) && baseParam > 0) {
     baseDias = Math.max(30, Math.min(400, baseParam))
   } else {
-    const lastImport = sales.reduce<Date | null>((m, s) => (m === null || s.updatedAt > m ? s.updatedAt : m), null) ?? new Date()
-    const jan1 = Date.UTC(lastImport.getUTCFullYear(), 0, 1)
-    baseDias = Math.max(30, Math.min(400, Math.round((lastImport.getTime() - jan1) / 86400000)))
-    baseAuto = lastImport.toISOString().slice(0, 10)
+    // regra única do período do ABC (lib/abc-periodo), a mesma da Análise Comercial
+    const periodo = periodoAbc(sales)
+    baseDias = periodo.dias
+    baseAuto = periodo.ate ?? new Date().toISOString().slice(0, 10)
   }
 
   const rows = sales

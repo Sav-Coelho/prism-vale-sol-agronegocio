@@ -10,6 +10,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { calcularBcg } from '@/lib/bcg'
+import { periodoAbc } from '@/lib/abc-periodo'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -22,6 +23,10 @@ export async function GET() {
     prisma.salesAbcItem.findMany(),
     calcularBcg(),
   ])
+  // meses cobertos pelo ABC de vendas (acumulado no ano) — a mesma régua da
+  // Reposição; antes era 6 fixo e toda cobertura saía ~32% menor
+  const periodo = periodoAbc(sales)
+  const PERIOD_MONTHS = periodo.meses
 
   const priceMap = new Map(prices.map(p => [p.code, p]))
   const stockMap = new Map(stock.map(s => [s.code, s]))
@@ -79,7 +84,7 @@ export async function GET() {
   })
 
   // ── 3. GIRO de estoque ──────────────────────────────────────────────
-  const PERIOD_MONTHS = 6
+  // (PERIOD_MONTHS = meses reais do ABC, calculado no topo)
   const turnoverCodes = new Set<string>()
   stock.forEach(s => turnoverCodes.add(s.code))
   sales.forEach(v => turnoverCodes.add(v.code))
@@ -97,7 +102,10 @@ export async function GET() {
       ? (qtyStock / qtySold) * PERIOD_MONTHS
       : (qtyStock > 0 ? Infinity : 0)
 
-    // stockout = vendeu no período mas está zerado hoje (ruptura total, o pior caso).
+    // stockout = vendeu no período e não tem saldo hoje (ruptura total, o pior caso).
+    //            Inclui item vendido que NÃO aparece no relatório de estoque — o ERP
+    //            parece listar só saldo ≠ 0, então provavelmente é zero, mas não é
+    //            certo: `semCadastroEstoque` deixa a tela dizer qual dos dois.
     // rupture  = ainda tem algum estoque, mas cobre menos de 1 mês.
     let status: 'stockout' | 'rupture' | 'low' | 'healthy' | 'excess'
     if (qtyStock <= 0)           status = 'stockout'
@@ -115,6 +123,7 @@ export async function GET() {
       monthsCoverage: Number.isFinite(monthsCoverage) ? monthsCoverage : null,
       status,
       abcClass: v?.abcClass ?? null,
+      semCadastroEstoque: !s,
     }
   })
   // Itens sem giro no período (qtySold = 0) saem da análise
@@ -128,8 +137,10 @@ export async function GET() {
   const excess = turnoverRows.filter(r => r.status === 'excess').length
   // Ruptura total (vendeu e zerou) e as quebras mais graves: Curva A sem estoque
   const stockouts = turnoverRows.filter(r => r.status === 'stockout').length
+  const stockoutsForaRelatorio = turnoverRows.filter(r => r.status === 'stockout' && r.semCadastroEstoque).length
   const criticalStockouts = turnoverRows.filter(r => r.status === 'stockout' && r.abcClass === 'A')
   const criticalStockoutValue = criticalStockouts.reduce((s, r) => s + r.salesValue, 0)
+  const criticalForaRelatorio = criticalStockouts.filter(r => r.semCadastroEstoque).length
 
   // ── 4. MASTER (uma linha por SKU presente em qq base) ───────────────
   // Permite análise cruzada Margem × ABC × Giro numa só tabela.
@@ -167,8 +178,7 @@ export async function GET() {
         marginPct >= 0  ? 'low' : 'negative'
     }
 
-    // Giro (só se houver venda no período)
-    const PERIOD_MONTHS = 6
+    // Giro (só se houver venda no período) — PERIOD_MONTHS = meses reais do ABC
     let turnover: number | null = null
     let monthsCoverage: number | null = null
     let turnoverStatus: 'stockout' | 'rupture' | 'low' | 'healthy' | 'excess' | null = null
@@ -228,12 +238,15 @@ export async function GET() {
     },
     summary: {
       excellent, detractors, ruptures, excess,
-      stockouts,
+      stockouts, stockoutsForaRelatorio,
       criticalStockouts: criticalStockouts.length,
+      criticalForaRelatorio,
       criticalStockoutValue,
       totalSalesValue,
       totalStockValue: stock.reduce((s, x) => s + x.totalValue, 0),
     },
+    /** período do ABC de vendas usado no giro e na cobertura */
+    periodo,
     marginRows,
     abcRows,
     turnoverRows,

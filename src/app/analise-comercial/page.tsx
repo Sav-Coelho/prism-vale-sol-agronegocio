@@ -63,7 +63,9 @@ interface Bcg {
 
 interface Analytics {
   counts: { prices: number; stock: number; sales: number; marginItems: number; turnoverItems: number; masterItems: number }
-  summary: { excellent: number; detractors: number; ruptures: number; excess: number; stockouts: number; criticalStockouts: number; criticalStockoutValue: number; totalSalesValue: number; totalStockValue: number }
+  summary: { excellent: number; detractors: number; ruptures: number; excess: number; stockouts: number; stockoutsForaRelatorio?: number; criticalStockouts: number; criticalForaRelatorio?: number; criticalStockoutValue: number; totalSalesValue: number; totalStockValue: number }
+  /** período do ABC de vendas (acumulado no ano) usado no giro */
+  periodo?: { dias: number; meses: number; ate: string | null }
   masterRows: MasterRow[]
   abcRows: Array<{ rank: number; abcClass: string; cumulativePct: number; sharePct: number }>
   bcg: Bcg
@@ -367,12 +369,17 @@ export default function AnaliseComercial() {
                    value={data.summary.detractors.toLocaleString('pt-BR')}
                    sub={`< 20% · ${fmtPct(data.summary.detractors / Math.max(1,data.counts.marginItems) * 100)} dos calculáveis`}
                    color={C.red} />
+              {/* item vendido fora do relatório de estoque também entra como ruptura
+                  total — provavelmente saldo zero (o ERP parece listar só saldo ≠ 0),
+                  mas não confirmado: o texto diz quantos são */}
               <Kpi label="Ruptura total (estoque 0)"
                    value={data.summary.stockouts.toLocaleString('pt-BR')}
-                   sub="venderam e zeraram o estoque" color={C.stockout} />
+                   sub={data.summary.stockoutsForaRelatorio
+                     ? `venderam e não têm saldo · ${data.summary.stockoutsForaRelatorio} fora do relatório de estoque`
+                     : 'venderam e zeraram o estoque'} color={C.stockout} />
               <Kpi label="Ruptura iminente"
                    value={data.summary.ruptures.toLocaleString('pt-BR')}
-                   sub="ainda tem estoque, cobre < 1 mês" color={C.rupture} />
+                   sub={`ainda tem estoque, cobre < 1 mês${data.periodo ? ` · vendas de ${data.periodo.meses.toFixed(1).replace('.', ',')} meses` : ''}`} color={C.rupture} />
             </div>
           </div>
 
@@ -386,7 +393,10 @@ export default function AnaliseComercial() {
                     {data.summary.criticalStockouts} {data.summary.criticalStockouts === 1 ? 'produto crítico' : 'produtos críticos'} da Curva A sem estoque
                   </div>
                   <div style={{ fontSize: 13, color: C.textSoft, marginTop: 4 }}>
-                    São os itens de maior peso na receita (Curva A) que venderam no período mas estão zerados hoje.
+                    São os itens de maior peso na receita (Curva A) que venderam no período e não têm saldo hoje
+                    {data.summary.criticalForaRelatorio
+                      ? ` — ${data.summary.criticalForaRelatorio === data.summary.criticalStockouts ? 'todos' : data.summary.criticalForaRelatorio} fora do relatório de estoque, então confirme o saldo antes de comprar`
+                      : ''}.
                     Somam <b style={{ color: C.stockout }}>{fmt(data.summary.criticalStockoutValue)}</b> de receita no período — venda em risco enquanto não repõe.
                   </div>
                 </div>
