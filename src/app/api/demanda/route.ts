@@ -105,16 +105,22 @@ export async function GET(req: NextRequest) {
 
   // ─── Detalhe de um cliente (consulta filtrada — rápida) ───
   if (cliente) {
-    const [mine, costs, credMap, bcg] = await Promise.all([
+    const [mine, costs, credMap, bcg, mesesBase] = await Promise.all([
       prisma.demandEntry.findMany({ where: { clienteCode: cliente } }),
       stockCostMap(),
       creditByName(),
       calcularBcg(),
+      prisma.demandEntry.groupBy({ by: ['year', 'month'] }),
     ])
     if (!mine.length) return NextResponse.json({ hasData: true, cliente, notFound: true, months: [] })
     const months = Array.from(new Set(mine.map(r => ym(r.year, r.month)))).sort()
     const empty = () => { const o: Record<string, number> = {}; months.forEach(m => o[m] = 0); return o }
-    const years = Array.from(new Set(mine.map(r => r.year))).sort()
+    // "Últimos 2 meses" e "ano corrente" vêm da BASE, como na lista — não das
+    // compras do próprio cliente. Antes, quem parou de comprar em fev/25 tinha
+    // "últimos 2 meses" = jan–fev/25 e aparecia aqui com 0 itens "sem compra nos
+    // últimos 2 meses", enquanto a lista o marcava como Sumiu.
+    const mesesGlobais = mesesBase.map(r => ym(r.year, r.month)).sort()
+    const years = Array.from(new Set(mesesBase.map(r => r.year))).sort((a, b) => a - b)
     const curYear = years[years.length - 1], prevYear = years.length > 1 ? years[years.length - 2] : null
     const nome = mine[0].cliente, vendedor = mine[0].vendedor
 
@@ -139,8 +145,9 @@ export async function GET(req: NextRequest) {
     produtos.forEach(p => { if (p.margem != null && p.code) { valCC += p.total; cusCC += p.qtd * (costs.get(p.code) ?? 0) } })
     const margemMedia = valCC > 0 ? (valCC - cusCC) / valCC : null
 
-    const recentKeys = months.slice(Math.max(0, months.length - 2))
-    const dropped = produtos.filter(p => p.total > 0 && recentKeys.every(m => p.byMonth[m] === 0))
+    // mês da base sem compra do cliente não existe em byMonth: conta como zero
+    const recentKeys = mesesGlobais.slice(Math.max(0, mesesGlobais.length - 2))
+    const dropped = produtos.filter(p => p.total > 0 && recentKeys.every(m => !((p.byMonth[m] ?? 0) > 0)))
       .map(p => ({ nome: p.nome, code: p.code, total: p.total, ultimoMes: months.filter(m => p.byMonth[m] > 0).pop() ?? null }))
       .sort((a, b) => b.total - a.total)
     const droppedYoY = prevYear ? produtos.filter(p => p.tPrev > 0 && p.tCur === 0)
