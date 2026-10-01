@@ -161,10 +161,14 @@ export function aggregateMonthlyRisk(
   const points: AggregateRiskPoint[] = []
 
   for (let i = monthsBack - 1; i >= 0; i--) {
-    // Month-end snapshot
-    const snapshot = new Date(now.getFullYear(), now.getMonth() - i + 1, 0)
-    const year = snapshot.getFullYear()
-    const month = snapshot.getMonth() + 1
+    // Retrato no fim do mês — mas nunca no futuro: o mês corrente é retratado
+    // HOJE. Com o fim do mês, o ponto de outubro saía em 31/10, envelhecendo os
+    // títulos até lá (alguns "passavam" de 90 dias antes de passar de fato), e
+    // divergia do risco ponderado do cartão da mesma tela (60,47% × 59,31%).
+    const fimMes = new Date(now.getFullYear(), now.getMonth() - i + 1, 0)
+    const snapshot = fimMes > now ? now : fimMes
+    const year = fimMes.getFullYear()
+    const month = fimMes.getMonth() + 1
     const key = `${year}-${String(month).padStart(2, '0')}`
 
     let totalExposure = 0
