@@ -138,6 +138,24 @@ const VAZIO: BcgResultado = {
   resumo: {}, itens: [], porCodigo: {},
 }
 
+/**
+ * Meses FECHADOS da base de vendas (índice ano×12 + mês−1), em ordem.
+ *
+ * Fechado = anterior ao mês corrente E não é o último mês presente na base. O
+ * export do ERP vai até a data da extração, então o último mês quase sempre está
+ * pela metade (set/26 tinha 4.744 linhas, ~70% de um mês cheio). "Anterior ao
+ * corrente" sozinho não basta: na virada do mês, o mês que acabou entrava
+ * inteiro sem ter sido importado inteiro — às 00h UTC de 01/10/2026 o corte de
+ * crescimento da carteira foi de +2,25% para −1,32% e 141 produtos trocaram de
+ * quadrante. É a mesma convenção do a/a da Demanda por Cliente.
+ */
+function mesesFechadosVendas(entries: { year: number; month: number }[], hoje: Date = new Date()): number[] {
+  const ymAtual = hoje.getUTCFullYear() * 12 + hoje.getUTCMonth()
+  const yms = Array.from(new Set(entries.map(e => e.year * 12 + (e.month - 1)))).sort((a, b) => a - b)
+  const ultimo = yms[yms.length - 1]
+  return yms.filter(v => v < ymAtual && v !== ultimo)
+}
+
 export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgResultado> {
   const [entries, stock] = await Promise.all([
     prisma.demandEntry.findMany({ select: { produtoCode: true, produto: true, year: true, month: true, qtd: true, valor: true } }),
@@ -145,14 +163,15 @@ export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgR
   ])
   if (!entries.length) return { ...VAZIO, motivo: 'Sem base de Demanda por Cliente importada.' }
 
-  const anos = Array.from(new Set(entries.map(e => e.year))).sort((a, b) => a - b)
+  // anos e meses vêm só dos meses FECHADOS: em janeiro, com só um janeiro
+  // parcial no ano novo, o "ano corrente" da BCG continua sendo o anterior
+  const fechados = mesesFechadosVendas(entries)
+  const anos = Array.from(new Set(fechados.map(v => Math.floor(v / 12)))).sort((a, b) => a - b)
   const curYear = anos[anos.length - 1]
   const prevYear = anos.length > 1 ? anos[anos.length - 2] : null
   if (prevYear == null) return { ...VAZIO, motivo: 'É preciso ter dois anos de histórico para medir crescimento.' }
 
-  const hoje = new Date()
-  const mesesCur = Array.from(new Set(entries.filter(e => e.year === curYear).map(e => e.month))).sort((a, b) => a - b)
-  const cheios = mesesCur.filter(m => !(curYear === hoje.getUTCFullYear() && m === hoje.getUTCMonth() + 1))
+  const cheios = fechados.filter(v => Math.floor(v / 12) === curYear).map(v => (v % 12) + 1)
   const janela = opts?.janelaMeses && opts.janelaMeses > 0 ? cheios.slice(-opts.janelaMeses) : cheios
   if (!janela.length) return { ...VAZIO, motivo: 'Sem mês fechado no ano corrente.' }
 
@@ -161,10 +180,7 @@ export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgR
 
   // ── Eixo do tempo: todos os meses FECHADOS, em ordem ──
   const ymDe = (y: number, m: number) => y * 12 + (m - 1)
-  const ymAtual = ymDe(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1)
-  const todosYm = Array.from(new Set(entries.map(e => ymDe(e.year, e.month))))
-    .filter(v => v < ymAtual)
-    .sort((a, b) => a - b)
+  const todosYm = fechados
   const rotuloYm = (v: number) => `${MESES[(v % 12) + 1]}/${String(Math.floor(v / 12)).slice(-2)}`
 
   // Duas janelas de 12 meses: a primeira e a última disponíveis. Cada uma cobre
@@ -295,11 +311,8 @@ export async function compararJanelas(): Promise<BcgComparativo> {
   ])
   if (!entries.length) return { ...VAZIO_CMP, motivo: 'Sem base de Demanda por Cliente importada.' }
 
-  const hoje = new Date()
   const ymDe = (y: number, m: number) => y * 12 + (m - 1)
-  const ymAtual = ymDe(hoje.getUTCFullYear(), hoje.getUTCMonth() + 1)
-  const todosYm = Array.from(new Set(entries.map(e => ymDe(e.year, e.month))))
-    .filter(v => v < ymAtual).sort((a, b) => a - b)
+  const todosYm = mesesFechadosVendas(entries)   // mesma regra da calcularBcg
   if (todosYm.length < 13) {
     return { ...VAZIO_CMP, motivo: `São precisos 13 meses fechados para formar duas janelas; a base tem ${todosYm.length}.` }
   }
