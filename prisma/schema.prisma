@@ -311,3 +311,14 @@ model DreAjuste {
 
   @@index([year, month])
 }
+
+// Orçamento (DRE › Orçamento) editado na tela: parâmetros do modelo, premissas
+// por linha e os ajustes MÊS A MÊS (13º em nov/dez, contratação, investimento
+// pontual…). Fica gravado para o cliente voltar ao mesmo orçamento e para os
+// usuários verem a mesma versão. Uma linha por cenário — hoje só 'padrao'.
+model OrcamentoCenario {
+  id        String   @id
+  dados     Json                         // CenarioOrcamento (lib/orcamento.ts)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}

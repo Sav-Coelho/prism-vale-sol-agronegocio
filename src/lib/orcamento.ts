@@ -88,6 +88,14 @@ export const PREMISSA_PADRAO: Record<string, number> = {
 }
 
 export interface PremissaEntrada { modo?: ModoLinha; valor?: number }
+/**
+ * Ajustes MÊS A MÊS, por linha e mês ('AAAA-MM'), na unidade do modo da linha:
+ * fração da receita líquida (modo % da receita) ou R$ (valor fixo). DEDUCAO é
+ * fração da receita BRUTA. Um ajuste vale só para aquele mês e passa por cima
+ * da premissa da linha — é onde entram o 13º de nov/dez, uma contratação, um
+ * investimento pontual, a alíquota nova da reforma a partir de um mês.
+ */
+export type AjustesMes = Record<string, Record<string, number>>
 export interface OrcamentoParams {
   /** meses recentes que definem o nível e os coeficientes (default 3) */
   ancora?: number
@@ -97,8 +105,66 @@ export interface OrcamentoParams {
   horizonte?: number
   /** substitui a tendência estimada, ao mês (ex.: 0.01 = +1% a.m.) */
   crescimento?: number | null
-  /** premissas editadas na tela, por linha */
+  /** premissas editadas na tela, por linha (DEDUCAO = fração da receita bruta) */
   premissas?: Record<string, PremissaEntrada>
+  /** ajustes de um mês específico, por cima da premissa da linha */
+  ajustesMes?: AjustesMes
+  /** receita líquida de CENÁRIO num mês ('AAAA-MM' → R$), no lugar da previsão */
+  receitaMes?: Record<string, number>
+}
+/** O orçamento como fica gravado (tabela OrcamentoCenario). */
+export interface CenarioOrcamento extends OrcamentoParams {
+  /** desafio comercial sobre a receita bruta prevista (fração, ex. 0.05) — só a tela usa */
+  desafio?: number
+}
+
+const MES_VALIDO = /^\d{4}-(0[1-9]|1[0-2])$/
+const LINHAS_EDITAVEIS = () => [...Object.keys(PRIOR), 'DEDUCAO']
+/**
+ * Limpa o que vem da tela antes de gravar ou calcular: só linhas conhecidas,
+ * meses 'AAAA-MM', números finitos, parâmetros dentro da faixa.
+ */
+export function sanitizarCenario(x: unknown): CenarioOrcamento {
+  const o = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>
+  const num = (v: unknown, min: number, max: number) => {
+    const n = typeof v === 'number' ? v : Number(v)
+    return Number.isFinite(n) && n >= min && n <= max ? n : undefined
+  }
+  const linhas = LINHAS_EDITAVEIS()
+  const out: CenarioOrcamento = {}
+  const a = num(o.ancora, 1, 12); if (a != null) out.ancora = Math.round(a)
+  const p = num(o.phi, 0, 1); if (p != null) out.phi = p
+  const h = num(o.horizonte, 1, 12); if (h != null) out.horizonte = Math.round(h)
+  if (o.crescimento === null) out.crescimento = null
+  else { const c = num(o.crescimento, -0.5, 0.5); if (c != null) out.crescimento = c }
+  const d = num(o.desafio, -0.5, 1); if (d != null) out.desafio = d
+  if (o.premissas && typeof o.premissas === 'object') {
+    const ps: Record<string, PremissaEntrada> = {}
+    Object.entries(o.premissas as Record<string, Record<string, unknown>>).forEach(([L, e]) => {
+      if (!linhas.includes(L) || !e || typeof e !== 'object') return
+      const ent: PremissaEntrada = {}
+      if (L !== 'DEDUCAO' && (e.modo === 'RECEITA' || e.modo === 'FIXO')) ent.modo = e.modo
+      const v = num(e.valor, -1e9, 1e9); if (v != null) ent.valor = v
+      if (ent.modo || ent.valor != null) ps[L] = ent
+    })
+    if (Object.keys(ps).length) out.premissas = ps
+  }
+  if (o.ajustesMes && typeof o.ajustesMes === 'object') {
+    const aj: AjustesMes = {}
+    Object.entries(o.ajustesMes as Record<string, Record<string, unknown>>).forEach(([L, meses]) => {
+      if (!linhas.includes(L) || !meses || typeof meses !== 'object') return
+      const m: Record<string, number> = {}
+      Object.entries(meses).forEach(([mk, v]) => { const n = num(v, -1e9, 1e9); if (MES_VALIDO.test(mk) && n != null) m[mk] = n })
+      if (Object.keys(m).length) aj[L] = m
+    })
+    if (Object.keys(aj).length) out.ajustesMes = aj
+  }
+  if (o.receitaMes && typeof o.receitaMes === 'object') {
+    const rm: Record<string, number> = {}
+    Object.entries(o.receitaMes as Record<string, unknown>).forEach(([mk, v]) => { const n = num(v, 0, 1e10); if (MES_VALIDO.test(mk) && n != null) rm[mk] = n })
+    if (Object.keys(rm).length) out.receitaMes = rm
+  }
+  return out
 }
 
 export interface Premissa {
@@ -131,10 +197,41 @@ export interface Subtotais {
 }
 export interface MesOrcado extends Subtotais {
   mes: string
+  /** 'AAAA-MM' — a chave dos ajustes mês a mês */
+  ym: string
+  /** receita líquida que o modelo previu (a `receita` difere só se houver cenário no mês) */
+  receitaPrevista: number
+  receitaEditada: boolean
+  /** receita bruta = líquida ÷ (1 − deduções % da bruta) */
+  receitaBruta: number
+  deducoes: number
+  /** fração da receita bruta usada nas deduções do mês */
+  deducaoPct: number
   ic: { lo: number; hi: number }
   amplitude: number
   fragil: boolean
+  /** valor de cada linha no mês, em R$ (positivo = como na DRE: custo positivo, reembolso positivo) */
   linhas: Record<string, number>
+  /** linhas com ajuste próprio neste mês (inclui 'DEDUCAO') */
+  ajustados: string[]
+}
+/** Mês realizado, na mesma forma do projetado — colunas de referência da DRE projetada. */
+export interface MesRealizado extends Subtotais {
+  mes: string
+  ym: string
+  receitaBruta: number
+  deducoes: number
+  linhas: Record<string, number>
+}
+/** Deduções sobre venda: fração da receita BRUTA, medida e em uso. */
+export interface PremissaDeducao {
+  valor: number
+  origem: 'medido' | 'editado'
+  valorAncora: number
+  valorPeriodo: number
+  min: number
+  max: number
+  editado: boolean
 }
 /**
  * Check-up: o mês já fechou, então dá para cobrar o que o orçamento previu.
@@ -206,17 +303,18 @@ export interface OrcamentoResultado {
     descartados: { mes: string; lancamentos: number }[]
     corteDensidade: number
   }
-  /** realizado, com os mesmos subtotais da DRE */
-  historico: ({ mes: string } & Subtotais)[]
-  params: Required<Omit<OrcamentoParams, 'premissas' | 'crescimento'>> & { crescimento: number | null }
+  /** realizado, com os mesmos subtotais e linhas da DRE */
+  historico: MesRealizado[]
+  params: { ancora: number; phi: number; horizonte: number; crescimento: number | null }
   tendencia: { mensalEstimada: number; mensalUsada: number; phi: number; fonte: string }
   sazonalidade: { mes: number; fator: number; obs: number; fragil: boolean }[]
   premissas: Premissa[]
+  deducao: PremissaDeducao
   backtest: BacktestPonto[]
   checkups: Checkup[]
   metricas: { mapeReceita: number; coberturaIC: string; mapeLucro: number; nTestes: number; tCritico: number; grausLiberdade: number }
   meses: MesOrcado[]
-  totais: Subtotais
+  totais: Subtotais & { receitaBruta: number; deducoes: number }
 }
 
 const MES_LABEL = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -257,7 +355,7 @@ export function tcrit(gl: number): number {
   return 1.959964
 }
 
-const SUB_ZERO: Subtotais = { receita: 0, cmv: 0, despesasOperacionais: 0, ebitda: 0, abaixoEbitda: 0, lucroLiquido: 0 }
+const SUB_ZERO = { receita: 0, cmv: 0, despesasOperacionais: 0, ebitda: 0, abaixoEbitda: 0, lucroLiquido: 0, receitaBruta: 0, deducoes: 0 }
 const VAZIO: OrcamentoResultado = {
   hasData: false,
   base: { mesesRealizados: [], ultimoFechado: '', serieLonga: { n: 0, de: '', ate: '' }, descartados: [], corteDensidade: 0 },
@@ -265,6 +363,7 @@ const VAZIO: OrcamentoResultado = {
   params: { ancora: 3, phi: 0.85, horizonte: 7, crescimento: null },
   tendencia: { mensalEstimada: 0, mensalUsada: 0, phi: 0.85, fonte: '' },
   sazonalidade: [], premissas: [], backtest: [], checkups: [],
+  deducao: { valor: 0, origem: 'medido', valorAncora: 0, valorPeriodo: 0, min: 0, max: 0, editado: false },
   metricas: { mapeReceita: 0, coberturaIC: '0/0', mapeLucro: 0, nTestes: 0, tCritico: 0, grausLiberdade: 0 },
   meses: [], totais: SUB_ZERO,
 }
@@ -431,6 +530,31 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     return p.modo === 'RECEITA' ? p.valor * receita : p.valor
   }
 
+  // ── deduções sobre venda: fração da receita BRUTA ──
+  // O modelo prevê a receita LÍQUIDA; a bruta sai dela pelas deduções, para a
+  // DRE projetada começar onde a DRE começa e a meta comercial (que é de venda
+  // bruta) partir do número certo.
+  const brutaDe = (k: number) => dre.get(k)!.RECEITA ?? 0
+  const dedDe = (k: number) => dre.get(k)!.DEDUCAO ?? 0
+  const fracDed = (janela: number[]) => {
+    const b = janela.reduce((s, k) => s + brutaDe(k), 0)
+    return b > 0 ? janela.reduce((s, k) => s + dedDe(k), 0) / b : 0
+  }
+  const serieDed = meses.map(k => (brutaDe(k) > 0 ? dedDe(k) / brutaDe(k) : 0))
+  const dedEd = opts.premissas?.DEDUCAO?.valor
+  const dedEditado = dedEd != null && Number.isFinite(dedEd) && dedEd >= 0 && dedEd < 1
+  const dedAncora = fracDed(meses.slice(-ancora))
+  const deducao: PremissaDeducao = {
+    valor: dedEditado ? (dedEd as number) : dedAncora,
+    origem: dedEditado ? 'editado' : 'medido',
+    valorAncora: dedAncora, valorPeriodo: fracDed(meses),
+    min: Math.min(...serieDed), max: Math.max(...serieDed), editado: dedEditado,
+  }
+  const ajusteDe = (L: string, mk: string): number | null => {
+    const v = opts.ajustesMes?.[L]?.[mk]
+    return v != null && Number.isFinite(v) ? v : null
+  }
+
   // ── check-up: todo mês fechado que dava para prever, com a diferença aberta ──
   const checkups: Checkup[] = []
   for (let idx = 4; idx < meses.length; idx++) {
@@ -502,18 +626,36 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   let k = ultimoFechado
   for (let i = 0; i < horizonte; i++) {
     k = proximo(k)
+    const mk = ym(k)
     const f = preverReceita(mod, k)
+    // receita de cenário no mês, se houver; as linhas em % seguem a receita usada
+    const rCen = opts.receitaMes?.[mk]
+    const receitaEditada = rCen != null && Number.isFinite(rCen) && rCen >= 0
+    const receita = receitaEditada ? (rCen as number) : f.p
+    const ajustados: string[] = []
     const linhas: Record<string, number> = {}
-    linhasPresentes.forEach(L => { linhas[L] = aplicar(L, f.p) })
+    linhasPresentes.forEach(L => {
+      const aj = ajusteDe(L, mk)
+      if (aj == null) { linhas[L] = aplicar(L, receita); return }
+      ajustados.push(L)
+      linhas[L] = emUso[L].modo === 'RECEITA' ? aj * receita : aj
+    })
+    const ajD = ajusteDe('DEDUCAO', mk)
+    const dUsado = ajD != null && ajD >= 0 && ajD < 1 ? ajD : deducao.valor
+    if (ajD != null && dUsado === ajD) ajustados.push('DEDUCAO')
+    const receitaBruta = receita / (1 - dUsado)
     const amplitude = f.p > 0 ? (f.hi - f.lo) / f.p / 2 : 0
     mesesOrcados.push({
-      mes: rotulo(k), ic: { lo: f.lo, hi: f.hi }, amplitude,
+      mes: rotulo(k), ym: mk,
+      receitaPrevista: f.p, receitaEditada,
+      receitaBruta, deducoes: receitaBruta - receita, deducaoPct: dUsado,
+      ic: { lo: f.lo, hi: f.hi }, amplitude,
       fragil: amplitude > 0.4,
-      linhas,
-      ...subtotais(f.p, L => linhas[L], linhasPresentes),
+      linhas, ajustados,
+      ...subtotais(receita, L => linhas[L], linhasPresentes),
     })
   }
-  const somaCampo = (c: keyof Subtotais) => mesesOrcados.reduce((s, m) => s + m[c], 0)
+  const somaCampo = (c: keyof Subtotais | 'receitaBruta' | 'deducoes') => mesesOrcados.reduce((s, m) => s + m[c], 0)
 
   return {
     hasData: true,
@@ -523,7 +665,12 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
       serieLonga: { n: dem.length, de: dem.length ? rotulo(dem[0].k) : '', ate: dem.length ? rotulo(dem[dem.length - 1].k) : '' },
       descartados, corteDensidade: Math.round(corteDensidade),
     },
-    historico: meses.map(kk => ({ mes: rotulo(kk), ...subtotais(recLiq(kk), L => valorReal(kk, L), linhasPresentes) })),
+    historico: meses.map(kk => ({
+      mes: rotulo(kk), ym: ym(kk),
+      receitaBruta: brutaDe(kk), deducoes: dedDe(kk),
+      linhas: Object.fromEntries(linhasPresentes.map(L => [L, valorReal(kk, L)])),
+      ...subtotais(recLiq(kk), L => valorReal(kk, L), linhasPresentes),
+    })),
     params,
     tendencia: {
       mensalEstimada: gEstimado, mensalUsada: gUsado, phi,
@@ -534,6 +681,7 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
       return { mes: m, fator: Math.exp(sazonal[m]?.s ?? 0), obs: sazonal[m]?.n ?? 0, fragil: (sazonal[m]?.n ?? 0) < 2 }
     }),
     premissas,
+    deducao,
     backtest,
     checkups,
     metricas: {
@@ -544,6 +692,7 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
     },
     meses: mesesOrcados,
     totais: {
+      receitaBruta: somaCampo('receitaBruta'), deducoes: somaCampo('deducoes'),
       receita: somaCampo('receita'), cmv: somaCampo('cmv'),
       despesasOperacionais: somaCampo('despesasOperacionais'), ebitda: somaCampo('ebitda'),
       abaixoEbitda: somaCampo('abaixoEbitda'), lucroLiquido: somaCampo('lucroLiquido'),
