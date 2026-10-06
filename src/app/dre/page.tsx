@@ -9,7 +9,7 @@ import {
   ResponsiveContainer, Cell, Legend,
 } from 'recharts'
 
-interface SupplierRow { name: string; code: string | null; amount: number }
+interface SupplierRow { name: string; code: string | null; amount: number; byMonth?: Record<string, number> }
 interface SubRow { sub: string; total: number; byMonth: Record<string, number>; suppliers?: SupplierRow[] }
 interface DreRow {
   type: 'group' | 'subtotal' | 'memo'
@@ -99,6 +99,11 @@ export default function DrePage() {
   const naoFechadosVisiveis = shownMonths.filter(m => statusDe(m) !== 'fechado')
   const cur = data?.dre?.[scope]
   const sumShown = (bm: Record<string, number>) => shownMonths.reduce((s, m) => s + (bm[m] ?? 0), 0)
+  // Conta e fornecedor só aparecem se têm valor nos meses selecionados. O plano
+  // de contas mudou de nome em ago/26 ("ENERGIA ELETRICA - LOJA 1" → "ENERGIA
+  // ELETRICA"): sem o filtro, as contas antigas apareciam zeradas em setembro.
+  const temValor = (bm: Record<string, number>) => shownMonths.some(m => Math.abs(bm[m] ?? 0) > 0.004)
+  const supValor = (sp: SupplierRow) => (sp.byMonth ? sumShown(sp.byMonth) : sp.amount)
   const rowOf = (key: string) => cur?.rows.find(r => r.key === key)
   const recLiqTotal = useMemo(() => { const r = rowOf('RECLIQ'); return r ? sumShown(r.byMonth) : 0 }, [cur, shownMonths])
 
@@ -353,7 +358,8 @@ export default function DrePage() {
                     }
                     const open = expanded[row.key]
                     const isMemo = row.type === 'memo'
-                    const hasSubs = (row.subs?.length ?? 0) > 0
+                    const subsVis = (row.subs ?? []).filter(s => temValor(s.byMonth))
+                    const hasSubs = subsVis.length > 0
                     return (
                       <Fragment key={row.key}>
                         {isMemo && <tr><td colSpan={shownMonths.length + 2} style={{ padding: '8px 24px 2px', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.textMuted, borderTop: `2px solid ${C.line}` }}>Memorando — fora do resultado</td></tr>}
@@ -365,10 +371,13 @@ export default function DrePage() {
                           {shownMonths.map(m => <td key={m} style={{ textAlign: 'right', fontSize: 12, color: isMemo ? C.gold : row.sign === -1 ? C.red : C.navy }}>{cell(m)}</td>)}
                           <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 600, background: '#f6f8fb', color: isMemo ? C.gold : row.sign === -1 ? C.red : C.navy }}>{cell(null)}</td>
                         </tr>
-                        {open && row.subs?.map((s, i) => {
+                        {open && subsVis.map((s, i) => {
                           const subKey = row.key + '|' + s.sub
                           const subOpen = expandedSub[subKey]
-                          const hasSup = (s.suppliers?.length ?? 0) > 0
+                          const supVis = (s.suppliers ?? [])
+                            .filter(sp => (sp.byMonth ? temValor(sp.byMonth) : true))
+                            .sort((a, b) => Math.abs(supValor(b)) - Math.abs(supValor(a)))
+                          const hasSup = supVis.length > 0
                           const subCell = (m: string | null) => {
                             const raw = m ? (s.byMonth[m] ?? 0) : sumShown(s.byMonth)
                             const disp = row.sign === -1 ? -raw : raw
@@ -384,13 +393,23 @@ export default function DrePage() {
                                 {shownMonths.map(m => <td key={m} style={{ textAlign: 'right', fontSize: 11, color: C.textMuted }}>{subCell(m)}</td>)}
                                 <td style={{ textAlign: 'right', fontSize: 11, color: C.textSoft, background: '#f6f8fb' }}>{subCell(null)}</td>
                               </tr>
-                              {subOpen && s.suppliers?.map((sup, j) => (
-                                <tr key={subKey + j} style={{ background: '#fff' }}>
-                                  <td style={{ paddingLeft: 68, fontSize: 10.5, color: C.textMuted }}>{sup.code ? <span style={{ color: '#aab3c0' }}>{sup.code} · </span> : null}{sup.name}</td>
-                                  <td colSpan={shownMonths.length} style={{ textAlign: 'right', fontSize: 10.5, color: C.textMuted, paddingRight: 8 }} />
-                                  <td style={{ textAlign: 'right', fontSize: 10.5, color: C.textMuted, background: '#f6f8fb' }}>{avMode ? pct(sup.amount, recLiqTotal) : fmtShort(row.sign === -1 ? -sup.amount : sup.amount)}</td>
-                                </tr>
-                              ))}
+                              {subOpen && supVis.map((sup, j) => {
+                                // valor do fornecedor nos MESMOS meses da tela (por mês e no total)
+                                const supCell = (m: string | null) => {
+                                  const raw = m ? (sup.byMonth?.[m] ?? 0) : supValor(sup)
+                                  if (avMode) { const base = m ? (recliqRow?.byMonth[m] ?? 0) : recLiqTotal; return pct(raw, base) }
+                                  return fmtShort(row.sign === -1 ? -raw : raw)
+                                }
+                                return (
+                                  <tr key={subKey + j} style={{ background: '#fff' }}>
+                                    <td style={{ paddingLeft: 68, fontSize: 10.5, color: C.textMuted }}>{sup.code ? <span style={{ color: '#aab3c0' }}>{sup.code} · </span> : null}{sup.name}</td>
+                                    {sup.byMonth
+                                      ? shownMonths.map(m => <td key={m} style={{ textAlign: 'right', fontSize: 10.5, color: C.textMuted }}>{supCell(m)}</td>)
+                                      : <td colSpan={shownMonths.length} style={{ textAlign: 'right', fontSize: 10.5, color: C.textMuted, paddingRight: 8 }} />}
+                                    <td style={{ textAlign: 'right', fontSize: 10.5, color: C.textMuted, background: '#f6f8fb' }}>{supCell(null)}</td>
+                                  </tr>
+                                )
+                              })}
                             </Fragment>
                           )
                         })}
@@ -479,7 +498,9 @@ function DrePrint({ scope, rows, months, status = {} }: { scope: string; rows: D
                 </tr>
                 {(() => {
                   const LIMIT = 40
-                  const subs = (row.subs ?? []).slice().sort((a, b) => Math.abs(sum(b.byMonth)) - Math.abs(sum(a.byMonth)))
+                  const subs = (row.subs ?? [])
+                    .filter(s => months.some(m => Math.abs(s.byMonth[m] ?? 0) > 0.004))   // sem conta zerada no PDF
+                    .sort((a, b) => Math.abs(sum(b.byMonth)) - Math.abs(sum(a.byMonth)))
                   const top = subs.slice(0, LIMIT), rest = subs.slice(LIMIT)
                   const restBM: Record<string, number> = {}
                   months.forEach(m => { restBM[m] = rest.reduce((acc, x) => acc + (x.byMonth[m] ?? 0), 0) })

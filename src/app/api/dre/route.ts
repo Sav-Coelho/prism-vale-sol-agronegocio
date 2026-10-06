@@ -36,7 +36,11 @@ export async function GET() {
   const units = Array.from(new Set(entries.map(e => e.unit))).sort()
 
   // scope -> line -> sub -> { byMonth, suppliers }
-  type SubAgg = { byMonth: Map<string, number>; sup: Map<string, { code: string | null; amount: number }> }
+  // O fornecedor também guarda o valor POR MÊS: a tela soma só os meses
+  // selecionados. Com o total de todos os meses, "Consultorias" de setembro
+  // aparecia zerada e, ao abrir, o fornecedor vinha com a soma de outros meses
+  // (R$ 1.000 virava R$ 3.000; Enel R$ 39 mil) — reclamação do cliente em 06/10/2026.
+  type SubAgg = { byMonth: Map<string, number>; sup: Map<string, { code: string | null; byMonth: Map<string, number> }> }
   const scopes = new Map<string, Map<string, Map<string, SubAgg>>>()
 
   const bump = (scope: string, line: string, sub: string, m: string, supplier: string | null, code: string | null, amount: number) => {
@@ -48,9 +52,9 @@ export async function GET() {
     const rec = ss.get(sub)!
     rec.byMonth.set(m, (rec.byMonth.get(m) ?? 0) + amount)
     if (supplier) {
-      const s = rec.sup.get(supplier)
-      if (s) s.amount += amount
-      else rec.sup.set(supplier, { code, amount })
+      const s = rec.sup.get(supplier) ?? { code, byMonth: new Map<string, number>() }
+      s.byMonth.set(m, (s.byMonth.get(m) ?? 0) + amount)
+      rec.sup.set(supplier, s)
     }
   }
 
@@ -73,7 +77,12 @@ export async function GET() {
       return {
         sub, total, byMonth,
         suppliers: Array.from(rec.sup.entries())
-          .map(([name, v]) => ({ name, code: v.code, amount: v.amount }))
+          .map(([name, v]) => {
+            const porMes: Record<string, number> = {}
+            let amount = 0
+            v.byMonth.forEach((x, m) => { porMes[m] = x; amount += x })
+            return { name, code: v.code, amount, byMonth: porMes }
+          })
           .sort((a, b) => b.amount - a.amount),
       }
     }).sort((a, b) => b.total - a.total)
