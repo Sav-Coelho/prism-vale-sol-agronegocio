@@ -45,6 +45,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { chaveMes, classificarMeses } from '@/lib/dre-meses'
+import { mesesFechadosVendas } from '@/lib/bcg'
 
 export type ModoLinha = 'RECEITA' | 'FIXO'
 export type GrupoLinha = 'CMV' | 'OPERACIONAL' | 'ABAIXO'
@@ -430,10 +431,15 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   const recLiq = (k: number) => (dre.get(k)!.RECEITA ?? 0) - (dre.get(k)!.DEDUCAO ?? 0)
 
   // ── sazonalidade e tendência: série longa de vendas ──
+  // Só meses de vendas COMPLETOS (regra única de lib/bcg): o último mês da base
+  // é parcial. Sem isso, quando a DRE fecha um mês antes de a base de vendas
+  // trazê-lo inteiro, o mês pela metade entra como cheio — com setembro/26 até
+  // o dia 21 a receita prevista dos 7 meses subia ~R$ 554 mil.
   const ultimoFechado = meses[meses.length - 1]
+  const vendasCompletas = new Set(mesesFechadosVendas(demRows))
   const dem = demRows
-    .map(r => ({ k: key(r.year, r.month), m: r.month, v: r._sum.valor ?? 0 }))
-    .filter(r => r.k <= ultimoFechado && r.v > 0)
+    .map(r => ({ k: key(r.year, r.month), m: r.month, v: r._sum.valor ?? 0, ym: r.year * 12 + r.month - 1 }))
+    .filter(r => r.k <= ultimoFechado && vendasCompletas.has(r.ym) && r.v > 0)
     .sort((a, b) => a.k - b.k)
 
   const sazonal: Record<number, { s: number; n: number }> = {}

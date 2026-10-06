@@ -147,9 +147,10 @@ const VAZIO: BcgResultado = {
  * corrente" sozinho não basta: na virada do mês, o mês que acabou entrava
  * inteiro sem ter sido importado inteiro — às 00h UTC de 01/10/2026 o corte de
  * crescimento da carteira foi de +2,25% para −1,32% e 141 produtos trocaram de
- * quadrante. É a mesma convenção do a/a da Demanda por Cliente.
+ * quadrante. É a mesma convenção do a/a da Demanda por Cliente e da série de
+ * vendas do Orçamento.
  */
-function mesesFechadosVendas(entries: { year: number; month: number }[], hoje: Date = new Date()): number[] {
+export function mesesFechadosVendas(entries: { year: number; month: number }[], hoje: Date = new Date()): number[] {
   const ymAtual = hoje.getUTCFullYear() * 12 + hoje.getUTCMonth()
   const yms = Array.from(new Set(entries.map(e => e.year * 12 + (e.month - 1)))).sort((a, b) => a - b)
   const ultimo = yms[yms.length - 1]

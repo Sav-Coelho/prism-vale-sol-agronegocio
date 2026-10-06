@@ -4,7 +4,7 @@
  * depurações definidas com o cliente, que não existem na classificação bruta:
  *
  *   · Veículo FCA (financiamento)  → principal em Investimentos, juros em Financeiras
- *   · Multmunde (empresa do grupo) → memo intragrupo, fora do resultado
+ *   · Multmunde ↔ Vale do Sol (grupo) → memo intragrupo, fora do resultado — os DOIS lados
  *   · Transferências entre lojas   → excluídas
  *   · Reembolso a cliente          → líquido (saídas − entradas) nas Deduções
  *   · Orga Log                     → mercadoria (laboratório fatura pela logística)
@@ -43,10 +43,25 @@ export interface CfDreEntry {
  * usam o radical comum. `naoClassificado` é devolvido por buildDreFromCashflow
  * para que uma categoria nova NUNCA passe silenciosamente para Administrativas.
  */
+// Contraparte que é empresa do grupo, pelo NOME no início do histórico:
+// "IPTU MULTMUNDE" é imposto de verdade e "DEPOSITO DO CAIXA DA MULTMUNDE" é
+// transferência — nenhum dos dois começa com o nome da empresa.
+const GRUPO = /^(MULTMUNDE|MULTIMUNDO|VALE DO SOL AGRONEGOCIO)/
+
 function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string; sub: string; fallback?: true } | null {
   const has = (kw: string) => path.some(x => x.includes(kw))
   const W = norm(hist)
   const last = [...path].reverse().find(Boolean) ?? '—'
+
+  // Intercompany (Sávio, 06/10/2026: "Multmunde é intercompany, não é para entrar
+  // na DRE"). A DRE consolida lojas das duas empresas, então o arquivo traz as
+  // duas pontas — a Vale do Sol paga, a Multmunde recebe — e AMBAS saem do
+  // resultado. Antes só a saída saía: o recebimento da Multmunde contava como
+  // receita (R$ 144 mil de mercadoria em fev–jun) e os "reembolsos" entre as
+  // empresas inflavam Deduções e Não-Operacional (R$ 303 mil em jan–fev).
+  if (GRUPO.test(W) && !has('DEPOSITO C/C') && !has('TRANSFERENCIA ENTRE LOJAS')) {
+    return { line: 'INTRAGRUPO', sub: tipo === 'E' ? 'Recebido de empresa do grupo' : 'Pago a empresa do grupo' }
+  }
 
   if (tipo === 'E') {
     // devolução/estorno estornado DE VOLTA para a empresa abate a dedução
@@ -152,8 +167,10 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
 
     // Reembolso é lava-e-passa: a entrada abate a saída dentro de Deduções
     // (líquido). Guardamos com sinal negativo e a compensação é feita depois.
+    // No intragrupo a entrada também vai negativa: o memo fica com o líquido
+    // (pago − recebido) e a prova de caixa (E − S = LL − intragrupo) se mantém.
     const line = c.line === 'REEMBIN' ? 'DEDUCAO' : c.line
-    const amount = c.line === 'REEMBIN' ? -Math.abs(val) : Math.abs(val)
+    const amount = c.line === 'REEMBIN' || (c.line === 'INTRAGRUPO' && tipo === 'E') ? -Math.abs(val) : Math.abs(val)
     const kind = line === 'RECEITA' ? 'RECEITA' : line === 'DEDUCAO' ? 'DEDUCAO' : line === 'JUROS' ? 'JUROS' : 'EXP'
 
     add({
