@@ -48,7 +48,13 @@ export interface CfDreEntry {
 // transferência — nenhum dos dois começa com o nome da empresa.
 const GRUPO = /^(MULTMUNDE|MULTIMUNDO|VALE DO SOL AGRONEGOCIO)/
 
-function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string; sub: string; fallback?: true } | null {
+// A regra intercompany completa vale de SETEMBRO/2026 em diante. Jan–ago já
+// estavam fechados e apresentados com a regra antiga (só o pagamento de
+// mercadoria à Multmunde fica fora) e NÃO podem mudar — decisão do Sávio em
+// 06/10/2026, depois de a regra ter sido aplicada ao ano todo por engano.
+const INTERCOMPANY_DESDE = 2026 * 12 + 9
+
+function classify(path: string[], hist: string, tipo: 'E' | 'S', intercompany: boolean): { line: string; sub: string; fallback?: true } | null {
   const has = (kw: string) => path.some(x => x.includes(kw))
   const W = norm(hist)
   const last = [...path].reverse().find(Boolean) ?? '—'
@@ -56,10 +62,8 @@ function classify(path: string[], hist: string, tipo: 'E' | 'S'): { line: string
   // Intercompany (Sávio, 06/10/2026: "Multmunde é intercompany, não é para entrar
   // na DRE"). A DRE consolida lojas das duas empresas, então o arquivo traz as
   // duas pontas — a Vale do Sol paga, a Multmunde recebe — e AMBAS saem do
-  // resultado. Antes só a saída saía: o recebimento da Multmunde contava como
-  // receita (R$ 144 mil de mercadoria em fev–jun) e os "reembolsos" entre as
-  // empresas inflavam Deduções e Não-Operacional (R$ 303 mil em jan–fev).
-  if (GRUPO.test(W) && !has('DEPOSITO C/C') && !has('TRANSFERENCIA ENTRE LOJAS')) {
+  // resultado, a partir de set/2026 (ver INTERCOMPANY_DESDE).
+  if (intercompany && GRUPO.test(W) && !has('DEPOSITO C/C') && !has('TRANSFERENCIA ENTRE LOJAS')) {
     return { line: 'INTRAGRUPO', sub: tipo === 'E' ? 'Recebido de empresa do grupo' : 'Pago a empresa do grupo' }
   }
 
@@ -152,7 +156,7 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
     const tipo = clean(row[iTipo]) === 'S' ? 'S' : 'E'
     const path = iCs.map(i => norm(row[i])).filter(Boolean)
     const hist = clean(row[iHist])
-    const c = classify(path, hist, tipo)
+    const c = classify(path, hist, tipo, year * 12 + month >= INTERCOMPANY_DESDE)
     if (!c) continue
 
     rows++
