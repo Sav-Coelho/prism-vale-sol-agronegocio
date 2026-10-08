@@ -322,3 +322,17 @@ model OrcamentoCenario {
   updatedAt DateTime @updatedAt
   updatedBy String?
 }
+
+// Matriz de Fornecedores (Controle de Compras): avaliação de RISCO DE
+// ABASTECIMENTO feita pelo comprador, uma linha por fornecedor (chave = nome
+// agrupado por lib/matriz-fornecedores). A importância vem do gasto pago na DRE.
+model FornecedorRisco {
+  chave        String   @id
+  nome         String
+  tipo         String?                   // FABRICANTE | DISTRIBUIDOR | OUTRO
+  alternativas Int?                      // 0 | 33 | 67 | 100
+  condicoes    Int?                      // 0 | 50 | 100
+  falhas       Int?                      // 0 | 50 | 100
+  updatedAt    DateTime @updatedAt
+  updatedBy    String?
+}

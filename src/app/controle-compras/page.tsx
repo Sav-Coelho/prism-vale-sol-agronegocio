@@ -2,12 +2,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
 import { CommercialUploader } from '@/components/CommercialUploader'
+import { MatrizFornecedores } from '@/components/MatrizFornecedores'
 import {
   ComposedChart, Bar, Line, BarChart, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, Cell,
 } from 'recharts'
 
-type Tab = 'dashboard' | 'pedidos' | 'reposicao' | 'config'
+type Tab = 'dashboard' | 'pedidos' | 'reposicao' | 'matriz' | 'config'
 interface Comprador { id: number; nome: string; limite: number; setor: string | null; ativo: boolean }
 interface FornecedorReg { id: number; nome: string; ativo: boolean }
 interface Pedido { id: number; comprador: string; fornecedor: string | null; tipo: string | null; categoria: string | null; dataPedido: string; valor: number; parcelas: number; datas?: string[] | null; primeiraDias: number; intervaloDias: number; status: string }
@@ -59,7 +60,7 @@ export default function ControleCompras() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {([['dashboard', 'Dashboard'], ['pedidos', 'Pedidos'], ['reposicao', 'Reposição por Giro'], ['config', 'Config']] as [Tab, string][]).map(([k, l]) => (
+          {([['dashboard', 'Dashboard'], ['pedidos', 'Pedidos'], ['reposicao', 'Reposição por Giro'], ['matriz', 'Matriz de Fornecedores'], ['config', 'Config']] as [Tab, string][]).map(([k, l]) => (
             <button key={k} className={tab === k ? 'btn btn-primary' : 'btn'} onClick={() => setTab(k)}>{l}</button>
           ))}
         </div>
@@ -72,6 +73,7 @@ export default function ControleCompras() {
           {tab === 'dashboard' && <Dashboard an={an} onReload={load} />}
           {tab === 'pedidos' && <Pedidos cfg={cfg} pedidos={pedidos} onChange={load} showToast={showToast} />}
           {tab === 'reposicao' && <ReposicaoPanel an={an} />}
+          {tab === 'matriz' && <MatrizFornecedores />}
           {tab === 'config' && <ConfigPanel cfg={cfg} an={an} onChange={load} showToast={showToast} />}
         </>
       )}
