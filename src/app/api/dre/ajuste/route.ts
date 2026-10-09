@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const lista: unknown[] = Array.isArray(body.ajustes) ? body.ajustes : []
   if (!lista.length) return NextResponse.json({ error: 'Envie { ajustes: [...] }' }, { status: 400 })
 
-  type In = { unit: string; kind?: string; line: string; sub: string; year: number; month: number; amount: number; motivo?: string }
+  type In = { unit: string; kind?: string; line: string; sub: string; supplier?: string; year: number; month: number; amount: number; motivo?: string }
   const data = lista.map(x => {
     const a = x as In
     if (!a.unit || !a.line || !a.sub || !a.year || !a.month || typeof a.amount !== 'number') {
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     }
     return {
       unit: a.unit, kind: a.kind || (a.line === 'RECEITA' ? 'RECEITA' : a.line === 'DEDUCAO' ? 'DEDUCAO' : 'EXP'),
-      line: a.line, sub: a.sub, year: a.year, month: a.month, amount: a.amount, motivo: a.motivo ?? null,
+      line: a.line, sub: a.sub, supplier: a.supplier ?? null, year: a.year, month: a.month, amount: a.amount, motivo: a.motivo ?? null,
     }
   })
 

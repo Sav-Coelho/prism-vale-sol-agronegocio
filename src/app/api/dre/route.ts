@@ -17,7 +17,9 @@ const CONS = 'CONSOLIDADO'
 
 export async function GET() {
   // Ajustes manuais de conciliação entram como lançamentos normais NA LEITURA:
-  // ficam fora de DreEntry para não serem apagados pelo import mensal.
+  // ficam fora de DreEntry para não serem apagados pelo import mensal. O ajuste
+  // que corrige o lançamento de um fornecedor leva o nome dele, e o drill-down
+  // mostra o fornecedor já com o valor corrigido.
   const [importados, ajustes, meses] = await Promise.all([
     prisma.dreEntry.findMany(),
     prisma.dreAjuste.findMany(),
@@ -27,7 +29,7 @@ export async function GET() {
     ...importados,
     ...ajustes.map(a => ({
       unit: a.unit, kind: a.kind, line: a.line, sub: a.sub,
-      supplier: null as string | null, supplierCode: null as string | null,
+      supplier: a.supplier ?? null, supplierCode: null as string | null,
       year: a.year, month: a.month, amount: a.amount,
     })),
   ]

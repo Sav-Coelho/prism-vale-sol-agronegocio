@@ -303,6 +303,7 @@ model DreAjuste {
   kind      String                       // RECEITA | DEDUCAO | JUROS | EXP
   line      String                       // RECEITA, CMV, ADM, …
   sub       String                       // rótulo visível na DRE
+  supplier  String?                      // fornecedor do drill-down, quando o ajuste corrige um lançamento dele
   year      Int
   month     Int
   amount    Float
