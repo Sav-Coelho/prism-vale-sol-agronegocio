@@ -769,55 +769,108 @@ const dayShort = (iso: string) => { const [, m, d] = iso.split('-'); return `${d
 const weekdayOf = (iso: string) => WEEKDAY[new Date(iso + 'T00:00:00Z').getUTCDay()]
 const fmtK2 = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0)) }
 
+// Filtro de período (pedido do cliente, 14/10/2026): somar só os dias escolhidos —
+// ex.: "a próxima semana, de 13 a 19" — com total a receber, a pagar e saldo.
+type Periodo = 'tudo' | 'prox7' | 'semana' | 'proxSemana' | 'mes' | 'proxMes' | 'livre'
+const PERIODOS: [Periodo, string][] = [
+  ['tudo', 'Tudo'], ['prox7', 'Próximos 7 dias'], ['semana', 'Esta semana'], ['proxSemana', 'Próxima semana'],
+  ['mes', 'Este mês'], ['proxMes', 'Próximo mês'],
+]
+const addDias = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const segundaDe = (iso: string) => { const wd = new Date(iso + 'T00:00:00Z').getUTCDay(); return addDias(iso, wd === 0 ? -6 : 1 - wd) }
+const ultimoDiaDoMes = (ano: number, mes: number) => new Date(Date.UTC(ano, mes, 0)).toISOString().slice(0, 10)   // mes 1–12
+const diasEntre = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5) + 1
+function datasDoPeriodo(p: Periodo, hoje: string, primeiro: string, ultimo: string): [string, string] {
+  const ano = Number(hoje.slice(0, 4)), mes = Number(hoje.slice(5, 7))
+  if (p === 'prox7') return [hoje, addDias(hoje, 6)]
+  if (p === 'semana') { const s = segundaDe(hoje); return [s, addDias(s, 6)] }
+  if (p === 'proxSemana') { const s = addDias(segundaDe(hoje), 7); return [s, addDias(s, 6)] }
+  if (p === 'mes') return [hoje.slice(0, 8) + '01', ultimoDiaDoMes(ano, mes)]
+  if (p === 'proxMes') { const a = mes === 12 ? ano + 1 : ano, m = mes === 12 ? 1 : mes + 1; return [`${a}-${String(m).padStart(2, '0')}-01`, ultimoDiaDoMes(a, m)] }
+  return [primeiro, ultimo]
+}
+
 function DailyPanel({ daily }: { daily: DailyResponse }) {
   const [open, setOpen] = useState<Record<string, boolean>>({})
+  const primeiro = daily.dias[0]?.date ?? daily.hoje
+  const ultimo = daily.dias[daily.dias.length - 1]?.date ?? daily.hoje
+  const [periodo, setPeriodo] = useState<Periodo>('tudo')
+  const [de, setDe] = useState(primeiro)
+  const [ate, setAte] = useState(ultimo)
   if (!daily.hasData) {
     return <div className="card"><div className="empty-state"><div className="empty-state-icon">◇</div><div className="empty-state-title">Sem lançamentos futuros</div></div></div>
   }
-  const chartData = daily.dias.slice(0, 45).map(d => ({ dia: dayShort(d.date), receber: d.receber, pagar: d.pagar, acumulado: d.acumulado }))
+  const escolher = (p: Periodo) => { const [a, b] = datasDoPeriodo(p, daily.hoje, primeiro, ultimo); setPeriodo(p); setDe(a); setAte(b) }
+  // datas digitadas ao contrário não zeram a tela: vale o intervalo entre as duas
+  const ini = de && ate && de > ate ? ate : (de || primeiro)
+  const fim = de && ate && de > ate ? de : (ate || ultimo)
+  const filtrando = ini > primeiro || fim < ultimo
+  let acum = 0
+  const dias = daily.dias.filter(d => d.date >= ini && d.date <= fim).map(d => { acum += d.saldoDia; return { ...d, acumPeriodo: acum } })
+  const tot = dias.reduce((t, d) => ({ receber: t.receber + d.receber, pagar: t.pagar + d.pagar, nReceber: t.nReceber + d.nReceber, nPagar: t.nPagar + d.nPagar }), { receber: 0, pagar: 0, nReceber: 0, nPagar: 0 })
+  const saldoPeriodo = tot.receber - tot.pagar
+  const vencidos = dias.filter(d => d.date < daily.hoje).reduce((v, d) => ({ receber: v.receber + d.receber, pagar: v.pagar + d.pagar }), { receber: 0, pagar: 0 })
+  const MAX_GRAFICO = 62
+  const chartData = dias.slice(0, filtrando ? MAX_GRAFICO : 45).map(d => ({ dia: dayShort(d.date), receber: d.receber, pagar: d.pagar, acumulado: d.acumPeriodo }))
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
+  const chip = (ativo: boolean): React.CSSProperties => ({ border: `1px solid ${ativo ? C.navy : C.line}`, background: ativo ? C.navy : '#fff', color: ativo ? '#fff' : C.textSoft, borderRadius: 20, padding: '4px 12px', fontSize: 12, cursor: 'pointer' })
+  const campoData: React.CSSProperties = { fontSize: 12.5, padding: '4px 6px', border: `1px solid ${C.line}`, borderRadius: 4, color: C.navy, background: '#fff' }
+  const rotuloPeriodo = ini === fim ? dayLabel(ini) : `${dayLabel(ini)} a ${dayLabel(fim)}`
 
   return (
     <>
       <div className="card mb-6">
-        <div className="grid-4" style={{ gap: 28 }}>
-          {/* todos os vencimentos da base, inclusive os já passados (decisão de 05/08) —
-              "futuro"/"de hoje em diante" descrevia uma regra que não existe mais */}
-          <KpiBig label="A receber" value={fmt(daily.resumo.totReceber)}
-            sub={daily.resumo.vencidos?.nReceber ? `inclui ${fmt(daily.resumo.vencidos.receber)} já vencidos` : `${daily.resumo.nDias} dias com movimento`} color={C.green} />
-          <KpiBig label="A pagar" value={fmt(daily.resumo.totPagar)}
-            sub={daily.resumo.vencidos?.nPagar ? `inclui ${fmt(daily.resumo.vencidos.pagar)} já vencidos` : 'todos os vencimentos da base'} color={C.red} />
-          <KpiBig label="Saldo projetado" value={fmt(daily.resumo.saldo)} sub="a receber − a pagar" color={daily.resumo.saldo >= 0 ? C.green : C.red} />
-          <KpiBig label="Hoje" value={dayLabel(daily.hoje)} sub={weekdayOf(daily.hoje)} color={C.navy} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 18, paddingBottom: 14, borderBottom: `1px solid ${C.line}` }}>
+          <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, color: C.textMuted, marginRight: 4 }}>Período</span>
+          {PERIODOS.map(([k, l]) => <button key={k} style={chip(periodo === k)} onClick={() => escolher(k)}>{l}</button>)}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, fontSize: 12, color: C.textSoft }}>
+            de <input type="date" style={campoData} value={de} min={primeiro} max={ultimo} onChange={e => { setDe(e.target.value); setPeriodo('livre') }} />
+            até <input type="date" style={campoData} value={ate} min={primeiro} max={ultimo} onChange={e => { setAte(e.target.value); setPeriodo('livre') }} />
+          </span>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: C.textMuted }}>hoje: {dayLabel(daily.hoje)} · {weekdayOf(daily.hoje)}</span>
         </div>
-        <AvisoVencidos v={daily.resumo.vencidos} desde={daily.resumo.primeiroDia} />
+        <div className="grid-4" style={{ gap: 28 }}>
+          {/* totais do período escolhido; em "Tudo", todos os vencimentos da base, inclusive
+              os já passados (decisão de 05/08) */}
+          <KpiBig label={filtrando ? 'A receber no período' : 'A receber'} value={fmt(tot.receber)}
+            sub={vencidos.receber ? `inclui ${fmt(vencidos.receber)} já vencidos` : `${tot.nReceber} títulos`} color={C.green} />
+          <KpiBig label={filtrando ? 'A pagar no período' : 'A pagar'} value={fmt(tot.pagar)}
+            sub={vencidos.pagar ? `inclui ${fmt(vencidos.pagar)} já vencidos` : `${tot.nPagar} títulos`} color={C.red} />
+          <KpiBig label={filtrando ? 'Saldo do período' : 'Saldo projetado'} value={fmt(saldoPeriodo)} sub="a receber − a pagar" color={saldoPeriodo >= 0 ? C.green : C.red} />
+          <KpiBig label="Período" value={rotuloPeriodo} sub={`${diasEntre(ini, fim)} dias · ${dias.length} com movimento`} color={C.navy} />
+        </div>
+        {!filtrando && <AvisoVencidos v={daily.resumo.vencidos} desde={daily.resumo.primeiroDia} />}
       </div>
 
       <div className="card mb-6 card-accent-yellow">
         <div className="card-header">
           <div>
-            <div className="card-eyebrow">Próximos 45 dias com movimento</div>
-            <div className="card-title">Entradas × Saídas por dia · saldo acumulado</div>
+            <div className="card-eyebrow">{filtrando ? (dias.length > MAX_GRAFICO ? `Primeiros ${MAX_GRAFICO} dias com movimento do período` : `${rotuloPeriodo} · dias com movimento`) : 'Próximos 45 dias com movimento'}</div>
+            <div className="card-title">Entradas × Saídas por dia · saldo acumulado{filtrando ? ' no período' : ''}</div>
           </div>
         </div>
+        {dias.length === 0 ? (
+          <div className="empty-state"><div className="empty-state-title">Nenhum vencimento entre {rotuloPeriodo}</div></div>
+        ) : (
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart data={chartData} margin={{ top: 8, right: 24, bottom: 4, left: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-            <XAxis dataKey="dia" tick={{ fontSize: 9, fill: C.textSoft }} stroke={C.line} interval={2} />
+            <XAxis dataKey="dia" tick={{ fontSize: 9, fill: C.textSoft }} stroke={C.line} interval={chartData.length <= 16 ? 0 : 2} />
             <YAxis tick={{ fontSize: 10, fill: C.textSoft }} stroke={C.line} tickFormatter={fmtK2} />
             <Tooltip {...tooltipStyle} formatter={(v: number) => fmt(v)} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             <Bar dataKey="receber" name="A receber" fill={C.green} radius={[2, 2, 0, 0]} />
             <Bar dataKey="pagar" name="A pagar" fill={C.red} radius={[2, 2, 0, 0]} />
-            <Line dataKey="acumulado" name="Saldo acumulado" stroke={C.navy} strokeWidth={2} dot={false} />
+            <Line dataKey="acumulado" name={filtrando ? 'Saldo acumulado no período' : 'Saldo acumulado'} stroke={C.navy} strokeWidth={2} dot={false} />
           </ComposedChart>
         </ResponsiveContainer>
+        )}
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
-          <div className="card-eyebrow">Dia a dia</div>
+          <div className="card-eyebrow">Dia a dia{filtrando ? ` · ${rotuloPeriodo}` : ''}</div>
           <div className="card-title" style={{ fontSize: 14 }}>Clique num dia para ver as contas componentes</div>
         </div>
         <div className="table-wrap" style={{ maxHeight: '65vh' }}>
@@ -828,12 +881,24 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
                 <th style={{ textAlign: 'right' }}>A receber</th>
                 <th style={{ textAlign: 'right' }}>A pagar</th>
                 <th style={{ textAlign: 'right' }}>Saldo do dia</th>
-                <th style={{ textAlign: 'right' }}>Acumulado</th>
+                <th style={{ textAlign: 'right' }}>{filtrando ? 'Acumulado no período' : 'Acumulado'}</th>
                 <th style={{ width: 30 }}></th>
               </tr>
             </thead>
+            <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 2 }}>
+              <tr style={{ background: '#eef2f8' }}>
+                <td style={{ fontSize: 12.5, fontWeight: 700, color: C.navy, whiteSpace: 'nowrap', borderTop: `2px solid ${C.navy}` }}>
+                  Total {filtrando ? 'do período' : 'da base'} <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>· {dias.length} dia{dias.length !== 1 ? 's' : ''}</span>
+                </td>
+                <td style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: C.green, borderTop: `2px solid ${C.navy}` }}>{fmt(tot.receber)}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}> ({tot.nReceber})</span></td>
+                <td style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: C.red, borderTop: `2px solid ${C.navy}` }}>{fmt(tot.pagar)}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}> ({tot.nPagar})</span></td>
+                <td style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: saldoPeriodo >= 0 ? C.green : C.red, borderTop: `2px solid ${C.navy}` }}>{fmt(saldoPeriodo)}</td>
+                <td style={{ borderTop: `2px solid ${C.navy}` }}></td>
+                <td style={{ borderTop: `2px solid ${C.navy}` }}></td>
+              </tr>
+            </tfoot>
             <tbody>
-              {daily.dias.map(d => {
+              {dias.map(d => {
                 const isOpen = open[d.date]
                 return (
                   <Fragment key={d.date}>
@@ -844,7 +909,7 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
                       <td style={{ textAlign: 'right', fontSize: 12, color: C.green, fontWeight: 600 }}>{d.receber ? fmt(d.receber) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{d.nReceber ? ` (${d.nReceber})` : ''}</span></td>
                       <td style={{ textAlign: 'right', fontSize: 12, color: C.red, fontWeight: 600 }}>{d.pagar ? fmt(d.pagar) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{d.nPagar ? ` (${d.nPagar})` : ''}</span></td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: d.saldoDia >= 0 ? C.green : C.red }}>{fmt(d.saldoDia)}</td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: d.acumulado >= 0 ? C.navy : C.red }}>{fmt(d.acumulado)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: d.acumPeriodo >= 0 ? C.navy : C.red }}>{fmt(d.acumPeriodo)}</td>
                       <td style={{ textAlign: 'center', color: C.gold }}>{isOpen ? '▾' : '▸'}</td>
                     </tr>
                     {isOpen && (
@@ -865,7 +930,9 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
         </div>
       </div>
       <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
-        Todos os vencimentos da base importada, inclusive os já passados, um dia por linha. O acumulado soma os saldos diários na ordem — assume liquidação no vencimento.
+        {filtrando
+          ? `Só os vencimentos de ${rotuloPeriodo}, um dia por linha. O acumulado começa no primeiro dia do período e soma os saldos diários na ordem — assume liquidação no vencimento.`
+          : 'Todos os vencimentos da base importada, inclusive os já passados, um dia por linha. O acumulado soma os saldos diários na ordem — assume liquidação no vencimento.'}
       </p>
     </>
   )
