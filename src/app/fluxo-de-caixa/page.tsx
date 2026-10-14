@@ -154,7 +154,7 @@ export default function FluxoDeCaixa() {
             </div>
           )}
           <div style={{ display: 'flex', gap: 6 }}>
-            {([['view', 'Visão Geral'], ['daily', 'Por Dia'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
+            {([['view', 'Visão Geral'], ['daily', 'Por Período'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
               <button key={k}
                 className={tab === k ? 'btn btn-primary' : 'btn'}
                 onClick={() => setTab(k)}>
@@ -761,7 +761,7 @@ function ScatterDaysVsValue({
 }
 
 // ─────────────────────────────────────────────────────────
-//  DAILY PANEL — fluxo por dia com as contas componentes
+//  DAILY PANEL — fluxo por dia, semana ou mês, com as contas componentes
 // ─────────────────────────────────────────────────────────
 const WEEKDAY = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const dayLabel = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}/${m}/${y.slice(2)}` }
@@ -769,13 +769,22 @@ const dayShort = (iso: string) => { const [, m, d] = iso.split('-'); return `${d
 const weekdayOf = (iso: string) => WEEKDAY[new Date(iso + 'T00:00:00Z').getUTCDay()]
 const fmtK2 = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0)) }
 
-// Filtro de período (pedido do cliente, 14/10/2026): somar só os dias escolhidos —
-// ex.: "a próxima semana, de 13 a 19" — com total a receber, a pagar e saldo.
-type Periodo = 'tudo' | 'prox7' | 'semana' | 'proxSemana' | 'mes' | 'proxMes' | 'livre'
+// Filtro de período e visão por dia, semana ou mês (pedido do cliente, 14/10/2026): somar só
+// os dias escolhidos — ex.: "a próxima semana" — e ver o a receber e o a pagar semana a semana.
+type Periodo = 'tudo' | 'prox7' | 'semana' | 'proxSemana' | 'prox4sem' | 'mes' | 'proxMes' | 'livre'
+type Agrupar = 'dia' | 'semana' | 'mes'
 const PERIODOS: [Periodo, string][] = [
   ['tudo', 'Tudo'], ['prox7', 'Próximos 7 dias'], ['semana', 'Esta semana'], ['proxSemana', 'Próxima semana'],
-  ['mes', 'Este mês'], ['proxMes', 'Próximo mês'],
+  ['prox4sem', 'Próximas 4 semanas'], ['mes', 'Este mês'], ['proxMes', 'Próximo mês'],
 ]
+const AGRUPAR: [Agrupar, string][] = [['dia', 'Dia'], ['semana', 'Semana'], ['mes', 'Mês']]
+const NOME_GRUPO: Record<Agrupar, { um: string; varios: string; saldo: string }> = {
+  dia: { um: 'dia', varios: 'dias', saldo: 'Saldo do dia' },
+  semana: { um: 'semana', varios: 'semanas', saldo: 'Saldo da semana' },
+  mes: { um: 'mês', varios: 'meses', saldo: 'Saldo do mês' },
+}
+const MES_CURTO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+const CHAVE_AGRUPAR = 'arken-fluxo-agrupar'
 const addDias = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 const segundaDe = (iso: string) => { const wd = new Date(iso + 'T00:00:00Z').getUTCDay(); return addDias(iso, wd === 0 ? -6 : 1 - wd) }
 const ultimoDiaDoMes = (ano: number, mes: number) => new Date(Date.UTC(ano, mes, 0)).toISOString().slice(0, 10)   // mes 1–12
@@ -785,10 +794,54 @@ function datasDoPeriodo(p: Periodo, hoje: string, primeiro: string, ultimo: stri
   if (p === 'prox7') return [hoje, addDias(hoje, 6)]
   if (p === 'semana') { const s = segundaDe(hoje); return [s, addDias(s, 6)] }
   if (p === 'proxSemana') { const s = addDias(segundaDe(hoje), 7); return [s, addDias(s, 6)] }
+  if (p === 'prox4sem') { const s = segundaDe(hoje); return [s, addDias(s, 27)] }
   if (p === 'mes') return [hoje.slice(0, 8) + '01', ultimoDiaDoMes(ano, mes)]
   if (p === 'proxMes') { const a = mes === 12 ? ano + 1 : ano, m = mes === 12 ? 1 : mes + 1; return [`${a}-${String(m).padStart(2, '0')}-01`, ultimoDiaDoMes(a, m)] }
   return [primeiro, ultimo]
 }
+
+/** Uma linha da tabela: um dia, uma semana (segunda a domingo) ou um mês, recortado pelo período. */
+interface Grupo {
+  chave: string; ini: string; fim: string; parcial: boolean; nDias: number
+  receber: number; pagar: number; nReceber: number; nPagar: number; saldo: number; acum: number
+  recebimentos: DailyItem[]; pagamentos: DailyItem[]
+}
+function agruparDias(dias: DailyDay[], modo: Agrupar, ini: string, fim: string): Grupo[] {
+  const grupos = new Map<string, Grupo>()
+  const ordem: string[] = []
+  dias.forEach(d => {
+    const chave = modo === 'semana' ? segundaDe(d.date) : modo === 'mes' ? d.date.slice(0, 7) : d.date
+    let g = grupos.get(chave)
+    if (!g) {
+      const gIni = modo === 'semana' ? chave : modo === 'mes' ? chave + '-01' : chave
+      const gFim = modo === 'semana' ? addDias(chave, 6) : modo === 'mes' ? ultimoDiaDoMes(Number(chave.slice(0, 4)), Number(chave.slice(5, 7))) : chave
+      g = { chave, ini: gIni < ini ? ini : gIni, fim: gFim > fim ? fim : gFim, parcial: gIni < ini || gFim > fim, nDias: 0,
+        receber: 0, pagar: 0, nReceber: 0, nPagar: 0, saldo: 0, acum: 0, recebimentos: [], pagamentos: [] }
+      grupos.set(chave, g); ordem.push(chave)
+    }
+    g.receber += d.receber; g.pagar += d.pagar; g.nReceber += d.nReceber; g.nPagar += d.nPagar; g.nDias++
+    if (modo === 'dia') { g.recebimentos = d.recebimentos; g.pagamentos = d.pagamentos; return }
+    // na semana e no mês, cada título leva a data do vencimento na frente do nome
+    const comData = (i: DailyItem): DailyItem => ({ ...i, nome: `${dayShort(d.date)} · ${i.nome}` })
+    d.recebimentos.forEach(i => g!.recebimentos.push(comData(i)))
+    d.pagamentos.forEach(i => g!.pagamentos.push(comData(i)))
+  })
+  let acum = 0
+  return ordem.map(k => {
+    const g = grupos.get(k)!
+    g.saldo = g.receber - g.pagar
+    acum += g.saldo
+    g.acum = acum
+    if (modo !== 'dia') { g.recebimentos.sort((a, b) => b.valor - a.valor); g.pagamentos.sort((a, b) => b.valor - a.valor) }
+    return g
+  })
+}
+const rotuloGrupo = (g: Grupo, modo: Agrupar) =>
+  modo === 'dia' ? dayLabel(g.ini)
+  : modo === 'semana' ? `${dayShort(g.ini)} a ${dayShort(g.fim)}`
+  : `${MES_CURTO[Number(g.chave.slice(5, 7)) - 1]}/${g.chave.slice(2, 4)}`
+const eixoGrupo = (g: Grupo, modo: Agrupar) =>
+  modo === 'dia' ? dayShort(g.ini) : modo === 'semana' ? `${dayShort(g.ini)}–${dayShort(g.fim)}` : rotuloGrupo(g, modo)
 
 function DailyPanel({ daily }: { daily: DailyResponse }) {
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -797,38 +850,50 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
   const [periodo, setPeriodo] = useState<Periodo>('tudo')
   const [de, setDe] = useState(primeiro)
   const [ate, setAte] = useState(ultimo)
+  // a visão escolhida fica guardada neste navegador (o painel só monta no cliente, depois do fetch)
+  const [agrupar, setAgruparEstado] = useState<Agrupar>(() => {
+    try { const v = window.localStorage.getItem(CHAVE_AGRUPAR); return v === 'dia' || v === 'mes' ? v : 'semana' } catch { return 'semana' }
+  })
   if (!daily.hasData) {
     return <div className="card"><div className="empty-state"><div className="empty-state-icon">◇</div><div className="empty-state-title">Sem lançamentos futuros</div></div></div>
   }
-  const escolher = (p: Periodo) => { const [a, b] = datasDoPeriodo(p, daily.hoje, primeiro, ultimo); setPeriodo(p); setDe(a); setAte(b) }
+  const setAgrupar = (a: Agrupar) => { setAgruparEstado(a); setOpen({}); try { window.localStorage.setItem(CHAVE_AGRUPAR, a) } catch { /* navegador sem armazenamento */ } }
+  const escolher = (p: Periodo) => { const [a, b] = datasDoPeriodo(p, daily.hoje, primeiro, ultimo); setPeriodo(p); setDe(a); setAte(b); setOpen({}) }
   // datas digitadas ao contrário não zeram a tela: vale o intervalo entre as duas
   const ini = de && ate && de > ate ? ate : (de || primeiro)
   const fim = de && ate && de > ate ? de : (ate || ultimo)
   const filtrando = ini > primeiro || fim < ultimo
-  let acum = 0
-  const dias = daily.dias.filter(d => d.date >= ini && d.date <= fim).map(d => { acum += d.saldoDia; return { ...d, acumPeriodo: acum } })
+  const dias = daily.dias.filter(d => d.date >= ini && d.date <= fim)
+  const grupos = agruparDias(dias, agrupar, ini, fim)
+  const nome = NOME_GRUPO[agrupar]
   const tot = dias.reduce((t, d) => ({ receber: t.receber + d.receber, pagar: t.pagar + d.pagar, nReceber: t.nReceber + d.nReceber, nPagar: t.nPagar + d.nPagar }), { receber: 0, pagar: 0, nReceber: 0, nPagar: 0 })
   const saldoPeriodo = tot.receber - tot.pagar
   const vencidos = dias.filter(d => d.date < daily.hoje).reduce((v, d) => ({ receber: v.receber + d.receber, pagar: v.pagar + d.pagar }), { receber: 0, pagar: 0 })
-  const MAX_GRAFICO = 62
-  const chartData = dias.slice(0, filtrando ? MAX_GRAFICO : 45).map(d => ({ dia: dayShort(d.date), receber: d.receber, pagar: d.pagar, acumulado: d.acumPeriodo }))
+  const MAX_GRAFICO = agrupar === 'dia' ? (filtrando ? 62 : 45) : 60
+  const chartData = grupos.slice(0, MAX_GRAFICO).map(g => ({ rotulo: eixoGrupo(g, agrupar), receber: g.receber, pagar: g.pagar, acumulado: g.acum }))
   const tooltipStyle = { contentStyle: { background: C.navy, border: 'none', borderRadius: 4, fontSize: 12 }, labelStyle: { color: C.yellow, fontWeight: 600 }, itemStyle: { color: '#fff' } }
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
   const chip = (ativo: boolean): React.CSSProperties => ({ border: `1px solid ${ativo ? C.navy : C.line}`, background: ativo ? C.navy : '#fff', color: ativo ? '#fff' : C.textSoft, borderRadius: 20, padding: '4px 12px', fontSize: 12, cursor: 'pointer' })
   const campoData: React.CSSProperties = { fontSize: 12.5, padding: '4px 6px', border: `1px solid ${C.line}`, borderRadius: 4, color: C.navy, background: '#fff' }
+  const rotuloLinha: React.CSSProperties = { fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, color: C.textMuted, minWidth: 58 }
   const rotuloPeriodo = ini === fim ? dayLabel(ini) : `${dayLabel(ini)} a ${dayLabel(fim)}`
+  const plural = (n: number) => `${n} ${n === 1 ? nome.um : nome.varios}`
 
   return (
     <>
       <div className="card mb-6">
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <span style={rotuloLinha}>Ver por</span>
+          {AGRUPAR.map(([k, l]) => <button key={k} style={chip(agrupar === k)} onClick={() => setAgrupar(k)}>{l}</button>)}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: C.textMuted }}>hoje: {dayLabel(daily.hoje)} · {weekdayOf(daily.hoje)}</span>
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 18, paddingBottom: 14, borderBottom: `1px solid ${C.line}` }}>
-          <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, color: C.textMuted, marginRight: 4 }}>Período</span>
+          <span style={rotuloLinha}>Período</span>
           {PERIODOS.map(([k, l]) => <button key={k} style={chip(periodo === k)} onClick={() => escolher(k)}>{l}</button>)}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, fontSize: 12, color: C.textSoft }}>
-            de <input type="date" style={campoData} value={de} min={primeiro} max={ultimo} onChange={e => { setDe(e.target.value); setPeriodo('livre') }} />
-            até <input type="date" style={campoData} value={ate} min={primeiro} max={ultimo} onChange={e => { setAte(e.target.value); setPeriodo('livre') }} />
+            de <input type="date" style={campoData} value={de} min={primeiro} max={ultimo} onChange={e => { setDe(e.target.value); setPeriodo('livre'); setOpen({}) }} />
+            até <input type="date" style={campoData} value={ate} min={primeiro} max={ultimo} onChange={e => { setAte(e.target.value); setPeriodo('livre'); setOpen({}) }} />
           </span>
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: C.textMuted }}>hoje: {dayLabel(daily.hoje)} · {weekdayOf(daily.hoje)}</span>
         </div>
         <div className="grid-4" style={{ gap: 28 }}>
           {/* totais do período escolhido; em "Tudo", todos os vencimentos da base, inclusive
@@ -838,7 +903,8 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
           <KpiBig label={filtrando ? 'A pagar no período' : 'A pagar'} value={fmt(tot.pagar)}
             sub={vencidos.pagar ? `inclui ${fmt(vencidos.pagar)} já vencidos` : `${tot.nPagar} títulos`} color={C.red} />
           <KpiBig label={filtrando ? 'Saldo do período' : 'Saldo projetado'} value={fmt(saldoPeriodo)} sub="a receber − a pagar" color={saldoPeriodo >= 0 ? C.green : C.red} />
-          <KpiBig label="Período" value={rotuloPeriodo} sub={`${diasEntre(ini, fim)} dias · ${dias.length} com movimento`} color={C.navy} />
+          <KpiBig label="Período" value={rotuloPeriodo}
+            sub={`${diasEntre(ini, fim)} dias · ${dias.length} com movimento${agrupar !== 'dia' ? ` · ${plural(grupos.length)}` : ''}`} color={C.navy} />
         </div>
         {!filtrando && <AvisoVencidos v={daily.resumo.vencidos} desde={daily.resumo.primeiroDia} />}
       </div>
@@ -846,23 +912,27 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
       <div className="card mb-6 card-accent-yellow">
         <div className="card-header">
           <div>
-            <div className="card-eyebrow">{filtrando ? (dias.length > MAX_GRAFICO ? `Primeiros ${MAX_GRAFICO} dias com movimento do período` : `${rotuloPeriodo} · dias com movimento`) : 'Próximos 45 dias com movimento'}</div>
-            <div className="card-title">Entradas × Saídas por dia · saldo acumulado{filtrando ? ' no período' : ''}</div>
+            <div className="card-eyebrow">
+              {agrupar === 'dia'
+                ? (filtrando ? (grupos.length > MAX_GRAFICO ? `Primeiros ${MAX_GRAFICO} dias com movimento do período` : `${rotuloPeriodo} · dias com movimento`) : 'Próximos 45 dias com movimento')
+                : `${rotuloPeriodo} · ${plural(grupos.length)}${agrupar === 'semana' ? ' (segunda a domingo)' : ''}`}
+            </div>
+            <div className="card-title">Entradas × Saídas por {nome.um} · saldo acumulado{filtrando ? ' no período' : ''}</div>
           </div>
         </div>
-        {dias.length === 0 ? (
+        {grupos.length === 0 ? (
           <div className="empty-state"><div className="empty-state-title">Nenhum vencimento entre {rotuloPeriodo}</div></div>
         ) : (
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart data={chartData} margin={{ top: 8, right: 24, bottom: 4, left: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-            <XAxis dataKey="dia" tick={{ fontSize: 9, fill: C.textSoft }} stroke={C.line} interval={chartData.length <= 16 ? 0 : 2} />
+            <XAxis dataKey="rotulo" tick={{ fontSize: 9, fill: C.textSoft }} stroke={C.line} interval={chartData.length <= 16 ? 0 : agrupar === 'dia' ? 2 : 'preserveStartEnd'} />
             <YAxis tick={{ fontSize: 10, fill: C.textSoft }} stroke={C.line} tickFormatter={fmtK2} />
             <Tooltip {...tooltipStyle} formatter={(v: number) => fmt(v)} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             <Bar dataKey="receber" name="A receber" fill={C.green} radius={[2, 2, 0, 0]} />
             <Bar dataKey="pagar" name="A pagar" fill={C.red} radius={[2, 2, 0, 0]} />
-            <Line dataKey="acumulado" name={filtrando ? 'Saldo acumulado no período' : 'Saldo acumulado'} stroke={C.navy} strokeWidth={2} dot={false} />
+            <Line dataKey="acumulado" name={filtrando ? 'Saldo acumulado no período' : 'Saldo acumulado'} stroke={C.navy} strokeWidth={2} dot={agrupar !== 'dia'} />
           </ComposedChart>
         </ResponsiveContainer>
         )}
@@ -870,17 +940,17 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
-          <div className="card-eyebrow">Dia a dia{filtrando ? ` · ${rotuloPeriodo}` : ''}</div>
-          <div className="card-title" style={{ fontSize: 14 }}>Clique num dia para ver as contas componentes</div>
+          <div className="card-eyebrow">{agrupar === 'dia' ? 'Dia a dia' : agrupar === 'semana' ? 'Semana a semana' : 'Mês a mês'}{filtrando ? ` · ${rotuloPeriodo}` : ''}</div>
+          <div className="card-title" style={{ fontSize: 14 }}>Clique {agrupar === 'dia' ? 'num dia' : agrupar === 'semana' ? 'numa semana' : 'num mês'} para ver as contas componentes</div>
         </div>
         <div className="table-wrap" style={{ maxHeight: '65vh' }}>
           <table>
             <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
               <tr>
-                <th style={{ textAlign: 'left' }}>Dia</th>
+                <th style={{ textAlign: 'left' }}>{agrupar === 'dia' ? 'Dia' : agrupar === 'semana' ? 'Semana' : 'Mês'}</th>
                 <th style={{ textAlign: 'right' }}>A receber</th>
                 <th style={{ textAlign: 'right' }}>A pagar</th>
-                <th style={{ textAlign: 'right' }}>Saldo do dia</th>
+                <th style={{ textAlign: 'right' }}>{nome.saldo}</th>
                 <th style={{ textAlign: 'right' }}>{filtrando ? 'Acumulado no período' : 'Acumulado'}</th>
                 <th style={{ width: 30 }}></th>
               </tr>
@@ -888,7 +958,7 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
             <tfoot style={{ position: 'sticky', bottom: 0, zIndex: 2 }}>
               <tr style={{ background: '#eef2f8' }}>
                 <td style={{ fontSize: 12.5, fontWeight: 700, color: C.navy, whiteSpace: 'nowrap', borderTop: `2px solid ${C.navy}` }}>
-                  Total {filtrando ? 'do período' : 'da base'} <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>· {dias.length} dia{dias.length !== 1 ? 's' : ''}</span>
+                  Total {filtrando ? 'do período' : 'da base'} <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>· {plural(grupos.length)}</span>
                 </td>
                 <td style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: C.green, borderTop: `2px solid ${C.navy}` }}>{fmt(tot.receber)}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}> ({tot.nReceber})</span></td>
                 <td style={{ textAlign: 'right', fontSize: 12.5, fontWeight: 700, color: C.red, borderTop: `2px solid ${C.navy}` }}>{fmt(tot.pagar)}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}> ({tot.nPagar})</span></td>
@@ -898,26 +968,30 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
               </tr>
             </tfoot>
             <tbody>
-              {dias.map(d => {
-                const isOpen = open[d.date]
+              {grupos.map(g => {
+                const isOpen = open[g.chave]
                 return (
-                  <Fragment key={d.date}>
-                    <tr onClick={() => toggle(d.date)} style={{ cursor: 'pointer', background: isOpen ? '#eef2f8' : undefined }}>
+                  <Fragment key={g.chave}>
+                    <tr onClick={() => toggle(g.chave)} style={{ cursor: 'pointer', background: isOpen ? '#eef2f8' : undefined }}>
                       <td style={{ fontSize: 13, fontWeight: 600, color: C.navy, whiteSpace: 'nowrap' }}>
-                        {dayLabel(d.date)} <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>· {weekdayOf(d.date)}</span>
+                        {rotuloGrupo(g, agrupar)}{' '}
+                        <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>
+                          {agrupar === 'dia' ? `· ${weekdayOf(g.ini)}`
+                            : `· ${g.nDias} dia${g.nDias !== 1 ? 's' : ''} com movimento${g.parcial ? ` · parcial${agrupar === 'mes' ? ` (${dayShort(g.ini)} a ${dayShort(g.fim)})` : ''}` : ''}`}
+                        </span>
                       </td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: C.green, fontWeight: 600 }}>{d.receber ? fmt(d.receber) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{d.nReceber ? ` (${d.nReceber})` : ''}</span></td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: C.red, fontWeight: 600 }}>{d.pagar ? fmt(d.pagar) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{d.nPagar ? ` (${d.nPagar})` : ''}</span></td>
-                      <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: d.saldoDia >= 0 ? C.green : C.red }}>{fmt(d.saldoDia)}</td>
-                      <td style={{ textAlign: 'right', fontSize: 12, color: d.acumPeriodo >= 0 ? C.navy : C.red }}>{fmt(d.acumPeriodo)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: C.green, fontWeight: 600 }}>{g.receber ? fmt(g.receber) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{g.nReceber ? ` (${g.nReceber})` : ''}</span></td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: C.red, fontWeight: 600 }}>{g.pagar ? fmt(g.pagar) : '—'}<span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>{g.nPagar ? ` (${g.nPagar})` : ''}</span></td>
+                      <td style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: g.saldo >= 0 ? C.green : C.red }}>{fmt(g.saldo)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: g.acum >= 0 ? C.navy : C.red }}>{fmt(g.acum)}</td>
                       <td style={{ textAlign: 'center', color: C.gold }}>{isOpen ? '▾' : '▸'}</td>
                     </tr>
                     {isOpen && (
                       <tr>
                         <td colSpan={6} style={{ padding: 0, background: '#fbfcfe' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
-                            <DayList titulo={`A RECEBER · ${d.nReceber} título${d.nReceber !== 1 ? 's' : ''} · ${fmt(d.receber)}`} cor={C.green} items={d.recebimentos} />
-                            <DayList titulo={`A PAGAR · ${d.nPagar} título${d.nPagar !== 1 ? 's' : ''} · ${fmt(d.pagar)}`} cor={C.red} items={d.pagamentos} borda />
+                            <DayList titulo={`A RECEBER · ${g.nReceber} título${g.nReceber !== 1 ? 's' : ''} · ${fmt(g.receber)}`} cor={C.green} items={g.recebimentos} />
+                            <DayList titulo={`A PAGAR · ${g.nPagar} título${g.nPagar !== 1 ? 's' : ''} · ${fmt(g.pagar)}`} cor={C.red} items={g.pagamentos} borda />
                           </div>
                         </td>
                       </tr>
@@ -930,9 +1004,10 @@ function DailyPanel({ daily }: { daily: DailyResponse }) {
         </div>
       </div>
       <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.6 }}>
-        {filtrando
-          ? `Só os vencimentos de ${rotuloPeriodo}, um dia por linha. O acumulado começa no primeiro dia do período e soma os saldos diários na ordem — assume liquidação no vencimento.`
-          : 'Todos os vencimentos da base importada, inclusive os já passados, um dia por linha. O acumulado soma os saldos diários na ordem — assume liquidação no vencimento.'}
+        {filtrando ? `Só os vencimentos de ${rotuloPeriodo}` : 'Todos os vencimentos da base importada, inclusive os já passados'}, um{agrupar === 'semana' ? 'a' : ''} {nome.um} por linha
+        {agrupar === 'semana' ? ' (semanas de segunda a domingo; a primeira e a última podem ser parciais quando o período começa ou termina no meio da semana)' : ''}.
+        {' '}O acumulado começa no primeiro dia {filtrando ? 'do período' : 'da base'} e soma os saldos na ordem — assume liquidação no vencimento.
+        {agrupar !== 'dia' ? ' Ao abrir uma linha, cada título traz a data de vencimento na frente do nome.' : ''}
       </p>
     </>
   )
