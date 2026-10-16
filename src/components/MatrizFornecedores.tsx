@@ -3,8 +3,9 @@
  * Controle de Compras › Matriz de Fornecedores — matriz de Kraljic quantificada
  * (Montgomery, Ogden e Boehmke, 2018), com as correções da leitura de 07/10/2026.
  * Importância = gasto pago (DRE); risco = 4 perguntas (v2, 16/10/2026) respondidas
- * aqui pelo comprador, para qualquer fornecedor. Cálculo em lib/matriz-fornecedores;
- * regras em lib/matriz-fornecedores-regras.
+ * aqui pelo comprador, para qualquer fornecedor; tipo (Laboratório, Distribuidor,
+ * Outros) sugerido pelo nome e confirmado aqui, filtra a matriz, os quadrantes e a
+ * tabela. Cálculo em lib/matriz-fornecedores; regras em lib/matriz-fornecedores-regras.
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -12,8 +13,9 @@ import {
   ReferenceLine, ReferenceArea, Cell, ComposedChart, Bar, Line,
 } from 'recharts'
 import {
-  PERGUNTAS, CAMPOS, TIPOS, TIPO_ROTULO, QUADRANTE, CORTE_RISCO, ALTERNATIVAS_V1, riscoDe, quadranteDe, acaoDe, alertaConcentracao,
-  type Quadrante, type CampoRisco, type LinhaMatriz, type ResultadoMatriz,
+  PERGUNTAS, CAMPOS, TIPOS, TIPO_ROTULO, TIPO_AJUDA, TIPO_V1_ROTULO, QUADRANTE, CORTE_RISCO, ALTERNATIVAS_V1,
+  riscoDe, quadranteDe, acaoDe, alertaConcentracao, tipoDe,
+  type Quadrante, type CampoRisco, type LinhaMatriz, type ResultadoMatriz, type Tipo,
 } from '@/lib/matriz-fornecedores-regras'
 
 const C = { navy: '#0a2540', navyMid: '#142c4e', yellow: '#f5c518', gold: '#d4a017', line: '#e3e7ed', textSoft: '#4a5670', textMuted: '#7a869a', green: '#197a4a', red: '#b03022', amber: '#c98a14' }
@@ -40,6 +42,7 @@ export function MatrizFornecedores() {
   const [data, setData] = useState<ResultadoMatriz | null>(null)
   const [erro, setErro] = useState('')
   const [filtro, setFiltro] = useState<Filtro>('todos')
+  const [tipoF, setTipoF] = useState<'todos' | Tipo>('todos')
   const [estado, setEstado] = useState<Record<string, Estado>>({})
 
   useEffect(() => {
@@ -47,9 +50,23 @@ export function MatrizFornecedores() {
   }, [])
 
   const linhas = data?.linhas ?? []
-  const avaliadas = useMemo(() => linhas.filter(l => l.risco != null), [linhas])
-  const visiveis = useMemo(() => linhas.filter(l =>
-    filtro === 'todos' ? true : filtro === 'curvaA' ? l.curvaA : l.quadrante === filtro), [linhas, filtro])
+  // o filtro de tipo vale para a matriz, os quadrantes e a tabela; a curva A é sempre a do gasto todo
+  const doTipo = useMemo(() => tipoF === 'todos' ? linhas : linhas.filter(l => tipoDe(l) === tipoF), [linhas, tipoF])
+  const avaliadas = useMemo(() => doTipo.filter(l => l.risco != null), [doTipo])
+  const visiveis = useMemo(() => doTipo.filter(l =>
+    filtro === 'todos' ? true : filtro === 'curvaA' ? l.curvaA : l.quadrante === filtro), [doTipo, filtro])
+  const resumo = useMemo(() => {
+    const r: Record<Quadrante, { n: number; gasto: number }> = {
+      ALAVANCAGEM: { n: 0, gasto: 0 }, ESTRATEGICO: { n: 0, gasto: 0 }, GARGALO: { n: 0, gasto: 0 }, NAO_CRITICO: { n: 0, gasto: 0 }, SEM_AVALIACAO: { n: 0, gasto: 0 },
+    }
+    doTipo.forEach(l => { r[l.quadrante].n++; r[l.quadrante].gasto += l.gasto })
+    return r
+  }, [doTipo])
+  const nTipo = useMemo(() => {
+    const r = { LABORATORIO: 0, DISTRIBUIDOR: 0, OUTROS: 0 } as Record<Tipo, number>
+    linhas.forEach(l => { r[tipoDe(l)]++ })
+    return r
+  }, [linhas])
 
   async function salvar(l: LinhaMatriz, campo: 'tipo' | CampoRisco, bruto: string) {
     const valor = bruto === '' ? null : campo === 'tipo' ? bruto : Number(bruto)
@@ -59,9 +76,10 @@ export function MatrizFornecedores() {
       linhas: d.linhas.map(x => {
         if (x.chave !== l.chave) return x
         const n = { ...x, [campo]: valor } as LinhaMatriz
+        if (campo === 'tipo') n.tipoV1 = null            // gravar (ou limpar) o tipo substitui o da 1ª versão
         n.risco = riscoDe(n)
         n.quadrante = quadranteDe(n.curvaA, n.risco)
-        n.acao = acaoDe(n.quadrante, n.tipo)
+        n.acao = acaoDe(n.quadrante, tipoDe(n))
         return n
       }),
     })
@@ -120,11 +138,20 @@ export function MatrizFornecedores() {
         <div className="card mb-6" style={{ padding: '12px 18px', fontSize: 12.5, color: '#7a4b00', background: '#fff7e0', lineHeight: 1.65, borderLeft: `3px solid ${C.amber}` }}>
           <b>Confira as respostas: {alerta.estrategicos} de {alerta.avaliados} fornecedores avaliados da curva A estão em Estratégico e {alerta.marcaExigida} marcaram
           "{PERGUNTAS.substituto.opcoes[3].rotulo}".</b> Foi esse padrão que concentrou a versão anterior: exclusividade de marca respondida como falta de substituto.
-          "{PERGUNTAS.substituto.titulo}" pergunta o que o cliente aceita levar no lugar, não se o produto é exclusivo do laboratório
+          "{PERGUNTAS.substituto.titulo}" pergunta o que o cliente aceita levar no lugar, não se a marca é exclusiva
           {alerta.travados > 0 ? <> — {alerta.travados} {alerta.travados === 1 ? 'está' : 'estão'} também com "{PERGUNTAS.canal.opcoes[2].rotulo}" em "{PERGUNTAS.canal.titulo}"</> : null}.
         </div>
       )}
       {erro && <div className="card mb-6" style={{ padding: '10px 16px', color: C.red, fontSize: 12.5 }}>{erro}</div>}
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+        <span style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, color: C.textMuted, marginRight: 4 }}>Tipo de fornecedor</span>
+        <button style={chip(tipoF === 'todos')} onClick={() => setTipoF('todos')}>Todos · {linhas.length}</button>
+        {TIPOS.map(t => (
+          <button key={t} style={chip(tipoF === t)} onClick={() => setTipoF(t)} title={TIPO_AJUDA[t]}>{TIPO_ROTULO[t]} · {nTipo[t]}</button>
+        ))}
+        <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>filtra a matriz, os quadrantes e a tabela; a curva A é sempre a do gasto todo</span>
+      </div>
 
       <div className="grid-2 mb-6" style={{ alignItems: 'stretch' }}>
         {/* A MATRIZ */}
@@ -136,7 +163,7 @@ export function MatrizFornecedores() {
             </div>
           </div>
           <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8, lineHeight: 1.6 }}>
-            Cada bolha é um fornecedor avaliado; o tamanho é o que ainda vai vencer (boletos + pedidos). A linha horizontal separa a curva A
+            Cada bolha é um fornecedor avaliado{tipoF !== 'todos' ? <> do tipo <b>{TIPO_ROTULO[tipoF]}</b></> : null}; o tamanho é o que ainda vai vencer (boletos + pedidos). A linha horizontal separa a curva A
             ({pctF(corte, 2)} do gasto ou mais); a vertical, risco {CORTE_RISCO}. Eixo vertical em escala log.
           </p>
           <div style={{ position: 'relative' }}>
@@ -179,7 +206,9 @@ export function MatrizFornecedores() {
             </ResponsiveContainer>
             {!avaliadas.length && (
               <div style={{ position: 'absolute', inset: '30% 12% auto 12%', background: 'rgba(255,255,255,0.94)', border: `1px dashed ${C.line}`, borderRadius: 6, padding: '14px 18px', textAlign: 'center', fontSize: 12.5, color: C.textSoft, lineHeight: 1.6 }}>
-                Nenhum fornecedor avaliado ainda. Responda as 4 perguntas de risco na tabela abaixo — comece pelos {data.curvaA.n} da curva A — e cada um aparece aqui no seu quadrante.
+                {tipoF === 'todos'
+                  ? <>Nenhum fornecedor avaliado ainda. Responda as 4 perguntas de risco na tabela abaixo — comece pelos {data.curvaA.n} da curva A — e cada um aparece aqui no seu quadrante.</>
+                  : <>Nenhum fornecedor do tipo {TIPO_ROTULO[tipoF]} avaliado ainda. Responda as 4 perguntas de risco na tabela abaixo e cada um aparece aqui no seu quadrante.</>}
               </div>
             )}
           </div>
@@ -195,6 +224,7 @@ export function MatrizFornecedores() {
           </div>
           <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8, lineHeight: 1.6 }}>
             Barras = mercadoria paga em {periodo}, na cor do quadrante (cinza claro = ainda sem avaliação). Linha = % acumulado do gasto; a tracejada marca 80%.
+            {tipoF !== 'todos' ? <> Em destaque, os do tipo <b>{TIPO_ROTULO[tipoF]}</b>.</> : null}
           </p>
           <ResponsiveContainer width="100%" height={420}>
             <ComposedChart data={pareto} margin={{ top: 12, right: 8, bottom: 62, left: 4 }}>
@@ -216,7 +246,7 @@ export function MatrizFornecedores() {
                 )
               }} />
               <Bar yAxisId="v" dataKey="gasto" radius={[3, 3, 0, 0]}>
-                {pareto.map(p => <Cell key={p.chave} fill={p.quadrante === 'SEM_AVALIACAO' ? (p.curvaA ? '#9aa7ba' : '#d5dbe4') : COR[p.quadrante]} />)}
+                {pareto.map(p => <Cell key={p.chave} fill={p.quadrante === 'SEM_AVALIACAO' ? (p.curvaA ? '#9aa7ba' : '#d5dbe4') : COR[p.quadrante]} fillOpacity={tipoF === 'todos' || tipoDe(p) === tipoF ? 1 : 0.22} />)}
               </Bar>
               <Line yAxisId="p" type="monotone" dataKey="acumPct" stroke={C.gold} strokeWidth={2} dot={false} />
             </ComposedChart>
@@ -231,9 +261,9 @@ export function MatrizFornecedores() {
             <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700, color: COR[q] }}>{QUADRANTE[q].rotulo}</div>
             <div style={{ fontSize: 11.5, color: C.textMuted, margin: '2px 0 8px' }}>{QUADRANTE[q].resumo}</div>
             <div style={{ fontFamily: 'var(--font-serif), serif', fontSize: 16, color: C.navy }}>
-              {data.resumo[q].n} {data.resumo[q].n === 1 ? 'fornecedor' : 'fornecedores'}
+              {resumo[q].n} {resumo[q].n === 1 ? 'fornecedor' : 'fornecedores'}{tipoF !== 'todos' ? <span style={{ fontSize: 12, color: C.textMuted }}> · {TIPO_ROTULO[tipoF]}</span> : null}
             </div>
-            <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 8 }}>{fmt0(data.resumo[q].gasto)} · {pctF(data.resumo[q].gasto / data.gastoTotal)} do gasto</div>
+            <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 8 }}>{fmt0(resumo[q].gasto)} · {pctF(resumo[q].gasto / data.gastoTotal)} do gasto</div>
             <div style={{ fontSize: 12, color: C.textSoft, lineHeight: 1.55 }}>{QUADRANTE[q].acao}</div>
           </div>
         ))}
@@ -243,7 +273,7 @@ export function MatrizFornecedores() {
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
           <div className="card-eyebrow">Avaliação de risco pelo comprador</div>
-          <div className="card-title" style={{ fontSize: 14, marginBottom: 8 }}>Fornecedores <span style={{ color: C.textMuted, fontWeight: 400 }}>({visiveis.length})</span></div>
+          <div className="card-title" style={{ fontSize: 14, marginBottom: 8 }}>Fornecedores{tipoF !== 'todos' ? ` · ${TIPO_ROTULO[tipoF]}` : ''} <span style={{ color: C.textMuted, fontWeight: 400 }}>({visiveis.length})</span></div>
           <div style={{ fontSize: 12, color: C.textSoft, lineHeight: 1.65, marginBottom: 10 }}>
             {CAMPOS.map(c => (
               <div key={c}>
@@ -251,13 +281,17 @@ export function MatrizFornecedores() {
                 {PERGUNTAS[c].ajuda && <span style={{ color: C.textMuted }}> {PERGUNTAS[c].ajuda}</span>}
               </div>
             ))}
+            <div>
+              <b style={{ color: C.navy }}>Tipo</b> (não entra na nota): {TIPOS.map((t, i) => <span key={t}>{i ? '; ' : ''}{TIPO_ROTULO[t]} = {TIPO_AJUDA[t]}</span>)}.
+              <span style={{ color: C.textMuted }}> Vem sugerido pelo nome, em itálico — escolha na lista para confirmar ou corrigir.</span>
+            </div>
             <div style={{ color: C.textMuted }}>Nota de risco = soma ponderada das 4 respostas (0 a 100); {CORTE_RISCO} ou mais = risco alto — nenhuma resposta sozinha chega a {CORTE_RISCO}. Grava sozinho ao escolher.</div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            <button style={chip(filtro === 'todos')} onClick={() => setFiltro('todos')}>Todos · {linhas.length}</button>
-            <button style={chip(filtro === 'curvaA', C.gold)} onClick={() => setFiltro('curvaA')}>Curva A · {data.curvaA.n}</button>
+            <button style={chip(filtro === 'todos')} onClick={() => setFiltro('todos')}>Todos · {doTipo.length}</button>
+            <button style={chip(filtro === 'curvaA', C.gold)} onClick={() => setFiltro('curvaA')}>Curva A · {doTipo.filter(l => l.curvaA).length}</button>
             {(['SEM_AVALIACAO', 'ALAVANCAGEM', 'ESTRATEGICO', 'GARGALO', 'NAO_CRITICO'] as Quadrante[]).map(q => (
-              <button key={q} style={chip(filtro === q, COR[q])} onClick={() => setFiltro(q)}>{QUADRANTE[q].rotulo} · {data.resumo[q].n}</button>
+              <button key={q} style={chip(filtro === q, COR[q])} onClick={() => setFiltro(q)}>{QUADRANTE[q].rotulo} · {resumo[q].n}</button>
             ))}
           </div>
         </div>
@@ -300,10 +334,16 @@ export function MatrizFornecedores() {
                   </td>
                   <td style={{ textAlign: 'right', fontSize: 12, color: C.textSoft, whiteSpace: 'nowrap' }} title={`Boletos ${fmt0(l.aVencer)} · pedidos ${fmt0(l.pedidosAbertos)}`}>{l.aVencer + l.pedidosAbertos > 0 ? fmt0(l.aVencer + l.pedidosAbertos) : '—'}</td>
                   <td style={{ textAlign: 'center' }}>
-                    <select style={sel} value={l.tipo ?? ''} onChange={e => salvar(l, 'tipo', e.target.value)}>
-                      <option value="">—</option>
-                      {TIPOS.map(t => <option key={t} value={t}>{TIPO_ROTULO[t]}</option>)}
+                    <select style={{ ...sel, maxWidth: 150, color: l.tipo ? C.navy : C.textMuted, fontStyle: l.tipo ? 'normal' : 'italic' }} value={l.tipo ?? ''} onChange={e => salvar(l, 'tipo', e.target.value)}
+                      title={l.tipo ? `${TIPO_ROTULO[l.tipo]}: ${TIPO_AJUDA[l.tipo]}` : 'Sugerido pelo nome — escolha na lista para confirmar ou corrigir'}>
+                      <option value="">{TIPO_ROTULO[l.tipoSugerido]} · sugerido</option>
+                      {TIPOS.map(t => <option key={t} value={t} style={{ fontStyle: 'normal', color: C.navy }}>{TIPO_ROTULO[t]}</option>)}
                     </select>
+                    {l.tipoV1 && !l.tipo && (
+                      <div style={{ fontSize: 9.5, color: C.textMuted, marginTop: 2, whiteSpace: 'nowrap' }} title="Tipo gravado na versão anterior — escolha o tipo novo na lista">
+                        antes: {TIPO_V1_ROTULO[l.tipoV1] ?? l.tipoV1}
+                      </div>
+                    )}
                   </td>
                   {CAMPOS.map(c => (
                     <td key={c} style={{ textAlign: 'center' }}>
@@ -331,6 +371,10 @@ export function MatrizFornecedores() {
         </div>
         <div style={{ padding: '10px 20px', fontSize: 11, color: C.textMuted, borderTop: `1px solid ${C.line}`, lineHeight: 1.6 }}>
           Importância = mercadoria paga em {periodo} (DRE, regime de caixa; fornecedores do grupo e imobilizado fora). Curva A = os fornecedores que, somados do maior para o menor, chegam a 80% do gasto.
+          {data.foraDaLista.n > 0 && (
+            <> Fora da lista: {data.foraDaLista.n} contrapartes que não vendem mercadoria (veículo, autopeça, alarme, refrigeração e equipamento)
+              {data.foraDaLista.gasto > 0 ? <> — os {fmt0(data.foraDaLista.gasto)} pagos a elas na linha de compras da DRE continuam no total</> : null}.</>
+          )}{' '}
           Cadastros duplicados no ERP aparecem juntos (ex.: União Química, Ourofino, MSD). Método: matriz de Kraljic quantificada (Montgomery, Ogden e Boehmke, 2018),
           com cortes em unidades reais. Próxima versão: rupturas e alternativas medidas, com o relatório de laboratório × produto.
         </div>

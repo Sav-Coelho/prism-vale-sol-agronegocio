@@ -7,6 +7,7 @@
  *          null apaga a resposta) e devolve a matriz recalculada. Qualquer
  *          fornecedor da lista pode ser avaliado, não só a curva A. O campo da
  *          v1 (alternativas) não é mais aceito: fica no banco só como referência.
+ *          tipo = LABORATORIO | DISTRIBUIDOR | OUTROS; null volta ao sugerido pelo nome.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'

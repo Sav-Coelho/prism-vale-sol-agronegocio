@@ -14,6 +14,10 @@
  *     fornecedor pode ser avaliado (fora da curva A: Gargalo × Não crítico) — a lista
  *     inclui os ativos do cadastro de Compras ainda sem pagamento na janela (gasto 0).
  *     Com o export laboratório × produto, entram rupturas e alternativas medidas.
+ *   · TIPO (16/10/2026) = Laboratório, Distribuidor ou Outros, sugerido pelo nome e
+ *     confirmado pelo comprador; filtra a tela. Quem não vende mercadoria (veículo,
+ *     alarme, equipamento…) sai da lista, mas o pago a ele fica no total, que bate com a
+ *     DRE — tirá-lo do total mexeria na curva A (a Halex está no limite dos 80%).
  *
  * O quadrante define a estratégia de compra de cada fornecedor. As regras que a
  * tela também usa ficam em lib/matriz-fornecedores-regras.
@@ -21,8 +25,8 @@
 import { prisma } from '@/lib/prisma'
 import { classificarMesesDre } from '@/lib/dre-meses'
 import {
-  CORTE_RISCO, CURVA_A, acaoDe, quadranteDe, riscoDe,
-  type LinhaMatriz, type ResultadoMatriz,
+  CORTE_RISCO, CURVA_A, TIPOS, acaoDe, quadranteDe, riscoDe,
+  type LinhaMatriz, type ResultadoMatriz, type Tipo,
 } from '@/lib/matriz-fornecedores-regras'
 
 export { CAMPOS, PERGUNTAS, TIPOS } from '@/lib/matriz-fornecedores-regras'
@@ -54,10 +58,50 @@ export function grupoFornecedor(nome: string): { chave: string; rotulo: string |
   return { chave: base || n, rotulo: null }
 }
 
+// ── fora da lista: não vendem mercadoria, embora pagos na linha de compras da DRE ou com boleto
+// "FORNECEDOR MERCADORIAS" no ERP — veículo (FCA, Great Wall), autopeça (G Store), alarme (Proteger),
+// refrigeração e equipamento (J.C.M. e Elements, COMPRA IMOBILIZADO no ERP). FCA, Proteger, J.C.M. e
+// Elements confirmados com o cliente em 07/2026; acrescentar aqui quando surgir outro.
+const NAO_MERCADORIA = /^(FCA FIAT|GREAT WALL|G STORE AUTOMOTIVE|PROTEGER ELETRONICA|J C M NITEROI REFRIGERACAO|CENTRO DE TECNOLOGIA ELEMENTS)\b/
+
+// ── tipo sugerido pelo nome, para o comprador conferir na tela ──
+// Primeiro os fornecedores do gasto de jan–set/2026 cujo nome não diz o tipo ou diz outra coisa (a Zoetis
+// fatura como "comércio e distribuição"; a Orga Log é a logística pela qual o laboratório fatura — Lucas,
+// 07/2026); depois, as palavras do nome. Sem pista, Outros.
+const TIPO_POR_NOME: Array<[RegExp, Tipo]> = [
+  [/^(ZOETIS|MSD SAUDE ANIMAL|OUROFINO|UNIAO QUIMICA|VIRBAC|VETNIL|BOTUPHARMA|BIOGENESIS|LABORATORIOS CALBOS|LAVIZOO|VET SCIENCE|DECHRA|HALEX ISTAR|LABOVET|VANSIL|SYNTEC|BOEHRINGER|IBIRA|VETOQUINOL|BIMEDA|WINNER HORSE|ORGA LOG)\b/, 'LABORATORIO'],
+  [/^(MOURAGRO|J A AGRONEGOCIOS|SEAHORSE|SEROPEC|ESPECIFARMA|VETMINAS|PECUARISTA D ?OESTE|VET AGRO|BASSO PANCOTTE|FASVITH)\b/, 'DISTRIBUIDOR'],
+  [/^(ALISUL|DSM|BELGO|WEIZUR|MATTHEIS|DATAMARS|ALLFLEX|SISTEMAS DE IDENTIFICACAO|MINITUB|IMV|REPRODUX|WTA|EMBRIOLIFE|APARELHOS VETERINARIOS|SPECTRUN|NIPRO|POINT SUTURE|DENTAL CREMER|FONSECA PLASTIC|WOLF SEEDS|ADL|QUIMIWAY|TNB|MS FABRICANTE|TECELAGEM)\b/, 'OUTROS'],
+  [/\b(DISTRIBUIDORA|DISTRIBUIDOR|DISTRIBUICAO|DISTRIB|DISTR|DIST|IMPORTADORA|REPRESENTACOES|AGROPECUARIA|AGROP|COMERCIO DE PRODUTOS (VETERINARIOS|AGROPECUARIOS)|PRODUTOS AGRO ?PECUARIOS?)\b/, 'DISTRIBUIDOR'],
+  [/\b(LABORATORIOS?|FARMACEUTICA|PHARMA|INDUSTRIA VETERINARIA|SAUDE ANIMAL|ANIMAL HEALTH|PRODUTOS VETERINARIOS|PROD VET)\b/, 'LABORATORIO'],
+]
+
+export function tipoSugerido(nomes: string[]): Tipo {
+  const ns = nomes.map(norm)
+  for (let i = 0; i < TIPO_POR_NOME.length; i++) {
+    const [re, tipo] = TIPO_POR_NOME[i]
+    if (ns.some(n => re.test(n))) return tipo
+  }
+  return 'OUTROS'
+}
+
+/**
+ * Tipo gravado → tipo atual. Da 1ª versão (até 16/10/2026): "Fabricante" vale como Laboratório
+ * quando o nome também indica laboratório; nos outros casos (ração, nome de distribuidora) volta a
+ * ser sugestão e a resposta antiga aparece na tela até o comprador escolher.
+ */
+function tipoGravado(gravado: string | null, sugerido: Tipo): { tipo: Tipo | null; tipoV1: string | null } {
+  if (gravado == null) return { tipo: null, tipoV1: null }
+  if ((TIPOS as readonly string[]).indexOf(gravado) >= 0) return { tipo: gravado as Tipo, tipoV1: null }
+  if (gravado === 'OUTRO') return { tipo: 'OUTROS', tipoV1: null }
+  if (gravado === 'FABRICANTE' && sugerido === 'LABORATORIO') return { tipo: 'LABORATORIO', tipoV1: null }
+  return { tipo: null, tipoV1: gravado }
+}
+
 export async function calcularMatriz(hoje: Date = new Date()): Promise<ResultadoMatriz> {
   const vazio = (motivo: string): ResultadoMatriz => ({
     hasData: false, motivo, meses: [], gastoTotal: 0, gastoAnualizado: 0, nFornecedores: 0,
-    curvaA: { n: 0, corte: 0 }, avaliados: { curvaA: 0, total: 0 }, pendentesV2: 0, corteRisco: CORTE_RISCO,
+    curvaA: { n: 0, corte: 0 }, avaliados: { curvaA: 0, total: 0 }, pendentesV2: 0, foraDaLista: { n: 0, gasto: 0 }, corteRisco: CORTE_RISCO,
     resumo: { ALAVANCAGEM: { n: 0, gasto: 0 }, ESTRATEGICO: { n: 0, gasto: 0 }, GARGALO: { n: 0, gasto: 0 }, NAO_CRITICO: { n: 0, gasto: 0 }, SEM_AVALIACAO: { n: 0, gasto: 0 } },
     linhas: [],
   })
@@ -108,35 +152,48 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
     return o
   }
 
+  // quem não vende mercadoria não entra na lista; o que foi pago a ele na DRE fica no total
+  const fora = new Set<string>()
+  let gastoFora = 0
+  const foraDaLista = (nome: string): boolean => {
+    if (!NAO_MERCADORIA.test(norm(nome))) return false
+    fora.add(grupoFornecedor(nome).chave)
+    return true
+  }
+
   cmv.forEach(r => {
     const v = r._sum.amount ?? 0
     if (!r.supplier || v === 0) return
+    if (foraDaLista(r.supplier)) { gastoFora += v; return }
     const g = grupo(r.supplier)
     g.gasto += v
     g.nomes.set(r.supplier, (g.nomes.get(r.supplier) ?? 0) + v)
   })
   boletos.forEach(b => {
     if (norm(b.operacao ?? '').includes('IMOBILIZADO')) return       // mesma regra do Controle de Compras
+    if (foraDaLista(b.fornecedor)) return
     grupo(b.fornecedor).aVencer += b.valor
   })
   pedidos.forEach(p => {
+    if (foraDaLista(p.fornecedor as string)) return
     const ds = Array.isArray(p.datas) ? (p.datas as unknown[]).map(d => String(d).slice(0, 10)) : []
     const aVencer = ds.length ? (p.valor / ds.length) * ds.filter(d => d >= hojeStr).length : p.valor
     if (aVencer > 0) grupo(p.fornecedor as string).pedidos += aVencer
   })
   const aval = new Map(avaliacoes.map(a => [a.chave, a]))
   avaliacoes.forEach(a => {
-    if (!grupos.has(a.chave)) grupos.set(a.chave, { chave: a.chave, rotulo: a.nome, nomes: new Map([[a.nome, 0]]), gasto: 0, aVencer: 0, pedidos: 0 })
+    if (!grupos.has(a.chave) && !foraDaLista(a.nome)) grupos.set(a.chave, { chave: a.chave, rotulo: a.nome, nomes: new Map([[a.nome, 0]]), gasto: 0, aVencer: 0, pedidos: 0 })
   })
   // cadastro do Controle de Compras: fornecedor novo ou de compra recente, ainda sem pagamento na
   // janela, também pode ser avaliado. Quem já está na lista (inclusive com o nome cortado) não duplica.
   cadastro.forEach(f => {
+    if (foraDaLista(f.nome)) return
     const g = grupoFornecedor(f.nome)
     if (!resolver(g.chave)) grupos.set(g.chave, { chave: g.chave, rotulo: g.rotulo ?? f.nome, nomes: new Map([[f.nome, 0]]), gasto: 0, aVencer: 0, pedidos: 0 })
   })
 
   const lista = Array.from(grupos.values()).sort((a, b) => b.gasto - a.gasto || b.aVencer - a.aVencer)
-  const gastoTotal = lista.reduce((s, g) => s + g.gasto, 0)
+  const gastoTotal = lista.reduce((s, g) => s + g.gasto, 0) + gastoFora
   if (gastoTotal <= 0) return vazio('Sem compras de mercadoria nos meses fechados da DRE.')
 
   let acc = 0, corte = 0, nA = 0
@@ -150,6 +207,8 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
     const risco = riscoDe(resp)
     const quadrante = quadranteDe(naCurvaA, risco)
     const nomes = Array.from(g.nomes.entries()).sort((x, y) => y[1] - x[1]).map(([n]) => n)
+    const sugerido = tipoSugerido([g.chave].concat(nomes))
+    const { tipo, tipoV1 } = tipoGravado(a?.tipo ?? null, sugerido)
     return {
       chave: g.chave,
       nome: g.rotulo ?? nomes[0] ?? g.chave,
@@ -160,12 +219,14 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
       curvaA: naCurvaA,
       aVencer: g.aVencer,
       pedidosAbertos: g.pedidos,
-      tipo: a?.tipo ?? null,
+      tipo,
+      tipoSugerido: sugerido,
+      tipoV1,
       ...resp,
       alternativasV1: a?.alternativas ?? null,
       risco,
       quadrante,
-      acao: acaoDe(quadrante, a?.tipo ?? null),
+      acao: acaoDe(quadrante, tipo ?? sugerido),
       valor1pct: g.gasto * (12 / meses.length) * 0.01,
       atualizadoEm: a?.updatedAt ? a.updatedAt.toISOString() : null,
       atualizadoPor: a?.updatedBy ?? null,
@@ -183,6 +244,7 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
     curvaA: { n: nA, corte },
     avaliados: { curvaA: linhas.filter(l => l.curvaA && l.risco != null).length, total: linhas.filter(l => l.risco != null).length },
     pendentesV2: linhas.filter(l => l.alternativasV1 != null && l.risco == null).length,
+    foraDaLista: { n: fora.size, gasto: gastoFora },
     corteRisco: CORTE_RISCO,
     resumo,
     linhas,

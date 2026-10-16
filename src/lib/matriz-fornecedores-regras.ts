@@ -19,7 +19,7 @@ export const PERGUNTAS: Record<CampoRisco, Pergunta> = {
   substituto: {
     titulo: 'Substituto aceito',
     pergunta: 'Se faltar produto deste fornecedor, quanto do que você compra dele o cliente aceita trocar por outra marca?',
-    ajuda: 'Pense no balcão, não no catálogo: exclusividade de marca não conta. Vacina de protocolo costuma ser "quase nada"; vermífugo, mineral e vitamina costumam ter equivalente.',
+    ajuda: 'Pense no balcão, não no catálogo: exclusividade de marca não conta. Vacina de protocolo costuma ser "quase nada"; vermífugo, mineral, vitamina, arame e descartável costumam ter equivalente.',
     peso: 0.35,
     opcoes: [{ valor: 0, rotulo: 'Quase tudo' }, { valor: 33, rotulo: 'Mais da metade' }, { valor: 67, rotulo: 'Menos da metade' }, { valor: 100, rotulo: 'Quase nada (exige a marca)' }],
   },
@@ -49,8 +49,23 @@ export const CAMPOS: CampoRisco[] = ['substituto', 'canal', 'condicoes', 'falhas
 export const VERSAO_PERGUNTAS = 2
 /** resposta da v1 à pergunta de alternativas — só aparece na tela como referência */
 export const ALTERNATIVAS_V1: Record<number, string> = { 0: 'Sim, fácil', 33: 'Sim, com esforço', 67: 'Só em parte', 100: 'Não, é exclusivo' }
-export const TIPOS = ['FABRICANTE', 'DISTRIBUIDOR', 'OUTRO'] as const
-export const TIPO_ROTULO: Record<string, string> = { FABRICANTE: 'Fabricante', DISTRIBUIDOR: 'Distribuidor', OUTRO: 'Outro' }
+/**
+ * Tipo do fornecedor (16/10/2026). Vem sugerido pelo nome (lib/matriz-fornecedores) e o
+ * comprador confirma ou corrige; não entra na nota de risco, serve para filtrar a tela e
+ * ajustar a ação. Até 16/10 era Fabricante / Distribuidor / Outro.
+ */
+export const TIPOS = ['LABORATORIO', 'DISTRIBUIDOR', 'OUTROS'] as const
+export type Tipo = typeof TIPOS[number]
+export const TIPO_ROTULO: Record<Tipo, string> = { LABORATORIO: 'Laboratório', DISTRIBUIDOR: 'Distribuidor', OUTROS: 'Outros' }
+export const TIPO_AJUDA: Record<Tipo, string> = {
+  LABORATORIO: 'fabricante de medicamento, vacina ou suplemento veterinário',
+  DISTRIBUIDOR: 'revenda de produtos de vários fabricantes',
+  OUTROS: 'ração, arame, ferradura, identificação animal, reprodução, equipamento, material médico, sementes e embalagens',
+}
+/** tipo gravado na 1ª versão que não virou tipo novo — só aparece na tela como referência */
+export const TIPO_V1_ROTULO: Record<string, string> = { FABRICANTE: 'Fabricante', DISTRIBUIDOR: 'Distribuidor', OUTRO: 'Outro' }
+/** o que vale para filtro e ação: o tipo confirmado ou, sem ele, o sugerido */
+export const tipoDe = (l: { tipo: Tipo | null; tipoSugerido: Tipo }): Tipo => l.tipo ?? l.tipoSugerido
 /** risco a partir do qual o fornecedor é de alto risco (0–100) */
 export const CORTE_RISCO = 50
 /** fração do gasto que define a curva A de fornecedores (alta importância) */
@@ -103,7 +118,8 @@ export function quadranteDe(curvaA: boolean, risco: number | null): Quadrante {
   return risco >= CORTE_RISCO ? 'GARGALO' : 'NAO_CRITICO'
 }
 
-export function acaoDe(q: Quadrante, tipo: string | null): string {
+/** tipo: o que vale para a linha (tipoDe) */
+export function acaoDe(q: Quadrante, tipo: Tipo | null): string {
   if (q === 'ALAVANCAGEM' && tipo === 'DISTRIBUIDOR') return QUADRANTE.ALAVANCAGEM.acao + ' Comparar com a compra direta do laboratório.'
   if (q === 'ESTRATEGICO' && tipo === 'DISTRIBUIDOR') return QUADRANTE.ESTRATEGICO.acao + ' Avaliar comprar direto do laboratório para garantir cota.'
   return QUADRANTE[q].acao
@@ -124,7 +140,12 @@ export interface LinhaMatriz extends Respostas {
   aVencer: number
   /** parcelas a vencer de pedidos ainda não faturados */
   pedidosAbertos: number
-  tipo: string | null
+  /** tipo confirmado pelo comprador; null = vale o sugerido */
+  tipo: Tipo | null
+  /** tipo sugerido pelo nome, para o comprador conferir */
+  tipoSugerido: Tipo
+  /** tipo da 1ª versão que não deu para converter (ex.: "Fabricante" em nome de distribuidora) */
+  tipoV1: string | null
   /** resposta da v1 à pergunta de alternativas (não entra na nota) */
   alternativasV1: number | null
   /** 0–100; só com as 4 respostas */
@@ -163,6 +184,8 @@ export interface ResultadoMatriz {
   avaliados: { curvaA: number; total: number }
   /** avaliados na v1 que ainda não responderam as perguntas novas */
   pendentesV2: number
+  /** contrapartes que não vendem mercadoria: fora da lista; o pago a elas fica no gastoTotal, que bate com a DRE */
+  foraDaLista: { n: number; gasto: number }
   corteRisco: number
   resumo: Record<Quadrante, { n: number; gasto: number }>
   linhas: LinhaMatriz[]

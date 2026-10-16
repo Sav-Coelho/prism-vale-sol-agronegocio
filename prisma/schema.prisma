@@ -332,7 +332,7 @@ model OrcamentoCenario {
 model FornecedorRisco {
   chave        String   @id
   nome         String
-  tipo         String?                   // FABRICANTE | DISTRIBUIDOR | OUTRO
+  tipo         String?                   // LABORATORIO | DISTRIBUIDOR | OUTROS · null = vale o sugerido pelo nome (até 16/10/2026: FABRICANTE | DISTRIBUIDOR | OUTRO)
   substituto   Int?                      // v2 · 0 | 33 | 67 | 100 — quanto o cliente aceita trocar por outra marca
   canal        Int?                      // v2 · 0 | 50 | 100 — outro caminho de compra para os mesmos itens
   condicoes    Int?                      // 0 | 50 | 100
