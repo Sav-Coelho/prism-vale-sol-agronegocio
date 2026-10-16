@@ -11,8 +11,9 @@
  *     perguntas fechadas (v2, 16/10/2026) — substituto aceito pelo cliente, outro
  *     canal para a mesma marca, condições impostas e falhas recentes —, nota
  *     0–100, corte em 50; nenhuma resposta sozinha chega ao corte. Qualquer
- *     fornecedor pode ser avaliado (fora da curva A: Gargalo × Não crítico). Com o
- *     export laboratório × produto, entram rupturas e alternativas medidas.
+ *     fornecedor pode ser avaliado (fora da curva A: Gargalo × Não crítico) — a lista
+ *     inclui os ativos do cadastro de Compras ainda sem pagamento na janela (gasto 0).
+ *     Com o export laboratório × produto, entram rupturas e alternativas medidas.
  *
  * O quadrante define a estratégia de compra de cada fornecedor. As regras que a
  * tela também usa ficam em lib/matriz-fornecedores-regras.
@@ -27,6 +28,8 @@ import {
 export { CAMPOS, PERGUNTAS, TIPOS } from '@/lib/matriz-fornecedores-regras'
 
 const MESES_JANELA = 12
+/** o CashFlow (DRE) corta o nome do fornecedor em 50 letras; abaixo disto, prefixo não basta para casar */
+const MIN_PREFIXO = 30
 
 // ── agrupamento de cadastros: o mesmo fornecedor aparece com mais de um nome no ERP ──
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -65,7 +68,7 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
   const inicioHoje = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate()))
   const hojeStr = inicioHoje.toISOString().slice(0, 10)
 
-  const [cmv, boletos, pedidos, avaliacoes] = await Promise.all([
+  const [cmv, boletos, pedidos, avaliacoes, cadastro] = await Promise.all([
     prisma.dreEntry.groupBy({
       by: ['supplier'],
       where: { line: 'CMV', OR: meses.map(m => ({ year: Number(m.slice(0, 4)), month: Number(m.slice(5, 7)) })) },
@@ -74,15 +77,34 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
     prisma.purchaseCommit.findMany({ where: { dueDate: { gte: inicioHoje } }, select: { fornecedor: true, valor: true, operacao: true } }),
     prisma.purchaseOrder.findMany({ where: { status: { not: 'Faturado' }, fornecedor: { not: null } }, select: { fornecedor: true, valor: true, datas: true } }),
     prisma.fornecedorRisco.findMany(),
+    prisma.fornecedor.findMany({ where: { ativo: true }, select: { nome: true } }),
   ])
 
   type Grupo = { chave: string; rotulo: string | null; nomes: Map<string, number>; gasto: number; aVencer: number; pedidos: number }
   const grupos = new Map<string, Grupo>()
+  // Nome cortado: o CashFlow traz "IBIRA IND. E COM. DE PRODUTOS COSMETICOS E VETERIN"; boletos, pedidos
+  // e o cadastro de Compras, o nome inteiro ("…VETERINARIOS LTDA"). Se uma chave começa pela outra, com
+  // pelo menos MIN_PREFIXO letras, é o mesmo fornecedor — fica no grupo que já existe (o de maior chave).
+  const resolver = (chave: string): string | null => {
+    if (grupos.has(chave)) return chave
+    let melhor: string | null = null
+    Array.from(grupos.keys()).forEach(k => {
+      const curta = k.length <= chave.length ? k : chave
+      const longa = k.length <= chave.length ? chave : k
+      if (curta.length >= MIN_PREFIXO && longa.indexOf(curta) === 0 && (melhor === null || k.length > melhor.length)) melhor = k
+    })
+    return melhor
+  }
   const grupo = (nome: string): Grupo => {
     const g = grupoFornecedor(nome)
-    let o = grupos.get(g.chave)
-    if (!o) { o = { chave: g.chave, rotulo: g.rotulo, nomes: new Map(), gasto: 0, aVencer: 0, pedidos: 0 }; grupos.set(g.chave, o) }
-    if (!o.nomes.has(nome)) o.nomes.set(nome, 0)
+    const existente = resolver(g.chave)
+    if (existente) {
+      const o = grupos.get(existente) as Grupo
+      if (existente === g.chave && !o.nomes.has(nome)) o.nomes.set(nome, 0)   // grafia nova do ERP; nome cortado não conta como cadastro
+      return o
+    }
+    const o: Grupo = { chave: g.chave, rotulo: g.rotulo, nomes: new Map([[nome, 0]]), gasto: 0, aVencer: 0, pedidos: 0 }
+    grupos.set(g.chave, o)
     return o
   }
 
@@ -105,6 +127,12 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
   const aval = new Map(avaliacoes.map(a => [a.chave, a]))
   avaliacoes.forEach(a => {
     if (!grupos.has(a.chave)) grupos.set(a.chave, { chave: a.chave, rotulo: a.nome, nomes: new Map([[a.nome, 0]]), gasto: 0, aVencer: 0, pedidos: 0 })
+  })
+  // cadastro do Controle de Compras: fornecedor novo ou de compra recente, ainda sem pagamento na
+  // janela, também pode ser avaliado. Quem já está na lista (inclusive com o nome cortado) não duplica.
+  cadastro.forEach(f => {
+    const g = grupoFornecedor(f.nome)
+    if (!resolver(g.chave)) grupos.set(g.chave, { chave: g.chave, rotulo: g.rotulo ?? f.nome, nomes: new Map([[f.nome, 0]]), gasto: 0, aVencer: 0, pedidos: 0 })
   })
 
   const lista = Array.from(grupos.values()).sort((a, b) => b.gasto - a.gasto || b.aVencer - a.aVencer)

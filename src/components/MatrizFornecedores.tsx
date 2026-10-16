@@ -286,8 +286,17 @@ export function MatrizFornecedores() {
                     {estado[l.chave] && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 400, color: estado[l.chave] === 'erro' ? C.red : C.textMuted }}>{estado[l.chave] === 'salvando' ? 'salvando…' : estado[l.chave] === 'ok' ? '✓ salvo' : '✗ não salvou'}</span>}
                   </td>
                   <td style={{ textAlign: 'right', fontSize: 12, whiteSpace: 'nowrap' }}>
-                    <div style={{ fontWeight: 600, color: C.navy }}>{fmt0(l.gasto)}</div>
-                    <div style={{ fontSize: 10.5, color: C.textMuted }}>{pctF(l.participacao)} · acum. {pctF(l.acumulada, 0)}</div>
+                    {l.gasto > 0 ? (
+                      <>
+                        <div style={{ fontWeight: 600, color: C.navy }}>{fmt0(l.gasto)}</div>
+                        <div style={{ fontSize: 10.5, color: C.textMuted }}>{pctF(l.participacao)} · acum. {pctF(l.acumulada, 0)}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontWeight: 600, color: C.textMuted }}>—</div>
+                        <div style={{ fontSize: 10.5, color: C.textMuted }}>sem pagamento no período</div>
+                      </>
+                    )}
                   </td>
                   <td style={{ textAlign: 'right', fontSize: 12, color: C.textSoft, whiteSpace: 'nowrap' }} title={`Boletos ${fmt0(l.aVencer)} · pedidos ${fmt0(l.pedidosAbertos)}`}>{l.aVencer + l.pedidosAbertos > 0 ? fmt0(l.aVencer + l.pedidosAbertos) : '—'}</td>
                   <td style={{ textAlign: 'center' }}>
