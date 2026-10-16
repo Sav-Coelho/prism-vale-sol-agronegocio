@@ -327,13 +327,17 @@ model OrcamentoCenario {
 // Matriz de Fornecedores (Controle de Compras): avaliação de RISCO DE
 // ABASTECIMENTO feita pelo comprador, uma linha por fornecedor (chave = nome
 // agrupado por lib/matriz-fornecedores). A importância vem do gasto pago na DRE.
+// Perguntas v2 (16/10/2026): substituto, canal, condições, falhas. A resposta da v1
+// a "alternativas" fica guardada só como referência — não entra mais na nota.
 model FornecedorRisco {
   chave        String   @id
   nome         String
   tipo         String?                   // FABRICANTE | DISTRIBUIDOR | OUTRO
-  alternativas Int?                      // 0 | 33 | 67 | 100
+  substituto   Int?                      // v2 · 0 | 33 | 67 | 100 — quanto o cliente aceita trocar por outra marca
+  canal        Int?                      // v2 · 0 | 50 | 100 — outro caminho de compra para os mesmos itens
   condicoes    Int?                      // 0 | 50 | 100
   falhas       Int?                      // 0 | 50 | 100
+  alternativas Int?                      // v1 (até 16/10/2026) · 0 | 33 | 67 | 100 — só referência
   updatedAt    DateTime @updatedAt
   updatedBy    String?
 }

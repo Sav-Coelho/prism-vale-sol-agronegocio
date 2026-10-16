@@ -2,14 +2,17 @@
  * Matriz de Fornecedores (Controle de Compras › Matriz de Fornecedores).
  *
  *   GET  → matriz calculada (lib/matriz-fornecedores)
- *   POST { chave, nome, tipo?, alternativas?, condicoes?, falhas? }
+ *   POST { chave, nome, tipo?, substituto?, canal?, condicoes?, falhas? }
  *        → grava a avaliação de risco do fornecedor (só os campos enviados;
- *          null apaga a resposta) e devolve a matriz recalculada.
+ *          null apaga a resposta) e devolve a matriz recalculada. Qualquer
+ *          fornecedor da lista pode ser avaliado, não só a curva A. O campo da
+ *          v1 (alternativas) não é mais aceito: fica no banco só como referência.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { SESSION_COOKIE, verifySession } from '@/lib/auth'
 import { CAMPOS, PERGUNTAS, TIPOS, calcularMatriz } from '@/lib/matriz-fornecedores'
+import type { CampoRisco } from '@/lib/matriz-fornecedores-regras'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -28,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Informe chave e nome do fornecedor.' }, { status: 400 })
   }
 
-  const dados: { tipo?: string | null; alternativas?: number | null; condicoes?: number | null; falhas?: number | null } = {}
+  const dados: { tipo?: string | null } & Partial<Record<CampoRisco, number | null>> = {}
   if ('tipo' in body) {
     if (body.tipo !== null && !(TIPOS as readonly unknown[]).includes(body.tipo)) {
       return NextResponse.json({ error: 'Tipo inválido.' }, { status: 400 })

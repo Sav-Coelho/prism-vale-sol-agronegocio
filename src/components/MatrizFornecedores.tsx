@@ -2,8 +2,9 @@
 /**
  * Controle de Compras › Matriz de Fornecedores — matriz de Kraljic quantificada
  * (Montgomery, Ogden e Boehmke, 2018), com as correções da leitura de 07/10/2026.
- * Importância = gasto pago (DRE); risco = 3 perguntas respondidas aqui pelo
- * comprador. Cálculo em lib/matriz-fornecedores; regras em lib/matriz-fornecedores-regras.
+ * Importância = gasto pago (DRE); risco = 4 perguntas (v2, 16/10/2026) respondidas
+ * aqui pelo comprador, para qualquer fornecedor. Cálculo em lib/matriz-fornecedores;
+ * regras em lib/matriz-fornecedores-regras.
  */
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -11,7 +12,7 @@ import {
   ReferenceLine, ReferenceArea, Cell, ComposedChart, Bar, Line,
 } from 'recharts'
 import {
-  PERGUNTAS, CAMPOS, TIPOS, TIPO_ROTULO, QUADRANTE, CORTE_RISCO, riscoDe, quadranteDe, acaoDe,
+  PERGUNTAS, CAMPOS, TIPOS, TIPO_ROTULO, QUADRANTE, CORTE_RISCO, ALTERNATIVAS_V1, riscoDe, quadranteDe, acaoDe, alertaConcentracao,
   type Quadrante, type CampoRisco, type LinhaMatriz, type ResultadoMatriz,
 } from '@/lib/matriz-fornecedores-regras'
 
@@ -38,7 +39,7 @@ type Estado = 'salvando' | 'ok' | 'erro'
 export function MatrizFornecedores() {
   const [data, setData] = useState<ResultadoMatriz | null>(null)
   const [erro, setErro] = useState('')
-  const [filtro, setFiltro] = useState<Filtro>('curvaA')
+  const [filtro, setFiltro] = useState<Filtro>('todos')
   const [estado, setEstado] = useState<Record<string, Estado>>({})
 
   useEffect(() => {
@@ -91,20 +92,38 @@ export function MatrizFornecedores() {
   const chip = (ativo: boolean, cor: string = C.navy): React.CSSProperties => ({ border: `1px solid ${ativo ? cor : C.line}`, background: ativo ? cor : '#fff', color: ativo ? '#fff' : C.textSoft, borderRadius: 20, padding: '4px 12px', fontSize: 12, cursor: 'pointer' })
   const sel: React.CSSProperties = { fontSize: 11.5, padding: '3px 4px', border: `1px solid ${C.line}`, borderRadius: 4, background: '#fff', color: C.navy, maxWidth: 132 }
   const tooltipBox: React.CSSProperties = { background: C.navy, color: '#fff', padding: '10px 13px', borderRadius: 5, fontSize: 12, maxWidth: 280, boxShadow: '0 6px 20px rgba(0,0,0,0.3)' }
+  const alerta = alertaConcentracao(linhas)
+  const faltamA = data.curvaA.n - data.avaliados.curvaA
 
   return (
     <>
       <div className="grid-3 mb-6">
         <Kpi label={`Mercadoria paga · ${periodo}`} value={fmt0(data.gastoTotal)} sub={`${data.nFornecedores} fornecedores · ~${fmtK(data.gastoAnualizado)} por ano`} color={C.navy} />
         <Kpi label="Curva A de fornecedores" value={`${data.curvaA.n} fornecedores`} sub={`fazem 80% do gasto (cada um com ${pctF(corte, 2)} ou mais)`} color={C.gold} />
-        <Kpi label="Risco avaliado" value={`${data.avaliados.curvaA} de ${data.curvaA.n}`} sub={data.avaliados.curvaA < data.curvaA.n ? 'da curva A — responda na tabela abaixo' : 'curva A completa'} color={data.avaliados.curvaA < data.curvaA.n ? C.red : C.green} />
+        <Kpi label="Risco avaliado" value={`${data.avaliados.total} de ${linhas.length}`} sub={faltamA > 0 ? `curva A: ${data.avaliados.curvaA} de ${data.curvaA.n} — responda na tabela abaixo` : 'curva A completa · os demais podem ser avaliados também'} color={faltamA > 0 ? C.red : C.green} />
       </div>
 
       <div className="card mb-6" style={{ padding: '14px 20px', fontSize: 12.5, color: C.textSoft, lineHeight: 1.7 }}>
-        <b style={{ color: C.navy }}>Como usar:</b> (1) responda as 3 perguntas de risco dos {data.curvaA.n} fornecedores da curva A na tabela — cerca de 15 minutos;
+        <b style={{ color: C.navy }}>Como usar:</b> (1) responda as 4 perguntas de risco na tabela — todos os fornecedores podem ser avaliados; comece pelos {data.curvaA.n} da curva A,
+        que concentram a negociação, e siga pelos demais para achar os <b style={{ color: COR.GARGALO }}>Gargalos</b> (pouco gasto, difícil de trocar);
         (2) cada fornecedor cai num quadrante, que diz o tipo de compra a fazer; (3) comece a negociar pelos de maior gasto em <b style={{ color: COR.ALAVANCAGEM }}>Alavancagem</b> e
         monte plano anual com os de <b style={{ color: COR.ESTRATEGICO }}>Estratégico</b>. Cada 1% de desconto no total vale cerca de <b>{fmtK(data.gastoAnualizado * 0.01)} por ano</b>.
       </div>
+      {data.pendentesV2 > 0 && (
+        <div className="card mb-6" style={{ padding: '12px 18px', fontSize: 12.5, color: C.textSoft, lineHeight: 1.65, borderLeft: `3px solid ${C.gold}` }}>
+          <b style={{ color: C.navy }}>Perguntas revisadas em 16/10/2026.</b> A pergunta antiga de alternativas foi respondida pela exclusividade de marca e levou quase todos para Estratégico.
+          Agora são duas: se o cliente aceita outra marca e se existe outro caminho de compra. Condições e falhas foram mantidas. Faltam as perguntas novas
+          de <b>{data.pendentesV2} {data.pendentesV2 === 1 ? 'fornecedor' : 'fornecedores'}</b> já avaliados — a resposta antiga aparece embaixo, como referência.
+        </div>
+      )}
+      {alerta && (
+        <div className="card mb-6" style={{ padding: '12px 18px', fontSize: 12.5, color: '#7a4b00', background: '#fff7e0', lineHeight: 1.65, borderLeft: `3px solid ${C.amber}` }}>
+          <b>Confira as respostas: {alerta.estrategicos} de {alerta.avaliados} fornecedores avaliados da curva A estão em Estratégico e {alerta.marcaExigida} marcaram
+          "{PERGUNTAS.substituto.opcoes[3].rotulo}".</b> Foi esse padrão que concentrou a versão anterior: exclusividade de marca respondida como falta de substituto.
+          "{PERGUNTAS.substituto.titulo}" pergunta o que o cliente aceita levar no lugar, não se o produto é exclusivo do laboratório
+          {alerta.travados > 0 ? <> — {alerta.travados} {alerta.travados === 1 ? 'está' : 'estão'} também com "{PERGUNTAS.canal.opcoes[2].rotulo}" em "{PERGUNTAS.canal.titulo}"</> : null}.
+        </div>
+      )}
       {erro && <div className="card mb-6" style={{ padding: '10px 16px', color: C.red, fontSize: 12.5 }}>{erro}</div>}
 
       <div className="grid-2 mb-6" style={{ alignItems: 'stretch' }}>
@@ -160,7 +179,7 @@ export function MatrizFornecedores() {
             </ResponsiveContainer>
             {!avaliadas.length && (
               <div style={{ position: 'absolute', inset: '30% 12% auto 12%', background: 'rgba(255,255,255,0.94)', border: `1px dashed ${C.line}`, borderRadius: 6, padding: '14px 18px', textAlign: 'center', fontSize: 12.5, color: C.textSoft, lineHeight: 1.6 }}>
-                Nenhum fornecedor avaliado ainda. Responda as 3 perguntas de risco na tabela abaixo — comece pelos {data.curvaA.n} da curva A — e cada um aparece aqui no seu quadrante.
+                Nenhum fornecedor avaliado ainda. Responda as 4 perguntas de risco na tabela abaixo — comece pelos {data.curvaA.n} da curva A — e cada um aparece aqui no seu quadrante.
               </div>
             )}
           </div>
@@ -227,14 +246,17 @@ export function MatrizFornecedores() {
           <div className="card-title" style={{ fontSize: 14, marginBottom: 8 }}>Fornecedores <span style={{ color: C.textMuted, fontWeight: 400 }}>({visiveis.length})</span></div>
           <div style={{ fontSize: 12, color: C.textSoft, lineHeight: 1.65, marginBottom: 10 }}>
             {CAMPOS.map(c => (
-              <div key={c}><b style={{ color: C.navy }}>{PERGUNTAS[c].titulo}</b> ({Math.round(PERGUNTAS[c].peso * 100)}% da nota): {PERGUNTAS[c].pergunta}</div>
+              <div key={c}>
+                <b style={{ color: C.navy }}>{PERGUNTAS[c].titulo}</b> ({Math.round(PERGUNTAS[c].peso * 100)}% da nota): {PERGUNTAS[c].pergunta}
+                {PERGUNTAS[c].ajuda && <span style={{ color: C.textMuted }}> {PERGUNTAS[c].ajuda}</span>}
+              </div>
             ))}
-            <div style={{ color: C.textMuted }}>Nota de risco = soma ponderada das 3 respostas (0 a 100); {CORTE_RISCO} ou mais = risco alto. Grava sozinho ao escolher.</div>
+            <div style={{ color: C.textMuted }}>Nota de risco = soma ponderada das 4 respostas (0 a 100); {CORTE_RISCO} ou mais = risco alto — nenhuma resposta sozinha chega a {CORTE_RISCO}. Grava sozinho ao escolher.</div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            <button style={chip(filtro === 'curvaA', C.gold)} onClick={() => setFiltro('curvaA')}>Curva A · {data.curvaA.n}</button>
             <button style={chip(filtro === 'todos')} onClick={() => setFiltro('todos')}>Todos · {linhas.length}</button>
-            {(['ALAVANCAGEM', 'ESTRATEGICO', 'GARGALO', 'NAO_CRITICO', 'SEM_AVALIACAO'] as Quadrante[]).map(q => (
+            <button style={chip(filtro === 'curvaA', C.gold)} onClick={() => setFiltro('curvaA')}>Curva A · {data.curvaA.n}</button>
+            {(['SEM_AVALIACAO', 'ALAVANCAGEM', 'ESTRATEGICO', 'GARGALO', 'NAO_CRITICO'] as Quadrante[]).map(q => (
               <button key={q} style={chip(filtro === q, COR[q])} onClick={() => setFiltro(q)}>{QUADRANTE[q].rotulo} · {data.resumo[q].n}</button>
             ))}
           </div>
@@ -247,9 +269,7 @@ export function MatrizFornecedores() {
                 <th style={{ textAlign: 'right' }}>Pago ({periodo})</th>
                 <th style={{ textAlign: 'right' }} title="Boletos de mercadoria e parcelas de pedidos ainda a vencer">A vencer</th>
                 <th>Tipo</th>
-                <th>{PERGUNTAS.alternativas.titulo}</th>
-                <th>{PERGUNTAS.condicoes.titulo}</th>
-                <th>{PERGUNTAS.falhas.titulo}</th>
+                {CAMPOS.map(c => <th key={c} title={PERGUNTAS[c].pergunta}>{PERGUNTAS[c].titulo}</th>)}
                 <th style={{ textAlign: 'right' }}>Risco</th>
                 <th>Quadrante</th>
                 <th style={{ textAlign: 'left', minWidth: 260 }}>O que fazer</th>
@@ -278,10 +298,15 @@ export function MatrizFornecedores() {
                   </td>
                   {CAMPOS.map(c => (
                     <td key={c} style={{ textAlign: 'center' }}>
-                      <select style={{ ...sel, borderColor: l[c] == null ? '#f0c36b' : C.line }} value={l[c] == null ? '' : String(l[c])} onChange={e => salvar(l, c, e.target.value)} title={PERGUNTAS[c].pergunta}>
+                      <select style={{ ...sel, borderColor: l[c] == null ? '#f0c36b' : C.line }} value={l[c] == null ? '' : String(l[c])} onChange={e => salvar(l, c, e.target.value)} title={`${PERGUNTAS[c].pergunta} ${PERGUNTAS[c].ajuda}`}>
                         <option value="">— responder —</option>
                         {PERGUNTAS[c].opcoes.map(o => <option key={o.valor} value={String(o.valor)}>{o.rotulo}</option>)}
                       </select>
+                      {c === 'substituto' && l.alternativasV1 != null && l.substituto == null && (
+                        <div style={{ fontSize: 9.5, color: C.textMuted, marginTop: 2, whiteSpace: 'nowrap' }} title="Resposta à pergunta antiga de alternativas — não entra mais na nota">
+                          antes: {ALTERNATIVAS_V1[l.alternativasV1] ?? l.alternativasV1}
+                        </div>
+                      )}
                     </td>
                   ))}
                   <td style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: l.risco == null ? C.textMuted : l.risco >= CORTE_RISCO ? C.red : C.green }}>{l.risco ?? '—'}</td>

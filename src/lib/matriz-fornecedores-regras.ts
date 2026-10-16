@@ -2,37 +2,64 @@
  * Regras da Matriz de Fornecedores que a TELA também usa (sem acesso ao banco):
  * perguntas de risco, pesos, cortes, ações por quadrante e os tipos da resposta.
  * O cálculo com dados fica em lib/matriz-fornecedores.
+ *
+ * Perguntas — versão 2 (16/10/2026). A versão 1 perguntava "Se este fornecedor
+ * falhar, consigo os mesmos produtos em outro?" e valia 50% da nota. O comprador
+ * respondeu pela exclusividade de MARCA (só a Zoetis faz Zoetis): 13 de 19 marcaram
+ * "exclusivo", e só essa resposta já levava ao corte — 15 de 19 caíram em
+ * Estratégico. A v2 separa o que a exclusividade misturava: o cliente aceita outra
+ * marca? existe outro caminho de compra para a mesma marca? E nenhuma resposta
+ * sozinha chega ao corte (a maior pesa 35 de 100).
  */
 export type Quadrante = 'ALAVANCAGEM' | 'ESTRATEGICO' | 'GARGALO' | 'NAO_CRITICO' | 'SEM_AVALIACAO'
-export type CampoRisco = 'alternativas' | 'condicoes' | 'falhas'
+export type CampoRisco = 'substituto' | 'canal' | 'condicoes' | 'falhas'
 
-export const PERGUNTAS: Record<CampoRisco, { titulo: string; pergunta: string; peso: number; opcoes: { valor: number; rotulo: string }[] }> = {
-  alternativas: {
-    titulo: 'Alternativas',
-    pergunta: 'Se este fornecedor falhar, consigo os mesmos produtos em outro?',
-    peso: 0.5,
-    opcoes: [{ valor: 0, rotulo: 'Sim, fácil' }, { valor: 33, rotulo: 'Sim, com esforço' }, { valor: 67, rotulo: 'Só em parte' }, { valor: 100, rotulo: 'Não, é exclusivo' }],
+export interface Pergunta { titulo: string; pergunta: string; ajuda: string; peso: number; opcoes: { valor: number; rotulo: string }[] }
+export const PERGUNTAS: Record<CampoRisco, Pergunta> = {
+  substituto: {
+    titulo: 'Substituto aceito',
+    pergunta: 'Se faltar produto deste fornecedor, quanto do que você compra dele o cliente aceita trocar por outra marca?',
+    ajuda: 'Pense no balcão, não no catálogo: exclusividade de marca não conta. Vacina de protocolo costuma ser "quase nada"; vermífugo, mineral e vitamina costumam ter equivalente.',
+    peso: 0.35,
+    opcoes: [{ valor: 0, rotulo: 'Quase tudo' }, { valor: 33, rotulo: 'Mais da metade' }, { valor: 67, rotulo: 'Menos da metade' }, { valor: 100, rotulo: 'Quase nada (exige a marca)' }],
+  },
+  canal: {
+    titulo: 'Outro canal',
+    pergunta: 'Consigo comprar os mesmos itens dele por outro caminho — distribuidor, outro representante ou outra loja do grupo?',
+    ajuda: 'Vale a mesma marca comprada de outro jeito. Para distribuidor: outro distribuidor ou o próprio laboratório.',
+    peso: 0.25,
+    opcoes: [{ valor: 0, rotulo: 'Sim, sem perder preço ou prazo' }, { valor: 50, rotulo: 'Sim, pagando mais ou esperando' }, { valor: 100, rotulo: 'Não, só com ele' }],
   },
   condicoes: {
     titulo: 'Condições impostas',
-    pergunta: 'Ele impõe cota, pedido mínimo alto, exclusividade ou pagamento antecipado?',
-    peso: 0.25,
+    pergunta: 'Ele impõe cota, pedido mínimo alto, venda casada ou pagamento antecipado?',
+    ajuda: 'Condição que ele exige para vender, não a negociação normal de preço e prazo.',
+    peso: 0.20,
     opcoes: [{ valor: 0, rotulo: 'Não' }, { valor: 50, rotulo: 'Às vezes' }, { valor: 100, rotulo: 'Sim, sempre' }],
   },
   falhas: {
     titulo: 'Falhas recentes',
     pergunta: 'Nos últimos 6 meses faltou produto dele ou a entrega atrasou?',
-    peso: 0.25,
+    ajuda: 'Conte as vezes em que a falta ou o atraso atrapalhou a venda.',
+    peso: 0.20,
     opcoes: [{ valor: 0, rotulo: 'Não' }, { valor: 50, rotulo: 'Uma vez' }, { valor: 100, rotulo: 'Várias vezes' }],
   },
 }
-export const CAMPOS: CampoRisco[] = ['alternativas', 'condicoes', 'falhas']
+export const CAMPOS: CampoRisco[] = ['substituto', 'canal', 'condicoes', 'falhas']
+export const VERSAO_PERGUNTAS = 2
+/** resposta da v1 à pergunta de alternativas — só aparece na tela como referência */
+export const ALTERNATIVAS_V1: Record<number, string> = { 0: 'Sim, fácil', 33: 'Sim, com esforço', 67: 'Só em parte', 100: 'Não, é exclusivo' }
 export const TIPOS = ['FABRICANTE', 'DISTRIBUIDOR', 'OUTRO'] as const
 export const TIPO_ROTULO: Record<string, string> = { FABRICANTE: 'Fabricante', DISTRIBUIDOR: 'Distribuidor', OUTRO: 'Outro' }
 /** risco a partir do qual o fornecedor é de alto risco (0–100) */
 export const CORTE_RISCO = 50
 /** fração do gasto que define a curva A de fornecedores (alta importância) */
 export const CURVA_A = 0.8
+/** alerta de concentração: com pelo menos N avaliados na curva A, se esta fração ou mais cair em Estratégico… */
+export const ALERTA_MIN_AVALIADOS = 8
+export const ALERTA_FRACAO = 0.6
+/** …ou se esta fração ou mais marcar "quase nada" em substituto (o padrão de resposta da v1) */
+export const ALERTA_FRACAO_MARCA = 0.5
 
 export const QUADRANTE: Record<Quadrante, { rotulo: string; resumo: string; acao: string }> = {
   ALAVANCAGEM: {
@@ -58,13 +85,16 @@ export const QUADRANTE: Record<Quadrante, { rotulo: string; resumo: string; acao
   SEM_AVALIACAO: {
     rotulo: 'Sem avaliação',
     resumo: 'Falta avaliar o risco',
-    acao: 'Responder as 3 perguntas de risco para posicionar na matriz.',
+    acao: 'Responder as 4 perguntas de risco para posicionar na matriz.',
   },
 }
 
-export function riscoDe(r: { alternativas: number | null; condicoes: number | null; falhas: number | null }): number | null {
-  if (r.alternativas == null || r.condicoes == null || r.falhas == null) return null
-  return Math.round(PERGUNTAS.alternativas.peso * r.alternativas + PERGUNTAS.condicoes.peso * r.condicoes + PERGUNTAS.falhas.peso * r.falhas)
+export type Respostas = Record<CampoRisco, number | null>
+export function riscoDe(r: Respostas): number | null {
+  for (let i = 0; i < CAMPOS.length; i++) if (r[CAMPOS[i]] == null) return null
+  let s = 0
+  for (let i = 0; i < CAMPOS.length; i++) s += PERGUNTAS[CAMPOS[i]].peso * (r[CAMPOS[i]] as number)
+  return Math.round(s)
 }
 
 export function quadranteDe(curvaA: boolean, risco: number | null): Quadrante {
@@ -79,7 +109,7 @@ export function acaoDe(q: Quadrante, tipo: string | null): string {
   return QUADRANTE[q].acao
 }
 
-export interface LinhaMatriz {
+export interface LinhaMatriz extends Respostas {
   chave: string
   nome: string
   /** cadastros do ERP agrupados nesta linha */
@@ -95,10 +125,9 @@ export interface LinhaMatriz {
   /** parcelas a vencer de pedidos ainda não faturados */
   pedidosAbertos: number
   tipo: string | null
-  alternativas: number | null
-  condicoes: number | null
-  falhas: number | null
-  /** 0–100; só com as 3 respostas */
+  /** resposta da v1 à pergunta de alternativas (não entra na nota) */
+  alternativasV1: number | null
+  /** 0–100; só com as 4 respostas */
   risco: number | null
   quadrante: Quadrante
   acao: string
@@ -106,6 +135,21 @@ export interface LinhaMatriz {
   valor1pct: number
   atualizadoEm: string | null
   atualizadoPor: string | null
+}
+
+/**
+ * Resposta suspeita, na curva A com pelo menos ALERTA_MIN_AVALIADOS avaliados:
+ * ALERTA_FRACAO ou mais em Estratégico (o que a v1 produziu: 15 de 19), ou
+ * ALERTA_FRACAO_MARCA ou mais com "quase nada" em substituto (o padrão de resposta
+ * da v1: 13 de 19 "exclusivo"). A tela avisa para o comprador conferir.
+ */
+export function alertaConcentracao(linhas: LinhaMatriz[]): { avaliados: number; estrategicos: number; marcaExigida: number; travados: number } | null {
+  const av = linhas.filter(l => l.curvaA && l.risco != null)
+  if (av.length < ALERTA_MIN_AVALIADOS) return null
+  const est = av.filter(l => l.quadrante === 'ESTRATEGICO').length
+  const marca = av.filter(l => l.substituto === 100).length
+  if (est / av.length < ALERTA_FRACAO && marca / av.length < ALERTA_FRACAO_MARCA) return null
+  return { avaliados: av.length, estrategicos: est, marcaExigida: marca, travados: av.filter(l => l.substituto === 100 && l.canal === 100).length }
 }
 
 export interface ResultadoMatriz {
@@ -117,6 +161,8 @@ export interface ResultadoMatriz {
   nFornecedores: number
   curvaA: { n: number; corte: number }
   avaliados: { curvaA: number; total: number }
+  /** avaliados na v1 que ainda não responderam as perguntas novas */
+  pendentesV2: number
   corteRisco: number
   resumo: Record<Quadrante, { n: number; gasto: number }>
   linhas: LinhaMatriz[]

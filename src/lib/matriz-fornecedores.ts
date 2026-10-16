@@ -7,10 +7,12 @@
  *     mercadoria PAGO nos últimos 12 meses fechados da DRE. É dado, não opinião.
  *     O corte é em unidade real: a "curva A de fornecedores", os que somam 80%
  *     do gasto (o paper usava 0,5 numa escala que jogava quase tudo num quadrante).
- *   · RISCO DE ABASTECIMENTO (eixo horizontal) = avaliação do comprador em 3
- *     perguntas fechadas — alternativas, condições impostas e falhas recentes —,
- *     nota 0–100, corte em 50. Na versão 2, com o export laboratório × produto,
- *     entram rupturas e alternativas medidas.
+ *   · RISCO DE ABASTECIMENTO (eixo horizontal) = avaliação do comprador em 4
+ *     perguntas fechadas (v2, 16/10/2026) — substituto aceito pelo cliente, outro
+ *     canal para a mesma marca, condições impostas e falhas recentes —, nota
+ *     0–100, corte em 50; nenhuma resposta sozinha chega ao corte. Qualquer
+ *     fornecedor pode ser avaliado (fora da curva A: Gargalo × Não crítico). Com o
+ *     export laboratório × produto, entram rupturas e alternativas medidas.
  *
  * O quadrante define a estratégia de compra de cada fornecedor. As regras que a
  * tela também usa ficam em lib/matriz-fornecedores-regras.
@@ -52,7 +54,7 @@ export function grupoFornecedor(nome: string): { chave: string; rotulo: string |
 export async function calcularMatriz(hoje: Date = new Date()): Promise<ResultadoMatriz> {
   const vazio = (motivo: string): ResultadoMatriz => ({
     hasData: false, motivo, meses: [], gastoTotal: 0, gastoAnualizado: 0, nFornecedores: 0,
-    curvaA: { n: 0, corte: 0 }, avaliados: { curvaA: 0, total: 0 }, corteRisco: CORTE_RISCO,
+    curvaA: { n: 0, corte: 0 }, avaliados: { curvaA: 0, total: 0 }, pendentesV2: 0, corteRisco: CORTE_RISCO,
     resumo: { ALAVANCAGEM: { n: 0, gasto: 0 }, ESTRATEGICO: { n: 0, gasto: 0 }, GARGALO: { n: 0, gasto: 0 }, NAO_CRITICO: { n: 0, gasto: 0 }, SEM_AVALIACAO: { n: 0, gasto: 0 } },
     linhas: [],
   })
@@ -116,7 +118,7 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
     acc += participacao
     if (naCurvaA) { nA++; corte = participacao }
     const a = aval.get(g.chave)
-    const resp = { alternativas: a?.alternativas ?? null, condicoes: a?.condicoes ?? null, falhas: a?.falhas ?? null }
+    const resp = { substituto: a?.substituto ?? null, canal: a?.canal ?? null, condicoes: a?.condicoes ?? null, falhas: a?.falhas ?? null }
     const risco = riscoDe(resp)
     const quadrante = quadranteDe(naCurvaA, risco)
     const nomes = Array.from(g.nomes.entries()).sort((x, y) => y[1] - x[1]).map(([n]) => n)
@@ -132,6 +134,7 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
       pedidosAbertos: g.pedidos,
       tipo: a?.tipo ?? null,
       ...resp,
+      alternativasV1: a?.alternativas ?? null,
       risco,
       quadrante,
       acao: acaoDe(quadrante, a?.tipo ?? null),
@@ -151,6 +154,7 @@ export async function calcularMatriz(hoje: Date = new Date()): Promise<Resultado
     nFornecedores: linhas.filter(l => l.gasto > 0).length,
     curvaA: { n: nA, corte },
     avaliados: { curvaA: linhas.filter(l => l.curvaA && l.risco != null).length, total: linhas.filter(l => l.risco != null).length },
+    pendentesV2: linhas.filter(l => l.alternativasV1 != null && l.risco == null).length,
     corteRisco: CORTE_RISCO,
     resumo,
     linhas,
