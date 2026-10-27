@@ -279,6 +279,21 @@ model DemandEntry {
   @@index([year, month])
 }
 
+// Até que dia cada mês da Demanda veio (menor e maior DATA do relatório COMERCIAL nesse
+// mês). Mês incompleto conta como parcial em lib/bcg (mesesFechadosVendas): um setembro
+// que veio só até o dia 21 não vira "fechado" quando outubro entra. Mês sem registro
+// (histórico importado antes de 26/10/2026) segue a regra antiga: completo, menos o
+// último mês presente na base.
+model DemandaCobertura {
+  year      Int
+  month     Int
+  deDia     String   // YYYY-MM-DD
+  ateDia    String   // YYYY-MM-DD
+  updatedAt DateTime @updatedAt
+
+  @@id([year, month])
+}
+
 // Acesso ao Arken. Duas contas de equipe (compartilhadas, conforme pedido do
 // cliente na reunião de 28/08): gerencial vê tudo, comercial só a Demanda.
 model User {

@@ -45,7 +45,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { chaveMes, classificarMeses } from '@/lib/dre-meses'
-import { mesesFechadosVendas } from '@/lib/bcg'
+import { mesesFechadosVendas, carregarCobertura } from '@/lib/bcg'
 
 export type ModoLinha = 'RECEITA' | 'FIXO'
 export type GrupoLinha = 'CMV' | 'OPERACIONAL' | 'ABAIXO'
@@ -385,11 +385,12 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   const horizonte = Math.max(1, Math.min(12, Math.round(opts.horizonte ?? 7)))
   const params = { ancora, phi, horizonte, crescimento: opts.crescimento ?? null }
 
-  const [dreRows, ajustes, demRows, densidade] = await Promise.all([
+  const [dreRows, ajustes, demRows, densidade, coberturaVendas] = await Promise.all([
     prisma.dreEntry.groupBy({ by: ['year', 'month', 'line'], _sum: { amount: true } }),
     prisma.dreAjuste.groupBy({ by: ['year', 'month', 'line'], _sum: { amount: true } }),
     prisma.demandEntry.groupBy({ by: ['year', 'month'], _sum: { valor: true } }),
     prisma.dreEntry.groupBy({ by: ['year', 'month'], _count: { _all: true } }),
+    carregarCobertura(),
   ])
   if (!dreRows.length) return { ...VAZIO, params, motivo: 'Sem DRE importada.' }
 
@@ -436,7 +437,7 @@ export async function calcularOrcamento(opts: OrcamentoParams = {}): Promise<Orc
   // trazê-lo inteiro, o mês pela metade entra como cheio — com setembro/26 até
   // o dia 21 a receita prevista dos 7 meses subia ~R$ 554 mil.
   const ultimoFechado = meses[meses.length - 1]
-  const vendasCompletas = new Set(mesesFechadosVendas(demRows))
+  const vendasCompletas = new Set(mesesFechadosVendas(demRows, new Date(), coberturaVendas))
   const dem = demRows
     .map(r => ({ k: key(r.year, r.month), m: r.month, v: r._sum.valor ?? 0, ym: r.year * 12 + r.month - 1 }))
     .filter(r => r.k <= ultimoFechado && vendasCompletas.has(r.ym) && r.v > 0)

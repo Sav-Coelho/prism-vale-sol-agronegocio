@@ -149,24 +149,51 @@ const VAZIO: BcgResultado = {
  * crescimento da carteira foi de +2,25% para −1,32% e 141 produtos trocaram de
  * quadrante. É a mesma convenção do a/a da Demanda por Cliente e da série de
  * vendas do Orçamento.
+ *
+ * Com a cobertura gravada pelo import (26/10/2026), o mês só é fechado se o
+ * relatório o cobriu do começo ao fim: setembro/26 veio até o dia 21 e continua
+ * parcial quando outubro entra. Mês sem registro de cobertura (histórico anterior)
+ * segue a regra antiga: completo, menos o último mês presente.
  */
-export function mesesFechadosVendas(entries: { year: number; month: number }[], hoje: Date = new Date()): number[] {
+export function mesesFechadosVendas(entries: { year: number; month: number }[], hoje: Date = new Date(), cobertura?: CoberturaVendas): number[] {
   const ymAtual = hoje.getUTCFullYear() * 12 + hoje.getUTCMonth()
   const yms = Array.from(new Set(entries.map(e => e.year * 12 + (e.month - 1)))).sort((a, b) => a - b)
   const ultimo = yms[yms.length - 1]
-  return yms.filter(v => v < ymAtual && v !== ultimo)
+  return yms.filter(v => {
+    if (v >= ymAtual) return false
+    const c = cobertura?.get(v)
+    return c ? mesCompleto(v, c) : v !== ultimo
+  })
+}
+
+/** até que dia cada mês da Demanda veio: índice ano×12 + mês−1 → { de, ate } (YYYY-MM-DD) */
+export type CoberturaVendas = Map<number, { de: string; ate: string }>
+
+export async function carregarCobertura(): Promise<CoberturaVendas> {
+  // sem a tabela (banco ainda sem o push), vale a regra antiga — a tela não pode cair por isso
+  try {
+    const rows = await prisma.demandaCobertura.findMany()
+    return new Map(rows.map(r => [r.year * 12 + (r.month - 1), { de: r.deDia, ate: r.ateDia }]))
+  } catch { return new Map() }
+}
+
+/** coberto do começo ao fim, com folga para fim de semana e feriado (até o dia 5 e a partir do último − 4) */
+export function mesCompleto(v: number, c: { de: string; ate: string }): boolean {
+  const ultimoDia = new Date(Date.UTC(Math.floor(v / 12), (v % 12) + 1, 0)).getUTCDate()
+  return Number(c.de.slice(8, 10)) <= 5 && Number(c.ate.slice(8, 10)) >= ultimoDia - 4
 }
 
 export async function calcularBcg(opts?: { janelaMeses?: number }): Promise<BcgResultado> {
-  const [entries, stock] = await Promise.all([
+  const [entries, stock, cobertura] = await Promise.all([
     prisma.demandEntry.findMany({ select: { produtoCode: true, produto: true, year: true, month: true, qtd: true, valor: true } }),
     prisma.stockItem.findMany({ select: { code: true, qty: true, unitCost: true } }),
+    carregarCobertura(),
   ])
   if (!entries.length) return { ...VAZIO, motivo: 'Sem base de Demanda por Cliente importada.' }
 
   // anos e meses vêm só dos meses FECHADOS: em janeiro, com só um janeiro
   // parcial no ano novo, o "ano corrente" da BCG continua sendo o anterior
-  const fechados = mesesFechadosVendas(entries)
+  const fechados = mesesFechadosVendas(entries, new Date(), cobertura)
   const anos = Array.from(new Set(fechados.map(v => Math.floor(v / 12)))).sort((a, b) => a - b)
   const curYear = anos[anos.length - 1]
   const prevYear = anos.length > 1 ? anos[anos.length - 2] : null
@@ -306,14 +333,15 @@ const VAZIO_CMP: BcgComparativo = {
 
 /** Portfólio na janela inicial × na janela final, para o comparativo visual. */
 export async function compararJanelas(): Promise<BcgComparativo> {
-  const [entries, stock] = await Promise.all([
+  const [entries, stock, cobertura] = await Promise.all([
     prisma.demandEntry.findMany({ select: { produtoCode: true, produto: true, year: true, month: true, qtd: true, valor: true } }),
     prisma.stockItem.findMany({ select: { code: true, unitCost: true } }),
+    carregarCobertura(),
   ])
   if (!entries.length) return { ...VAZIO_CMP, motivo: 'Sem base de Demanda por Cliente importada.' }
 
   const ymDe = (y: number, m: number) => y * 12 + (m - 1)
-  const todosYm = mesesFechadosVendas(entries)   // mesma regra da calcularBcg
+  const todosYm = mesesFechadosVendas(entries, new Date(), cobertura)   // mesma regra da calcularBcg
   if (todosYm.length < 13) {
     return { ...VAZIO_CMP, motivo: `São precisos 13 meses fechados para formar duas janelas; a base tem ${todosYm.length}.` }
   }

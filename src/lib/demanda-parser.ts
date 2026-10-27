@@ -11,12 +11,15 @@ const codeOf = (s: unknown) => { const m = String(s ?? '').match(/\((\d+)\)\s*$/
 // remove o "(código)" final para o rótulo legível
 const label = (s: unknown) => clean(String(s ?? '').replace(/\s*\(\d+\)\s*$/, '')) || clean(s)
 
-function parseDate(v: unknown): { y: number; mo: number } | null {
+function parseDate(v: unknown): { y: number; mo: number; d: number } | null {
   if (v == null || v === '') return null
-  if (typeof v === 'number') { if (v > 40000 && v < 60000) { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1 } } return null }
+  if (typeof v === 'number') { if (v > 40000 && v < 60000) { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate() } } return null }
   const m = String(v).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  return m ? { y: +m[3], mo: +m[2] } : null
+  return m ? { y: +m[3], mo: +m[2], d: +m[1] } : null
 }
+
+/** primeiro e último dia com venda de cada mês do arquivo ("YYYY-MM" → datas YYYY-MM-DD) */
+export type CoberturaArquivo = Record<string, { de: string; ate: string }>
 
 export interface DemandAgg {
   vendedor: string | null
@@ -39,7 +42,7 @@ export function isComercialDemanda(buf: ArrayBuffer): boolean {
   } catch { return false }
 }
 
-export function parseDemanda(buffer: ArrayBuffer): { entries: DemandAgg[]; clientes: number; produtos: number; leaves: number; total: number; months: string[] } {
+export function parseDemanda(buffer: ArrayBuffer): { entries: DemandAgg[]; clientes: number; produtos: number; leaves: number; total: number; months: string[]; cobertura: CoberturaArquivo } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: false })
   const ws = wb.Sheets[wb.SheetNames.find(s => norm(s).includes('CONSOLIDADO')) || wb.SheetNames[0]]
   const m = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: false })
@@ -49,6 +52,7 @@ export function parseDemanda(buffer: ArrayBuffer): { entries: DemandAgg[]; clien
 
   const map = new Map<string, DemandAgg>()
   const clientes = new Set<string>(), produtos = new Set<string>(), months = new Set<string>()
+  const cobertura: CoberturaArquivo = {}
   let leaves = 0, total = 0
 
   for (let r = 1; r < m.length; r++) {
@@ -64,6 +68,10 @@ export function parseDemanda(buffer: ArrayBuffer): { entries: DemandAgg[]; clien
     const produtoCode = codeOf(row[iProd])
     clientes.add(clienteCode); produtos.add(produtoCode ?? prodRaw)
     const ym = `${d.y}-${String(d.mo).padStart(2, '0')}`; months.add(ym)
+    const dia = `${ym}-${String(d.d).padStart(2, '0')}`
+    const c = cobertura[ym]
+    if (!c) cobertura[ym] = { de: dia, ate: dia }
+    else { if (dia < c.de) c.de = dia; if (dia > c.ate) c.ate = dia }
 
     const key = `${clienteCode}¦${produtoCode ?? prodRaw}¦${d.y}¦${d.mo}`
     const cur = map.get(key)
@@ -76,5 +84,5 @@ export function parseDemanda(buffer: ArrayBuffer): { entries: DemandAgg[]; clien
     })
   }
 
-  return { entries: Array.from(map.values()), clientes: clientes.size, produtos: produtos.size, leaves, total, months: Array.from(months).sort() }
+  return { entries: Array.from(map.values()), clientes: clientes.size, produtos: produtos.size, leaves, total, months: Array.from(months).sort(), cobertura }
 }

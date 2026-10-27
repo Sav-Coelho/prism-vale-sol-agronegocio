@@ -11,7 +11,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { scoreClient, effectiveGrade, type SaleForCredit } from '@/lib/credit'
-import { calcularBcg } from '@/lib/bcg'
+import { calcularBcg, carregarCobertura, mesesFechadosVendas } from '@/lib/bcg'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -174,8 +174,10 @@ export async function GET(req: NextRequest) {
   }
 
   // ─── Visão geral (com filtros) ───
-  const [rows, costs, credMap, bcg] = await Promise.all([prisma.demandEntry.findMany(), stockCostMap(), creditByName(), calcularBcg()])
+  const [rows, costs, credMap, bcg, cobertura] = await Promise.all([prisma.demandEntry.findMany(), stockCostMap(), creditByName(), calcularBcg(), carregarCobertura()])
   if (!rows.length) return NextResponse.json({ hasData: false })
+  // meses FECHADOS da base (completos e anteriores ao mês atual — regra única de lib/bcg)
+  const fechadosBase = new Set(mesesFechadosVendas(rows, new Date(), cobertura))
 
   const vendedores = Array.from(new Set(rows.map(r => r.vendedor).filter((v): v is string => !!v))).sort()
   const allYears = Array.from(new Set(rows.map(r => r.year))).sort()
@@ -197,15 +199,24 @@ export async function GET(req: NextRequest) {
   const curYear = selYears[selYears.length - 1]
   const prevYear = hasYoY ? selYears[selYears.length - 2] : null
 
-  // janela comparável: meses explícitos do filtro; senão Jan..(último mês CHEIO do ano corrente)
+  // janela comparável: meses explícitos do filtro; senão Jan..(último mês FECHADO do ano corrente).
+  // Antes era "último mês com venda − 1": com setembro vindo só até o dia 21, a entrada de outubro
+  // fecharia setembro pela metade e o a/a cairia (+2,3% → −1,3% na simulação de 05/10).
   let cmpMonths: number[]
   if (monthsFiltered) cmpMonths = fMonths
   else {
-    const curMonthsNums = Array.from(new Set(win.filter(r => r.year === curYear).map(r => r.month)))
-    const lastCur = curMonthsNums.length ? Math.max.apply(null, curMonthsNums) : 12
-    const upTo = Math.max(1, lastCur - 1)
-    cmpMonths = Array.from({ length: upTo }, (_, i) => i + 1)
+    const fechadosCur = Array.from(new Set(rows.filter(r => r.year === curYear).map(r => r.month))).filter(m => fechadosBase.has(curYear * 12 + m - 1))
+    if (fechadosCur.length) cmpMonths = Array.from({ length: Math.max.apply(null, fechadosCur) }, (_, i) => i + 1)
+    else {
+      const curMonthsNums = Array.from(new Set(win.filter(r => r.year === curYear).map(r => r.month)))
+      const lastCur = curMonthsNums.length ? Math.max.apply(null, curMonthsNums) : 12
+      cmpMonths = Array.from({ length: Math.max(1, lastCur - 1) }, (_, i) => i + 1)
+    }
   }
+  // meses da base que ainda não fecharam, com até que dia vieram (quando o import registrou)
+  const parciais = Array.from(new Set(rows.map(r => r.year * 12 + r.month - 1))).sort((a, b) => a - b)
+    .filter(v => !fechadosBase.has(v))
+    .map(v => { const c = cobertura.get(v); return { ym: ym(Math.floor(v / 12), (v % 12) + 1), de: c?.de ?? null, ate: c?.ate ?? null } })
 
   interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; byMonth: Record<string, number>; prods: Set<string>; cmpCur: number; cmpPrev: number; tCur: number; tPrev: number; valCC: number; cusCC: number; bcgMix: Record<Quad, number>; bcgBase: number }
   const cmap = new Map<string, Cli>()
@@ -335,7 +346,7 @@ export async function GET(req: NextRequest) {
   const cmpUpTo = cmpMonths.length ? Math.max.apply(null, cmpMonths) : 12
 
   return NextResponse.json({
-    hasData: true, months,
+    hasData: true, months, parciais,
     curYear, prevYear, cmpUpTo, hasYoY,
     filtros: { vendedores, anos: allYears, vendedor: fVend, years: selYears, months: fMonths },
     kpis: {

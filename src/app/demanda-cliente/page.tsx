@@ -23,6 +23,8 @@ interface Cli extends PerfilCesta { code: string; nome: string; vendedor: string
 interface VendRank { nome: string; total: number; tCur: number; tPrev: number; yoy: number | null; clientesAtivos: number; clientesPerdidos: number; clientesNovos: number; margem: number | null }
 interface Overview {
   hasData: boolean; months: string[]
+  // meses da base que ainda não fecharam, com até que dia vieram (de/ate = YYYY-MM-DD, quando o import registrou)
+  parciais?: { ym: string; de: string | null; ate: string | null }[]
   curYear: number; prevYear: number | null; cmpUpTo: number; hasYoY: boolean
   filtros: { vendedores: string[]; anos: number[]; vendedor: string | null; years: number[]; months: number[] }
   kpis: { totalGeral: number; nClientes: number; nProdutos: number; ticketMedio: number; totalCur: number; totalPrev: number; yoyGeral: number | null; perdidosYoY: number }
@@ -304,7 +306,10 @@ export default function DemandaCliente() {
                 </div>
               )}
               <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>
-                Clique num status ou perfil para filtrar. Janela de 2 meses (últimos 2 × 2 anteriores) — o último mês da base pode estar parcial.
+                Clique num status ou perfil para filtrar. Janela de 2 meses (últimos 2 × 2 anteriores)
+                {ov.parciais && ov.parciais.length
+                  ? <> — meses parciais na base: {ov.parciais.map(p => `${MONTHS[Number(p.ym.slice(5, 7))].toLowerCase()}/${p.ym.slice(2, 4)}${p.ate ? ` (até ${p.ate.slice(8, 10)}/${p.ate.slice(5, 7)})` : ''}`).join(' · ')}.</>
+                  : <> — o último mês da base pode estar parcial.</>}
                 {' '}<b>Perfil de cesta</b> = quadrante onde o cliente concentra o que comprou em {ov.curYear}.
               </div>
             </div>
