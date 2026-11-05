@@ -11,7 +11,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { scoreClient, effectiveGrade, type SaleForCredit } from '@/lib/credit'
-import { calcularBcg, carregarCobertura, mesesFechadosVendas } from '@/lib/bcg'
+import { calcularBcg, carregarCobertura, mesCompleto, mesesFechadosVendas } from '@/lib/bcg'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -214,9 +214,11 @@ export async function GET(req: NextRequest) {
     }
   }
   // meses da base que ainda não fecharam, com até que dia vieram (quando o import registrou)
+  // completo = veio inteiro, mas espera um mês parcial anterior fechar para entrar na comparação
+  const ymAtual = new Date().getUTCFullYear() * 12 + new Date().getUTCMonth()
   const parciais = Array.from(new Set(rows.map(r => r.year * 12 + r.month - 1))).sort((a, b) => a - b)
     .filter(v => !fechadosBase.has(v))
-    .map(v => { const c = cobertura.get(v); return { ym: ym(Math.floor(v / 12), (v % 12) + 1), de: c?.de ?? null, ate: c?.ate ?? null } })
+    .map(v => { const c = cobertura.get(v); return { ym: ym(Math.floor(v / 12), (v % 12) + 1), de: c?.de ?? null, ate: c?.ate ?? null, completo: v < ymAtual && !!c && mesCompleto(v, c) } })
 
   interface Cli { code: string; nome: string; vendedor: string | null; total: number; qtd: number; byMonth: Record<string, number>; prods: Set<string>; cmpCur: number; cmpPrev: number; tCur: number; tPrev: number; valCC: number; cusCC: number; bcgMix: Record<Quad, number>; bcgBase: number }
   const cmap = new Map<string, Cli>()

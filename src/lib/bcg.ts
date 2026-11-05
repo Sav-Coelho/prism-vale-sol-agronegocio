@@ -154,16 +154,25 @@ const VAZIO: BcgResultado = {
  * relatório o cobriu do começo ao fim: setembro/26 veio até o dia 21 e continua
  * parcial quando outubro entra. Mês sem registro de cobertura (histórico anterior)
  * segue a regra antiga: completo, menos o último mês presente.
+ *
+ * A série fechada para no primeiro mês aberto (ou ausente da base): um mês
+ * completo depois de um parcial espera o buraco ser preenchido. Sem isso, o
+ * outubro/26 completo com setembro só até o dia 21 levava o a/a da Demanda a
+ * Jan–Out com o setembro pela metade (+2,30% → −0,08%), a janela de 12 meses da
+ * BCG pulava setembro e contava outubro duas vezes (127 produtos trocavam de
+ * quadrante) e a série do Orçamento ganhava um buraco (simulado em 05/11/2026).
  */
 export function mesesFechadosVendas(entries: { year: number; month: number }[], hoje: Date = new Date(), cobertura?: CoberturaVendas): number[] {
   const ymAtual = hoje.getUTCFullYear() * 12 + hoje.getUTCMonth()
   const yms = Array.from(new Set(entries.map(e => e.year * 12 + (e.month - 1)))).sort((a, b) => a - b)
   const ultimo = yms[yms.length - 1]
-  return yms.filter(v => {
+  const completo = (v: number) => {
     if (v >= ymAtual) return false
     const c = cobertura?.get(v)
     return c ? mesCompleto(v, c) : v !== ultimo
-  })
+  }
+  const fim = yms.findIndex((v, i) => !completo(v) || (i > 0 && v !== yms[i - 1] + 1))
+  return fim < 0 ? yms : yms.slice(0, fim)
 }
 
 /** até que dia cada mês da Demanda veio: índice ano×12 + mês−1 → { de, ate } (YYYY-MM-DD) */

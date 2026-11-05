@@ -24,7 +24,7 @@ interface VendRank { nome: string; total: number; tCur: number; tPrev: number; y
 interface Overview {
   hasData: boolean; months: string[]
   // meses da base que ainda não fecharam, com até que dia vieram (de/ate = YYYY-MM-DD, quando o import registrou)
-  parciais?: { ym: string; de: string | null; ate: string | null }[]
+  parciais?: { ym: string; de: string | null; ate: string | null; completo?: boolean }[]
   curYear: number; prevYear: number | null; cmpUpTo: number; hasYoY: boolean
   filtros: { vendedores: string[]; anos: number[]; vendedor: string | null; years: number[]; months: number[] }
   kpis: { totalGeral: number; nClientes: number; nProdutos: number; ticketMedio: number; totalCur: number; totalPrev: number; yoyGeral: number | null; perdidosYoY: number }
@@ -97,6 +97,16 @@ const fmt = (n: number) => (n < 0 ? '−' : '') + 'R$ ' + Math.abs(n).toLocaleSt
 const fmtK = (n: number) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? `${(a / 1e6).toFixed(1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}k` : a.toFixed(0)) }
 const MONTHS = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 const mLabel = (m: string) => { const [y, mm] = m.split('-'); return `${MONTHS[+mm]}/${y.slice(2)}` }
+// meses fora da comparação: os parciais e os que vieram inteiros mas esperam um parcial anterior fechar
+function textoParciais(ps: NonNullable<Overview['parciais']>): string {
+  const rot = (ym: string) => `${MONTHS[Number(ym.slice(5, 7))].toLowerCase()}/${ym.slice(2, 4)}`
+  const abertos = ps.filter(p => !p.completo).map(p => `${rot(p.ym)}${p.ate ? ` (até ${p.ate.slice(8, 10)}/${p.ate.slice(5, 7)})` : ''}`)
+  const inteiros = ps.filter(p => p.completo).map(p => rot(p.ym))
+  return [
+    abertos.length ? `meses parciais na base: ${abertos.join(' · ')}` : '',
+    inteiros.length ? `${inteiros.join(', ')} ${inteiros.length > 1 ? 'vieram inteiros e entram' : 'veio inteiro e entra'} na comparação quando os meses anteriores fecharem` : '',
+  ].filter(Boolean).join('; ')
+}
 const mgColor = (m: number | null) => m == null ? C.textMuted : m >= 0.2 ? C.green : m >= 0.1 ? C.amber : C.red
 // vírgula decimal: o percentual convive com valores em R$ formatados em pt-BR
 const pct1 = (n: number) => n.toFixed(1).replace('.', ',')
@@ -308,7 +318,7 @@ export default function DemandaCliente() {
               <div style={{ fontSize: 11, color: C.textMuted, marginTop: 10 }}>
                 Clique num status ou perfil para filtrar. Janela de 2 meses (últimos 2 × 2 anteriores)
                 {ov.parciais && ov.parciais.length
-                  ? <> — meses parciais na base: {ov.parciais.map(p => `${MONTHS[Number(p.ym.slice(5, 7))].toLowerCase()}/${p.ym.slice(2, 4)}${p.ate ? ` (até ${p.ate.slice(8, 10)}/${p.ate.slice(5, 7)})` : ''}`).join(' · ')}.</>
+                  ? <> — {textoParciais(ov.parciais)}.</>
                   : <> — o último mês da base pode estar parcial.</>}
                 {' '}<b>Perfil de cesta</b> = quadrante onde o cliente concentra o que comprou em {ov.curYear}.
               </div>
