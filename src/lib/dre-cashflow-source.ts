@@ -4,6 +4,7 @@
  * depurações definidas com o cliente, que não existem na classificação bruta:
  *
  *   · Veículo FCA (financiamento)  → principal em Investimentos, juros em Financeiras
+ *   · Veículo Great Wall (compra)  → Investimentos (o ERP lança como fornecedor de mercadorias)
  *   · Multmunde ↔ Vale do Sol (grupo) → memo intragrupo, fora do resultado — os DOIS lados
  *   · Transferências entre lojas   → excluídas
  *   · Reembolso a cliente          → líquido (saídas − entradas) nas Deduções
@@ -93,6 +94,10 @@ function classify(path: string[], hist: string, tipo: 'E' | 'S', intercompany: b
     return W.includes('JUROS') ? { line: 'FIN', sub: 'Juros de financiamento (veículo)' }
                                : { line: 'INVEST', sub: 'Veículo financiado (principal)' }
   }
+  // Veículo comprado da montadora: o ERP lança como FORNECEDOR MERCADORIAS (Great Wall, título 1715 —
+  // R$ 196.200,00 em 07/10/2026 e parcelas de 4.319,07 até jan/2027). É imobilizado, não mercadoria
+  // (Sávio, 05/11/2026) → Investimentos, como a "COMPRA DE VEICULOS" do plano de contas.
+  if (W.includes('GREAT WALL')) return { line: 'INVEST', sub: 'Compra de veículo (imobilizado)' }
   if (has('FORNECEDOR MERCADORIAS')) return { line: 'CMV', sub: 'Compras de Mercadoria (fornecedores)' }
   // Devolução/estorno a cliente é redutor de receita, não despesa administrativa.
   // (Categoria criada na revisão do plano de contas de set/2026, em substituição

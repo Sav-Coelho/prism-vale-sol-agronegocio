@@ -11,7 +11,8 @@
  * (PurchaseCommit) — o comprometido do /controle-compras se atualiza junto com o
  * cash flow semanal, sem depender do "Pagamentos a Efetuar" à parte.
  * Exclusões (coerência com a DRE/limite de 70%): MULTMUNDE (intragrupo, fora do
- * CMV) e FCA (veículo/financiamento).
+ * CMV), FCA (veículo/financiamento) e GREAT WALL (veículo comprado — imobilizado,
+ * Sávio 05/11/2026; o ERP lança como fornecedor de mercadorias).
  */
 import { prisma } from '@/lib/prisma'
 import { pedidosParaFaturar } from '@/lib/compras-baixa'
@@ -95,7 +96,7 @@ export async function POST(req: Request) {
       const niveis = iCs.map(i => norm(row[i])).filter(Boolean)
       if (niveis.some(x => x.includes('FORNECEDOR MERCADORIAS'))) {
         const h = norm(hist)
-        if (h.includes('MULTMUNDE') || h.includes('FCA FIAT')) { intragrupoExcluido += amt; continue }
+        if (h.includes('MULTMUNDE') || h.includes('FCA FIAT') || h.includes('GREAT WALL')) { intragrupoExcluido += amt; continue }
         boletos.push({
           fornecedor: hist, titulo: titulo || null, parcela, dueDate: due, valor: amt,
           operacao: classif, tipoDocto: 'CashFlow Analítico', filial,
