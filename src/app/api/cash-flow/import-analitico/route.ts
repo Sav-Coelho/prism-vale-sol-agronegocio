@@ -14,6 +14,7 @@
  * CMV) e FCA (veículo/financiamento).
  */
 import { prisma } from '@/lib/prisma'
+import { pedidosParaFaturar } from '@/lib/compras-baixa'
 import * as XLSX from 'xlsx'
 import { NextResponse } from 'next/server'
 
@@ -125,26 +126,12 @@ export async function POST(req: Request) {
 
   // ── Baixa automática: pedido manual que já virou boleto no ERP sai da projeção
   // ("o valor sai de lançamento, entra em boletos — uma coisa pela outra").
-  // Critério evidencial: Σ dos boletos de mercadoria do MESMO fornecedor nos
-  // meses das parcelas do pedido ≥ 85% do valor do pedido → status 'Faturado'.
-  // Não apaga nada: o pedido segue na aba Pedidos e no quadro por comprador.
-  const normName = (s: string) => norm(s).replace(/[^A-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-  const fw2 = (s: string) => s.split(' ').slice(0, 2).join(' ')
+  // Critério (lib/compras-baixa, desde 05/11/2026): cada parcela verificável acha o
+  // seu boleto do mesmo fornecedor (±10 dias, ±3%), entre todos os boletos da base
+  // (histórico + este import). Não apaga nada: o pedido segue na aba Pedidos.
+  const pool = await prisma.purchaseCommit.findMany({ select: { fornecedor: true, dueDate: true, valor: true, operacao: true } })
   const pedidosAll = await prisma.purchaseOrder.findMany()
-  const faturar: number[] = []
-  pedidosAll.forEach(p => {
-    if (!p.fornecedor || p.status === 'Faturado') return
-    const key = fw2(normName(p.fornecedor))
-    if (!key) return
-    const datas: string[] = Array.isArray(p.datas) ? (p.datas as unknown[]).map(d => String(d).slice(0, 7)) : []
-    if (!datas.length) return
-    const somaBoletos = boletos.reduce((s, b) => {
-      const bn = normName(b.fornecedor)
-      const casaFornecedor = bn.startsWith(key) || key.startsWith(fw2(bn))
-      return casaFornecedor && datas.includes(b.dueDate.toISOString().slice(0, 7)) ? s + b.valor : s
-    }, 0)
-    if (somaBoletos >= p.valor * 0.85) faturar.push(p.id)
-  })
+  const faturar = pedidosParaFaturar(pedidosAll, pool)
   let pedidosFaturados = 0
   if (faturar.length > 0) {
     pedidosFaturados = (await prisma.purchaseOrder.updateMany({ where: { id: { in: faturar } }, data: { status: 'Faturado' } })).count
