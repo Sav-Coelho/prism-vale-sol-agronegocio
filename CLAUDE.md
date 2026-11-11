@@ -68,7 +68,7 @@ Array.from(map.entries()).forEach(([k, v]) => { })
 
 ## Data model (prisma/schema.prisma)
 
-19 models, grouped by module. All numeric money is `Float`. No cross-module FKs except
+25 models, grouped by module. All numeric money is `Float`. No cross-module FKs except
 `Client → Sale → Unit`.
 
 **Credit / Risco de Cliente**
@@ -103,6 +103,15 @@ Array.from(map.entries()).forEach(([k, v]) => { })
 - `User` — shared accounts with bcrypt password hashes and `gerencial` / `comercial` roles. Session cookie `arken_session` is HTTP-only, valid for 12 hours and renewed during use.
 - `DreAjuste` — manual DRE reconciliation adjustments.
 
+**Faturas de cartão** (Fluxo de Caixa › Cartões, since 11/2026)
+- `CaixaLancamento` — every SAÍDA line of the CashFlow Analítico realizado, with the DreEntry
+  bucket it fell into (unit/kind/line/sub/supplier/month). Written by `POST /api/dre/import`
+  together with `DreEntry`, for the same months. `chave` is stable across re-imports.
+- `Cartao` (bank + last 4 digits, optional paying `filial`), `CartaoFatura` (one uploaded invoice;
+  `hash` = SHA-256 of the PDF, unique), `CartaoItem` (one invoice line; `caminho` = chosen
+  account path, null = not classified), `CartaoVinculo` (manual link invoice ↔ cash line),
+  `CartaoRegra` (memory: merchant → last account used, offered as suggestion).
+
 **Also present but not central**: `Receivable`, `Payable` (raw ERP title imports; the active
 credit flow uses `Sale`, and compras uses `PurchaseCommit`).
 
@@ -120,6 +129,8 @@ CashFlow Analítico XLSX. `POST /api/dre/import` detects the file type and rebui
   chart of accounts) and raw payment/receipt reports (`parseDre` + `classifyExpense` heuristic).
 - `GET /api/dre` builds the structured statement (RECLIQ, MC, LUCROOP, EBITDA, LL) per scope
   with `byMonth` maps and supplier drill-down. Line labels in `src/lib/dre-classifier.ts`.
+  At read time it adds `DreAjuste` and the card-invoice swap (`ajustesCartaoDre`, see Fluxo de
+  Caixa › Cartões). If the card part fails, the DRE is served without it.
 
 ### Fluxo de Caixa (`/fluxo-de-caixa`)
 Read-only view of the accounting cash ledger — **separate from the DRE**, never mixed.
@@ -127,6 +138,27 @@ Read-only view of the accounting cash ledger — **separate from the DRE**, neve
 /api/cashflow-analitico` serves a 6-level classification tree (entradas E / saídas S) with
 monthly breakdown, per filial + CONSOLIDADO. (Legacy `cash-flow/*` routes exist from an
 earlier daily-series design.)
+
+**Cartões tab** (`src/components/CartoesPanel.tsx`, `/api/cartao/*`, gerencial only). Finance
+uploads a card invoice PDF, which is read in the browser. Itaú Empresas is read from the PDF
+text with pdf.js. Safra Empresas has no usable text (Type3 fonts with obfuscated ToUnicode), so it
+goes through OCR with tesseract.js. Both libraries load from the CDN on demand. The pure parsers
+live in `lib/cartao-parser.ts`. An invoice is saved only when the sum of its items matches its
+total. Each item is then classified into an account of the chart actually used in the CashFlow
+(`planoDeContas`).
+
+The DRE swap lives in `lib/cartao-conciliacao.ts` and is pure and tested by
+`auditoria/cartao-conciliacao-teste.ts`. **Hard rule: never count twice.** A classified item enters
+the DRE only by removing the same amount from a `CaixaLancamento` line that paid the invoice, in
+the same month and unit, so the swap sums to zero in every invoice. The payment is found in this
+order:
+1. a manual link;
+2. 1–4 lines summing exactly to the invoice total, from 3 days before to 7 days after the due date;
+3. item-by-item exact-value matches at the card's filial, with the remainder optionally covered by
+   another exact sum.
+
+Items without a found payment stay out of the DRE. The swap applies only from 2026-11
+(`CARTAO_DESDE`), so closed months never change.
 
 ### Controle de Compras (`/controle-compras`)
 Purchase budget vs. committed spend. `GET /api/compras/analytics` projects, per month ×

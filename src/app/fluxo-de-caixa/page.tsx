@@ -1,13 +1,14 @@
 'use client'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import Shell from '@/components/Shell'
+import CartoesPanel from '@/components/CartoesPanel'
 import {
   BarChart, Bar, LineChart, Line, ScatterChart, Scatter, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
 
-type Tab = 'import' | 'view' | 'daily'
+type Tab = 'import' | 'view' | 'daily' | 'cartoes'
 type Kind = 'receivable' | 'payable'
 
 interface DailyItem { nome: string; titulo: string | null; parcela: string | null; classif: string | null; valor: number }
@@ -154,7 +155,7 @@ export default function FluxoDeCaixa() {
             </div>
           )}
           <div style={{ display: 'flex', gap: 6 }}>
-            {([['view', 'Visão Geral'], ['daily', 'Por Período'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
+            {([['view', 'Visão Geral'], ['daily', 'Por Período'], ['cartoes', 'Cartões'], ['import', 'Importar']] as [Tab, string][]).map(([k, label]) => (
               <button key={k}
                 className={tab === k ? 'btn btn-primary' : 'btn'}
                 onClick={() => setTab(k)}>
@@ -166,6 +167,7 @@ export default function FluxoDeCaixa() {
       </div>
 
       {tab === 'import' && <ImportPanel showToast={showToast} onSaved={() => loadSeries(selectedUnit)} />}
+      {tab === 'cartoes' && <CartoesPanel showToast={showToast} />}
       {tab === 'view'   && (loading ? <Loading /> : series ? <ViewPanel series={series} /> : <Loading />)}
       {tab === 'daily'  && (daily ? <DailyPanel daily={daily} /> : <Loading />)}
 

@@ -8,6 +8,7 @@
 import { prisma } from '@/lib/prisma'
 import { LINE_LABEL } from '@/lib/dre-classifier'
 import { classificarMesesDre } from '@/lib/dre-meses'
+import { ajustesCartaoDre } from '@/lib/cartao-dre'
 import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -20,10 +21,16 @@ export async function GET() {
   // ficam fora de DreEntry para não serem apagados pelo import mensal. O ajuste
   // que corrige o lançamento de um fornecedor leva o nome dele, e o drill-down
   // mostra o fornecedor já com o valor corrigido.
-  const [importados, ajustes, meses] = await Promise.all([
+  //
+  // Faturas de cartão classificadas no Fluxo de Caixa › Cartões também entram aqui, NA
+  // LEITURA: cada item classificado tira o mesmo valor da linha do caixa que pagou a
+  // fatura e põe na conta escolhida (soma zero — lib/cartao-conciliacao). Se essa parte
+  // falhar, a DRE sai sem a troca em vez de não sair.
+  const [importados, ajustes, meses, cartao] = await Promise.all([
     prisma.dreEntry.findMany(),
     prisma.dreAjuste.findMany(),
     classificarMesesDre(),
+    ajustesCartaoDre().catch(e => { console.error('DRE: troca das faturas de cartão não aplicada —', (e as Error).message); return [] }),
   ])
   const entries = [
     ...importados,
@@ -32,6 +39,7 @@ export async function GET() {
       supplier: a.supplier ?? null, supplierCode: null as string | null,
       year: a.year, month: a.month, amount: a.amount,
     })),
+    ...cartao.map(d => ({ ...d, supplierCode: null as string | null })),
   ]
 
   const months = Array.from(new Set(entries.map(e => `${e.year}-${String(e.month).padStart(2, '0')}`))).sort()

@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   // Use ?escopo=tudo para forçar a reconstrução completa (arquivo do ano inteiro).
   if (isCashflowAnaliticoFile(buf)) {
     const escopoTudo = new URL(req.url).searchParams.get('escopo') === 'tudo'
-    const { entries, months, rows, totalE, totalS, naoClassificado } = buildDreFromCashflow(buf)
+    const { entries, months, rows, totalE, totalS, naoClassificado, linhas } = buildDreFromCashflow(buf)
     const data = entries.map(e => ({ ...e }))
     const alvos = Array.from(new Set(data.map(e => `${e.year}|${e.month}`))).map(k => {
       const [year, month] = k.split('|').map(Number)
@@ -69,7 +69,17 @@ export async function POST(req: Request) {
       for (let i = 0; i < data.length; i += CHUNK) {
         ins += (await tx.dreEntry.createMany({ data: data.slice(i, i + CHUNK) })).count
       }
-      return { deleted: del.count, inserted: ins }
+      // Saídas linha a linha dos mesmos meses (Fluxo de Caixa › Cartões acha nelas o
+      // pagamento de cada fatura). Trocadas junto com a DreEntry, para as duas nunca
+      // ficarem de arquivos diferentes.
+      const delCaixa = escopoTudo
+        ? await tx.caixaLancamento.deleteMany({})
+        : await tx.caixaLancamento.deleteMany({ where: { OR: alvos } })
+      let insCaixa = 0
+      for (let i = 0; i < linhas.length; i += CHUNK) {
+        insCaixa += (await tx.caixaLancamento.createMany({ data: linhas.slice(i, i + CHUNK), skipDuplicates: true })).count
+      }
+      return { deleted: del.count, inserted: ins, caixaApagadas: delCaixa.count, caixaGravadas: insCaixa }
     }, { timeout: 240_000 })
     const restantes = await prisma.dreEntry.findMany({ select: { year: true, month: true }, distinct: ['year', 'month'] })
     return NextResponse.json({

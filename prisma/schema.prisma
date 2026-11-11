@@ -356,3 +356,104 @@ model FornecedorRisco {
   updatedAt    DateTime @updatedAt
   updatedBy    String?
 }
+
+// ── Faturas de cartão (Fluxo de Caixa › Cartões, desde 11/2026) ──────────────
+// O financeiro sobe a fatura (PDF), classifica cada item no plano de contas e a
+// DRE troca o pagamento da fatura no caixa pelos itens classificados. Regra que
+// não pode quebrar (Sávio, 11/11/2026): NUNCA contar duas vezes. Cada item
+// classificado só entra na DRE tirando o MESMO valor de uma linha do caixa
+// realizado que pagou a fatura (ver lib/cartao-conciliacao).
+
+// Linhas de SAÍDA do CashFlow Analítico realizado, guardadas pelo import da DRE
+// (os meses do arquivo, substituídos junto com a DreEntry). É onde se acha o
+// pagamento de cada fatura. line/sub/supplier = o balde da DreEntry em que a
+// linha caiu, para a troca acontecer no mesmo lugar.
+model CaixaLancamento {
+  id        Int      @id @default(autoincrement())
+  chave     String   @unique              // data|filial|documento|histórico|valor|caminho#ocorrência — estável entre reimports
+  data      DateTime
+  filial    String
+  unit      String
+  kind      String
+  line      String
+  sub       String
+  supplier  String?                        // HISTORICO do CashFlow (= supplier da DreEntry)
+  documento String?
+  caminho   String                         // CLASSIF_CONTABIL(1..6) unidos por " › "
+  valor     Float                          // magnitude
+  year      Int
+  month     Int
+  importedAt DateTime @default(now())
+
+  @@index([year, month])
+  @@index([data])
+}
+
+model Cartao {
+  id      Int     @id @default(autoincrement())
+  banco   String                           // ITAU | SAFRA | …
+  final   String                           // 4 últimos dígitos
+  nome    String?                          // ex.: "ITAU EMPRESAS VISA"
+  titular String?
+  filial  String?                          // filial do CashFlow em que a fatura é paga (null = descobrir pelo caixa)
+  ativo   Boolean @default(true)
+  faturas CartaoFatura[]
+
+  @@unique([banco, final])
+}
+
+model CartaoFatura {
+  id           Int      @id @default(autoincrement())
+  cartaoId     Int
+  cartao       Cartao   @relation(fields: [cartaoId], references: [id])
+  vencimento   DateTime
+  total        Float                       // total a pagar da fatura
+  saldoAnterior Float   @default(0)        // sobra da fatura anterior que entra neste total (normalmente 0)
+  arquivo      String
+  hash         String   @unique            // SHA-256 do PDF: a mesma fatura não entra duas vezes
+  leitura      String                      // TEXTO | OCR | MANUAL
+  createdAt    DateTime @default(now())
+  createdBy    String?
+  itens        CartaoItem[]
+  vinculos     CartaoVinculo[]
+}
+
+model CartaoItem {
+  id         Int      @id @default(autoincrement())
+  faturaId   Int
+  fatura     CartaoFatura @relation(fields: [faturaId], references: [id], onDelete: Cascade)
+  ordem      Int
+  dataCompra DateTime?
+  descricao  String
+  parcela    String?                       // "06/12"
+  portador   String?                       // titular do cartão adicional, quando a fatura separa
+  valor      Float                         // + compra/tarifa · − estorno/crédito
+  caminho    String?                       // conta do plano (" › "); null = a classificar
+  sugestao   String?                       // conta sugerida pela memória (CartaoRegra)
+  classificadoEm DateTime?
+  classificadoPor String?
+
+  @@index([faturaId])
+}
+
+// Vínculo manual entre a fatura e as linhas do caixa que a pagaram, quando o
+// Arken não acha sozinho. itemId nulo = linha que paga o total (ou parte dele).
+model CartaoVinculo {
+  id       Int     @id @default(autoincrement())
+  faturaId Int
+  fatura   CartaoFatura @relation(fields: [faturaId], references: [id], onDelete: Cascade)
+  chave    String                          // CaixaLancamento.chave
+  itemId   Int?
+  createdAt DateTime @default(now())
+
+  @@unique([faturaId, chave])
+}
+
+// Memória da classificação: estabelecimento (sem parcela) → conta usada da última vez
+model CartaoRegra {
+  id        Int      @id @default(autoincrement())
+  padrao    String   @unique
+  caminho   String
+  usos      Int      @default(1)
+  updatedAt DateTime @updatedAt
+}

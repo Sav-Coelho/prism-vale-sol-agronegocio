@@ -26,12 +26,32 @@ const UNIT: Record<string, string> = {
   'APERIBE': 'VS - APERIBÉ',
   'SETE LAGOAS': 'MM - 7 LAGOAS',
 }
-const unitOf = (f: string) => UNIT[norm(f)] ?? clean(f) ?? 'CONSOLIDADO'
+export const unitOf = (f: string) => UNIT[norm(f)] ?? clean(f) ?? 'CONSOLIDADO'
 
 export interface CfDreEntry {
   unit: string; kind: string; line: string; sub: string
   supplier: string | null; supplierCode: string | null
   year: number; month: number; amount: number
+}
+
+/** Uma linha de SAÍDA do caixa realizado, com o balde da DRE em que caiu (vira CaixaLancamento). */
+export interface CaixaLinha {
+  chave: string; data: Date; filial: string; documento: string | null; caminho: string; valor: number
+  unit: string; kind: string; line: string; sub: string; supplier: string | null; year: number; month: number
+}
+
+/**
+ * Linha e subconta da DRE para uma SAÍDA lançada na conta `caminho` (níveis do plano
+ * separados por " › " ou já em lista) — a mesma regra do import do CashFlow. Usada pela
+ * classificação das faturas de cartão: o item vai para onde iria se o ERP o tivesse
+ * lançado nessa conta.
+ */
+export function classificarSaida(caminho: string | string[], historico: string, year: number, month: number): { kind: string; line: string; sub: string } | null {
+  const path = (Array.isArray(caminho) ? caminho : caminho.split(' › ')).map(norm).filter(Boolean)
+  const c = classify(path, historico, 'S', year * 12 + month >= INTERCOMPANY_DESDE)
+  if (!c || c.line === 'REEMBIN') return null
+  const kind = c.line === 'DEDUCAO' ? 'DEDUCAO' : c.line === 'JUROS' ? 'JUROS' : c.line === 'RECEITA' ? 'RECEITA' : 'EXP'
+  return { kind, line: c.line, sub: c.sub }
 }
 
 /**
@@ -130,6 +150,8 @@ export function isCashflowAnaliticoFile(buf: ArrayBuffer): boolean {
 export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: number; month: number }): {
   entries: CfDreEntry[]; months: string[]; rows: number; totalE: number; totalS: number
   naoClassificado: { caminho: string; valor: number; n: number }[]
+  /** saídas linha a linha (para achar o pagamento das faturas de cartão) */
+  linhas: CaixaLinha[]
 } {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: false })
   const ws = wb.Sheets[wb.SheetNames[0]]
@@ -137,12 +159,15 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
   const H = (m[0] || []).map(h => norm(h))
   const col = (n: string) => H.indexOf(n)
   const iFil = col('FILIAL'), iData = col('DATA'), iHist = col('HISTORICO'), iTipo = col('TIPO'), iVal = col('VALOR')
+  const iDoc = col('DOCUMENTO')
   const iCs = [1, 2, 3, 4, 5, 6].map(k => col('CLASSIF_CONTABIL(' + k + ')')).filter(i => i >= 0)
 
   const map = new Map<string, CfDreEntry>()
   const months = new Set<string>()
   const semRegra = new Map<string, { valor: number; n: number }>()
   let rows = 0, totalE = 0, totalS = 0
+  const linhas: CaixaLinha[] = []
+  const ocorrencias = new Map<string, number>()
 
   const add = (e: Omit<CfDreEntry, 'amount'>, amount: number) => {
     const k = `${e.unit}|${e.line}|${e.sub}|${e.supplier ?? ''}|${e.year}|${e.month}`
@@ -186,6 +211,20 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
       unit: unitOf(String(row[iFil])), kind, line, sub: c.sub,
       supplier: hist || null, supplierCode: null, year, month,
     }, amount)
+
+    if (tipo === 'S') {
+      const filial = clean(row[iFil])
+      const documento = iDoc >= 0 ? clean(row[iDoc]) || null : null
+      const caminho = iCs.map(i => clean(row[i])).filter(Boolean).join(' › ')
+      const valor = Math.round(Math.abs(val) * 100) / 100
+      const base = `${d.toISOString().slice(0, 10)}|${filial}|${documento ?? ''}|${hist}|${valor.toFixed(2)}|${caminho}`
+      const n = (ocorrencias.get(base) ?? 0) + 1
+      ocorrencias.set(base, n)
+      linhas.push({
+        chave: `${base}#${n}`, data: d, filial, documento, caminho, valor,
+        unit: unitOf(String(row[iFil])), kind, line, sub: c.sub, supplier: hist || null, year, month,
+      })
+    }
   }
 
   // O reembolso recebido pode superar o pago no período (recuperação de meses
@@ -223,5 +262,5 @@ export function buildDreFromCashflow(buffer: ArrayBuffer, maxMonth?: { year: num
     .map(([caminho, v]) => ({ caminho, valor: v.valor, n: v.n }))
     .sort((a, b) => b.valor - a.valor)
 
-  return { entries: [...all, ...extras], months: Array.from(months).sort(), rows, totalE, totalS, naoClassificado }
+  return { entries: [...all, ...extras], months: Array.from(months).sort(), rows, totalE, totalS, naoClassificado, linhas }
 }
